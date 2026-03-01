@@ -1,0 +1,27 @@
+# --- TAJEMSTVÍ (NEJDŮLEŽITĚJŠÍ) ---
+# Tady schováváme tokeny a klíče
+.env
+config.json
+diaries.json
+economy_daily.json
+economy.json
+news.json
+parties.json
+profiles.json
+quests.json
+story_library.json
+story_save.json
+
+# --- PYTHON ---
+# Pomocné soubory, které Python vytváří při běhu
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+data/
+# --- VIRTUÁLNÍ PROSTŘEDÍ ---
+# Složky s nainstalovanými knihovnami (zbytečně velké pro GitHub)
+venv/
+.venv/
+env/
+ENV/

@@ -1,0 +1,3 @@
+"""
+Utility funkce pro ArionBot
+"""

@@ -1,0 +1,3 @@
+"""
+Assets balíček pro ArionBot
+"""
