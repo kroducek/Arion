@@ -8,8 +8,7 @@ from discord import app_commands
 from datetime import datetime
 
 # ── Konfigurace ──────────────────────────────────────────────────────────────
-LIBRARY_FILE = "story_library.json"
-SAVE_FILE = "story_save.json"
+from src.utils.paths import STORY_LIB as LIBRARY_FILE, STORY_SAVE as SAVE_FILE
 
 PLOT_TWISTS = [
     "gumová kachnička", "motorová pila", "záchodové prkénko", "plameňák", "ponožky v sandálech",

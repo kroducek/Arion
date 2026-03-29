@@ -1,0 +1,6 @@
+# ArionBot dependencies
+discord.py>=2.6.4
+python-dotenv>=1.0.0
+matplotlib>=3.10.8
+numpy>=2.4.2
+Pillow>=12.1.1

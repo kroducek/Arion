@@ -1,21 +1,14 @@
-import json
-import os
 import time
 from typing import List, Optional, Dict
+from src.utils.paths import PARTIES
+from src.utils.json_utils import load_json, save_json
 
 
 class PartyManager:
     """Databázový manažer pro správu družin v Aurionisu."""
 
-    def __init__(self, filename: str = "parties.json"):
-        # Získáme cestu ke složce, kde leží tento soubor (src/database/)
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        
-        # Musíme jít o dvě úrovně výš do ArionBot/
-        project_root = os.path.dirname(os.path.dirname(current_dir))
-        
-        # Spojíme to s názvem souboru
-        self.filename = os.path.join(project_root, filename)
+    def __init__(self, filename: str = PARTIES):
+        self.filename = filename
         
         self.MAX_PARTIES_PER_USER = 3
         self._ensure_file()
@@ -25,20 +18,14 @@ class PartyManager:
     # ============================================================
 
     def _ensure_file(self):
-        if not os.path.exists(self.filename):
-            with open(self.filename, "w", encoding="utf-8") as f:
-                json.dump({}, f, indent=4)
+        # load_json + save_json vytvoří soubor automaticky při prvním zápisu
+        pass
 
     def _load(self) -> Dict:
-        try:
-            with open(self.filename, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, FileNotFoundError):
-            return {}
+        return load_json(self.filename, default={})
 
     def _save(self, data: Dict):
-        with open(self.filename, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
+        save_json(self.filename, data)
 
     # ============================================================
     # Multi-party kontroly
@@ -87,6 +74,7 @@ class PartyManager:
         Vytvoří novou družinu.
         Vrátí False pokud název existuje nebo hráč dosáhl limitu 3 družin.
         """
+        name = name.strip().lower()
         data = self._load()
 
         if name in data:
@@ -113,6 +101,7 @@ class PartyManager:
 
     def delete_party(self, name: str) -> bool:
         """Smaže party včetně všech dat. Vrátí False pokud neexistuje."""
+        name = name.strip().lower()
         data = self._load()
         if name not in data:
             return False
@@ -123,7 +112,7 @@ class PartyManager:
     def get_party(self, name: str) -> Optional[Dict]:
         """Vrátí data party nebo None."""
         data = self._load()
-        return data.get(name)
+        return data.get(name.strip().lower())
 
     def list_all_parties(self) -> Dict:
         """Vrátí všechny party jako dict {name: data}."""
@@ -131,6 +120,8 @@ class PartyManager:
 
     def rename_party(self, old_name: str, new_name: str) -> bool:
         """Přejmenuje party. Vrátí False pokud old neexistuje nebo new je obsazeno."""
+        old_name = old_name.strip().lower()
+        new_name = new_name.strip().lower()
         data = self._load()
         if old_name not in data or new_name in data:
             return False
@@ -148,6 +139,7 @@ class PartyManager:
         Vrátí False pokud: party neexistuje, hráč už je členem,
         nebo hráč dosáhl limitu 3 družin.
         """
+        name = name.strip().lower()
         data = self._load()
         party = data.get(name)
 
@@ -172,6 +164,7 @@ class PartyManager:
         Odebere hráče z party.
         Vrátí False pokud party nebo hráč neexistuje.
         """
+        name = name.strip().lower()
         data = self._load()
         party = data.get(name)
 

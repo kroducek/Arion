@@ -16,7 +16,7 @@ from datetime import datetime
 from discord.ext import commands
 from discord import app_commands
 
-NEWS_PATH = "news.json"
+from src.utils.paths import NEWS as NEWS_PATH
 
 # ── DATA ──────────────────────────────────────────────────────────────────────
 

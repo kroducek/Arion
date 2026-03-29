@@ -1,34 +1,41 @@
 import discord
+import logging
 from discord.ext import commands
 from discord import app_commands
+from src.utils.paths import COMBAT_STATE
+from src.utils.json_utils import load_json, save_json
+
 
 class CombatCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         # channel_id: {"order": [], "current_index": 0, "locked": False, "stats": {}}
         # stats: {name: {"hp": int, "max_hp": int, "def": int}} -- pouze pro NPC
-        self.active_combats = {}
+        self.active_combats = self._load_state()
 
-    @app_commands.command(name="combat_start", description="Zahaji boj v teto mistnosti")
-    async def combat_start(self, interaction: discord.Interaction):
-        channel_id = interaction.channel_id
-        self.active_combats[channel_id] = {
-            "order": [],
-            "current_index": 0,
-            "locked": False,
-            "stats": {},
-            "first": None,  # Kdo prvni zavolal /combat_join -- bude na indexu 0 po setorder
-            "active_player": None  # Kdo prave hraje svuj tah
-        }
-        embed = discord.Embed(
-            title="⚔️ BOJ ZACINA",
-            description="Combat byl zahajen! Poradi se tvori dynamicky.\nNapis `/combat_join` nebo `/combat_add_npc` pro akci.",
-            color=discord.Color.red()
-        )
-        await interaction.response.send_message(embed=embed)
+    # ── Persistence ───────────────────────────────────────────────────────────
+
+    def _save_state(self):
+        """Uloží stav všech aktivních combatů do JSON."""
+        try:
+            serializable = {str(k): v for k, v in self.active_combats.items()}
+            save_json(COMBAT_STATE, serializable)
+        except Exception:
+            logging.exception("[combat] Nelze uložit stav")
+
+    def _load_state(self) -> dict:
+        """Načte stav combatů ze JSON při spuštění bota."""
+        try:
+            raw = load_json(COMBAT_STATE, default={})
+            return {int(k): v for k, v in raw.items()}
+        except Exception:
+            logging.exception("[combat] Nelze načíst stav")
+            return {}
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _format_name(self, name: str, stats: dict) -> str:
-        """Vrati jmeno s HP/DEF barem pokud ma stats."""
+        """Vrátí jméno s HP/DEF barem pokud má stats."""
         if name not in stats:
             return name
         s = stats[name]
@@ -44,7 +51,6 @@ class CombatCog(commands.Cog):
         order = combat["order"]
         idx = combat["current_index"]
         stats = combat["stats"]
-        # active_player = kdo skutecne hraje svuj tah (ne kdo se jen pridava do poradi)
         active = combat.get("active_player")
 
         list_str = ""
@@ -64,6 +70,27 @@ class CombatCog(commands.Cog):
         )
         await interaction.response.send_message(content=f"Akci provadi: {active or current_actor}", embed=embed)
 
+    # ── Příkazy ───────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="combat_start", description="Zahaji boj v teto mistnosti")
+    async def combat_start(self, interaction: discord.Interaction):
+        channel_id = interaction.channel_id
+        self.active_combats[channel_id] = {
+            "order": [],
+            "current_index": 0,
+            "locked": False,
+            "stats": {},
+            "first": None,
+            "active_player": None
+        }
+        self._save_state()
+        embed = discord.Embed(
+            title="⚔️ BOJ ZACINA",
+            description="Combat byl zahajen! Poradi se tvori dynamicky.\nNapis `/combat_join` nebo `/combat_add_npc` pro akci.",
+            color=discord.Color.red()
+        )
+        await interaction.response.send_message(embed=embed)
+
     @app_commands.command(name="combat_join", description="Hrac se zapoji do boje a odehraje tah")
     async def combat_join(self, interaction: discord.Interaction):
         channel_id = interaction.channel_id
@@ -79,18 +106,16 @@ class CombatCog(commands.Cog):
         just_joined = user not in combat["order"]
         if just_joined:
             combat["order"].append(user)
-            # Zapamatuj prvniho hrace -- ten bude prvni po setorder
             if combat["first"] is None:
                 combat["first"] = user
 
-        # Prvni hrac prebira aktivni tah; dalsi se jen pridavaji do poradi
         if combat.get("active_player") is None:
             combat["active_player"] = user
 
         active = combat["active_player"]
+        self._save_state()
 
         if just_joined and active != user:
-            # Hrac se pridal do poradi, ale nekdo jiny uz hraje -- nerusi jeho tah
             await interaction.response.send_message(
                 f"Byl jsi pridan do poradi! Prave hraje: {active}. Pockej na svuj tah.",
                 ephemeral=True
@@ -117,18 +142,30 @@ class CombatCog(commands.Cog):
         if channel_id not in self.active_combats:
             return await interaction.response.send_message("Zde nebezi combat.", ephemeral=True)
 
-        # current_hp = -1 znamena "nebylo zadano", pouzij max
+        name = name.strip()
+        if not name:
+            return await interaction.response.send_message("Jméno NPC nesmí být prázdné.", ephemeral=True)
+
         actual_current = hp if current_hp == -1 else max(0, min(current_hp, hp))
 
         combat = self.active_combats[channel_id]
-        combat["order"].append(name)
-        combat["stats"][name] = {
+
+        # Pokud NPC se stejným jménem existuje, přidej číselnou příponu
+        final_name = name
+        counter = 2
+        while final_name in combat["stats"]:
+            final_name = f"{name} {counter}"
+            counter += 1
+
+        combat["order"].append(final_name)
+        combat["stats"][final_name] = {
             "hp": actual_current,
             "max_hp": hp,
             "def": defense
         }
+        self._save_state()
 
-        await self._show_order(interaction, f"💀 {name} se zapojuje do boje!", name)
+        await self._show_order(interaction, f"💀 {final_name} se zapojuje do boje!", final_name)
 
     @app_commands.command(name="combat_sethp", description="Admin: Rucne nastavi HP NPC behem combatu")
     @app_commands.checks.has_permissions(administrator=True)
@@ -153,17 +190,16 @@ class CombatCog(commands.Cog):
         old_hp = stats[name]["hp"]
         max_hp = stats[name]["max_hp"]
 
-        # Zaporna hodnota = odecteni; kladna = absolutni nastaveni
         if hp < 0:
-            new_hp = max(0, old_hp + hp)  # hp je uz zaporny, takze +hp = odecitani
+            new_hp = max(0, old_hp + hp)
             change_str = f"{hp} (poskozeni)"
         else:
             new_hp = min(hp, max_hp)
             change_str = f"nastaveno na {new_hp}"
 
         stats[name]["hp"] = new_hp
+        self._save_state()
 
-        # Sestaveni embed odpovedi
         bar_filled = round((new_hp / max_hp) * 10) if max_hp > 0 else 0
         bar_filled = max(0, min(10, bar_filled))
         bar = "🟥" * bar_filled + "⬛" * (10 - bar_filled)
@@ -204,6 +240,7 @@ class CombatCog(commands.Cog):
 
         old_def = stats[name]["def"]
         stats[name]["def"] = max(0, defense)
+        self._save_state()
 
         embed = discord.Embed(
             title=f"🛡️ DEF upraveno: {name}",
@@ -232,8 +269,11 @@ class CombatCog(commands.Cog):
 
         removed_idx = order.index(to_remove)
         order.remove(to_remove)
-        # Vycistit stats pokud existuji
         combat["stats"].pop(to_remove, None)
+
+        # Pokud odstraněný byl active_player, resetuj ho
+        if combat.get("active_player") == to_remove:
+            combat["active_player"] = order[0] if order else None
 
         if combat["locked"]:
             if len(order) == 0:
@@ -242,6 +282,7 @@ class CombatCog(commands.Cog):
             elif removed_idx <= combat["current_index"]:
                 combat["current_index"] = max(0, combat["current_index"] - 1)
 
+        self._save_state()
         await interaction.response.send_message(f"❌ **{to_remove}** byl odstranyen z boje.")
 
     @app_commands.command(name="combat_setorder", description="Uzavre poradi do pevne smycky")
@@ -253,7 +294,6 @@ class CombatCog(commands.Cog):
 
         combat = self.active_combats[channel_id]
 
-        # Presun prvniho hrace na zacatek poradi
         first = combat.get("first")
         if first and first in combat["order"] and combat["order"][0] != first:
             combat["order"].remove(first)
@@ -261,6 +301,7 @@ class CombatCog(commands.Cog):
 
         combat["locked"] = True
         combat["current_index"] = 0
+        self._save_state()
 
         await self._show_order(interaction, "🔒 PORADI UZAVRENO", combat["order"][0])
 
@@ -273,8 +314,6 @@ class CombatCog(commands.Cog):
         combat = self.active_combats[channel_id]
         current_actor = combat["order"][combat["current_index"]]
 
-        # Overi ze prikaz pouziva hrac, ktery je na rade
-        # NPC tahy (retezce bez mentionu) muze predat kdokoliv s admin opravnenim
         is_npc_turn = not current_actor.startswith("<@")
         is_admin = interaction.user.guild_permissions.administrator
         is_current_player = interaction.user.mention == current_actor
@@ -293,7 +332,9 @@ class CombatCog(commands.Cog):
 
         combat["current_index"] = (combat["current_index"] + 1) % len(combat["order"])
         current_actor = combat["order"][combat["current_index"]]
-        combat["active_player"] = current_actor  # Aktualizuj kdo hraje
+        combat["active_player"] = current_actor
+        self._save_state()
+
         await self._show_order(interaction, "➡️ DALSI NA RADE", current_actor)
 
     @app_commands.command(name="combat_end", description="Ukonci combat a vymaze data")
@@ -301,6 +342,7 @@ class CombatCog(commands.Cog):
         channel_id = interaction.channel_id
         if channel_id in self.active_combats:
             del self.active_combats[channel_id]
+            self._save_state()
             await interaction.response.send_message("🏁 Combat je u konce.")
         else:
             await interaction.response.send_message("Zadny aktivni boj.", ephemeral=True)
