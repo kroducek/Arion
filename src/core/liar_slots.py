@@ -2,8 +2,9 @@
 Liar Slots – bluffovací slot-machine hra pro ArionBot
 =====================================================
 Příkazy:
-  /liar_slots        – spustí lobby
+  /liar_slots        – spustí lobby (volitelná sázka v goldech)
   /slots_leaderboard – žebříček výher
+  /slots_cancel      – [Admin] zruší probíhající hru
 """
 
 import asyncio
@@ -12,24 +13,31 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from src.utils.paths import LIAR_SLOTS_SCORES as SCORES_FILE
+from src.utils.paths import LIAR_SLOTS_SCORES as SCORES_FILE, ECONOMY as ECONOMY_FILE
 from src.utils.json_utils import load_json, save_json
 
 # ── Konstanty ─────────────────────────────────────────────────────────────────
 
-MIN_PLAYERS     = 2
-MAX_PLAYERS     = 8
+MIN_PLAYERS       = 2
+MAX_PLAYERS       = 8
 EXECUTE_THRESHOLD = 5
 RESPONSE_TIMEOUT  = 30   # sekund na reakci ostatních
 
 HEART      = "❤️"
 NON_HEARTS = ["💀", "⭐", "💎", "🌙"]
-HEART_CHANCE       = 0.30   # šance srdce na jednom slotu
-DEATH_HEART_CHANCE = 0.40   # šance na přežití Death Spinu
+HEART_CHANCE       = 0.30
+DEATH_HEART_CHANCE = 0.40
 
 CLAIM_POINTS: dict = {1: 1, 2: 2, 3: 3, "jackpot": 5}
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+COIN = "<:goldcoin:1477303464781680772>"
+
+# ── Data helpers ──────────────────────────────────────────────────────────────
+
+def _load_eco() -> dict:   return load_json(ECONOMY_FILE, {})
+def _save_eco(data: dict): save_json(ECONOMY_FILE, data)
+
+# ── Herní helpers ─────────────────────────────────────────────────────────────
 
 def _spin(n: int = 4) -> list[str]:
     return [HEART if random.random() < HEART_CHANCE else random.choice(NON_HEARTS) for _ in range(n)]
@@ -44,7 +52,6 @@ def _slots_str(slots: list[str]) -> str:
 
 
 def _claim_true(claim, slots: list[str]) -> bool:
-    """Claim je pravdivý pokud hráč má alespoň tolik srdcí, kolik tvrdí."""
     actual = _hearts(slots)
     return actual == 4 if claim == "jackpot" else actual >= claim
 
@@ -93,20 +100,34 @@ def _record_win(uid: str):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class SlotsLobbyView(discord.ui.View):
-    def __init__(self, cog: "SlotsCog", author: discord.Member):
+    def __init__(self, cog: "SlotsCog", author: discord.Member, bet: int = 0):
         super().__init__(timeout=120)
-        self.cog   = cog
+        self.cog    = cog
         self.author = author
+        self.bet    = bet
         self.players: list[discord.Member] = [author]
+        self.paid: set[str] = set()
+
+        # Autor platí hned při vytvoření lobby
+        if bet > 0:
+            uid = str(author.id)
+            eco = _load_eco()
+            eco[uid] = eco.get(uid, 0) - bet
+            _save_eco(eco)
+            self.paid.add(uid)
 
     def _embed(self) -> discord.Embed:
         names = "\n".join(f"• {m.display_name}" for m in self.players)
+        pot   = self.bet * len(self.paid)
         e = discord.Embed(title="🎰 Liar Slots — Lobby", color=0xFFD700)
         e.description = (
             "Bluffovací slot machine. Každý tah točíš 4 sloty — **1 vidí všichni**.\n"
             "Prohlásíš kolik ❤️ máš, ostatní ti buď věří nebo křičí **LIAR!**\n\n"
             f"**Hráči ({len(self.players)}/{MAX_PLAYERS}):**\n{names}"
         )
+        if self.bet > 0:
+            e.add_field(name="Sázka", value=f"{self.bet} {COIN} každý", inline=True)
+            e.add_field(name="Pot",   value=f"{pot} {COIN}", inline=True)
         return e
 
     @discord.ui.button(label="🎰 Připojit se", style=discord.ButtonStyle.success, custom_id="ls_join")
@@ -117,7 +138,37 @@ class SlotsLobbyView(discord.ui.View):
         if len(self.players) >= MAX_PLAYERS:
             await interaction.response.send_message("Hra je plná!", ephemeral=True)
             return
+        uid = str(interaction.user.id)
+        if self.bet > 0:
+            eco = _load_eco()
+            if eco.get(uid, 0) < self.bet:
+                await interaction.response.send_message(
+                    f"❌ Nemáš dost zlaťáků! Potřebuješ **{self.bet}** {COIN}.", ephemeral=True
+                )
+                return
+            eco[uid] = eco.get(uid, 0) - self.bet
+            _save_eco(eco)
+            self.paid.add(uid)
         self.players.append(interaction.user)
+        await interaction.response.edit_message(embed=self._embed())
+
+    @discord.ui.button(label="🚪 Odejít", style=discord.ButtonStyle.secondary, custom_id="ls_leave")
+    async def leave_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id == self.author.id:
+            await interaction.response.send_message(
+                "Zakladatel nemůže odejít. Použij Zrušit.", ephemeral=True
+            )
+            return
+        if interaction.user not in self.players:
+            await interaction.response.send_message("Nejsi v lobby.", ephemeral=True)
+            return
+        uid = str(interaction.user.id)
+        if self.bet > 0 and uid in self.paid:
+            eco = _load_eco()
+            eco[uid] = eco.get(uid, 0) + self.bet
+            _save_eco(eco)
+            self.paid.discard(uid)
+        self.players = [p for p in self.players if p.id != interaction.user.id]
         await interaction.response.edit_message(embed=self._embed())
 
     @discord.ui.button(label="▶️ Spustit", style=discord.ButtonStyle.primary, custom_id="ls_start")
@@ -130,8 +181,26 @@ class SlotsLobbyView(discord.ui.View):
                 f"Potřeba alespoň {MIN_PLAYERS} hráče.", ephemeral=True
             )
             return
+        pot = self.bet * len(self.paid)
+        self.stop()
         await interaction.response.edit_message(content="🎰 **Liar Slots** se spouští…", embed=None, view=None)
-        await self.cog._start_game(interaction.channel, self.players)
+        await self.cog._start_game(interaction.channel, self.players, self.bet, pot)
+
+    @discord.ui.button(label="🚫 Zrušit", style=discord.ButtonStyle.danger, custom_id="ls_cancel_lobby")
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if (interaction.user.id != self.author.id
+                and not interaction.user.guild_permissions.administrator):
+            await interaction.response.send_message("Pouze zakladatel nebo admin.", ephemeral=True)
+            return
+        if self.bet > 0 and self.paid:
+            eco = _load_eco()
+            for uid in self.paid:
+                eco[uid] = eco.get(uid, 0) + self.bet
+            _save_eco(eco)
+        self.stop()
+        await interaction.response.edit_message(
+            content="🚫 Lobby zrušeno. Sázky vráceny.", embed=None, view=None
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -144,6 +213,7 @@ class SpinView(discord.ui.View):
         self.cog  = cog
         self.game = game
         self.uid  = uid
+        self._used = False  # guard proti double-click
 
         spin_btn = discord.ui.Button(
             label="🎰 Točit!", style=discord.ButtonStyle.primary, custom_id=f"ls_spin_{uid}"
@@ -153,7 +223,8 @@ class SpinView(discord.ui.View):
 
         if not game["players"][uid].get("double_spin_used"):
             ds_btn = discord.ui.Button(
-                label="🎰🎰 Double Spin (1×)", style=discord.ButtonStyle.secondary, custom_id=f"ls_ds_{uid}"
+                label="🎰🎰 Double Spin (1×)", style=discord.ButtonStyle.secondary,
+                custom_id=f"ls_ds_{uid}"
             )
             ds_btn.callback = self._double_spin_cb
             self.add_item(ds_btn)
@@ -169,6 +240,11 @@ class SpinView(discord.ui.View):
         if str(interaction.user.id) != self.uid:
             await interaction.response.send_message("Nejsi na tahu.", ephemeral=True)
             return
+        if self._used:
+            await interaction.response.send_message("Už jsi točil/a.", ephemeral=True)
+            return
+        self._used = True
+        self.stop()
         slots = _spin(4)
         self.game["players"][self.uid]["current_slots"] = slots
         await self.cog._after_spin(interaction, self.game, self.uid, slots)
@@ -177,6 +253,11 @@ class SpinView(discord.ui.View):
         if str(interaction.user.id) != self.uid:
             await interaction.response.send_message("Nejsi na tahu.", ephemeral=True)
             return
+        if self._used:
+            await interaction.response.send_message("Už jsi točil/a.", ephemeral=True)
+            return
+        self._used = True
+        self.stop()
         self.game["players"][self.uid]["double_spin_used"] = True
         slots_a = _spin(4)
         slots_b = _spin(4)
@@ -197,16 +278,24 @@ class SpinView(discord.ui.View):
         if not _can_execute(self.game, self.uid):
             await interaction.response.send_message("EXECUTE není dostupný.", ephemeral=True)
             return
+        if self._used:
+            await interaction.response.send_message("Již provedeno.", ephemeral=True)
+            return
+        self._used = True
+        self.stop()
         await self.cog._handle_execute(interaction, self.game, self.uid)
 
     async def on_timeout(self):
-        """Auto-skip tahu po vypršení."""
+        if self._used:
+            return
         channel = self.cog.bot.get_channel(self.game.get("channel_id", 0))
         if channel and self.game.get("channel_id") in self.cog.active_games:
             pdata = self.game["players"][self.uid]
             await channel.send(f"⏱️ **{pdata['name']}** nestihl/a točit — tah přeskočen.")
-            self.game["turn_idx"] = (self.game["turn_idx"] + 1) % len(self.game["turn_order"])
-            await self.cog._start_turn(channel, self.game)
+            game = self.game
+            order = game["turn_order"]
+            game["turn_idx"] = (game["turn_idx"] + 1) % len(order)
+            await self.cog._start_turn(channel, game)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -221,6 +310,7 @@ class DoubleSpinChoiceView(discord.ui.View):
         self.uid     = uid
         self.slots_a = slots_a
         self.slots_b = slots_b
+        self._picked = False  # bug fix: zabrání double-pick
 
         btn_a = discord.ui.Button(
             label=f"Výsledek A  ({_hearts(slots_a)}❤️)",
@@ -242,6 +332,11 @@ class DoubleSpinChoiceView(discord.ui.View):
         if str(interaction.user.id) != self.uid:
             await interaction.response.send_message("Nejsi na tahu.", ephemeral=True)
             return
+        if self._picked:
+            await interaction.response.send_message("Již jsi vybral/a.", ephemeral=True)
+            return
+        self._picked = True
+        self.stop()
         self.game["players"][self.uid]["current_slots"] = self.slots_a
         await self.cog._after_spin(interaction, self.game, self.uid, self.slots_a)
 
@@ -249,8 +344,30 @@ class DoubleSpinChoiceView(discord.ui.View):
         if str(interaction.user.id) != self.uid:
             await interaction.response.send_message("Nejsi na tahu.", ephemeral=True)
             return
+        if self._picked:
+            await interaction.response.send_message("Již jsi vybral/a.", ephemeral=True)
+            return
+        self._picked = True
+        self.stop()
         self.game["players"][self.uid]["current_slots"] = self.slots_b
         await self.cog._after_spin(interaction, self.game, self.uid, self.slots_b)
+
+    async def on_timeout(self):
+        """Hráč nevybral → použijeme A jako default a pokračujeme."""
+        if self._picked:
+            return
+        self._picked = True
+        channel = self.cog.bot.get_channel(self.game.get("channel_id", 0))
+        if channel and self.game.get("channel_id") in self.cog.active_games:
+            self.game["players"][self.uid]["current_slots"] = self.slots_a
+            pdata = self.game["players"][self.uid]
+            await channel.send(
+                f"⏱️ **{pdata['name']}** nestihl/a vybrat Double Spin → automaticky Výsledek A."
+            )
+            # Spustíme declare přímo přes fake interaction není možné — přeskočíme tah
+            order = self.game["turn_order"]
+            self.game["turn_idx"] = (self.game["turn_idx"] + 1) % len(order)
+            await self.cog._start_turn(channel, self.game)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -260,10 +377,11 @@ class DoubleSpinChoiceView(discord.ui.View):
 class DeclareView(discord.ui.View):
     def __init__(self, cog, game, uid, slots):
         super().__init__(timeout=60)
-        self.cog   = cog
-        self.game  = game
-        self.uid   = uid
-        self.slots = slots
+        self.cog      = cog
+        self.game     = game
+        self.uid      = uid
+        self.slots    = slots
+        self._declared = False
 
         options = [
             discord.SelectOption(label="❤️ × 1", value="1", description="+1 bod"),
@@ -281,9 +399,26 @@ class DeclareView(discord.ui.View):
         if str(interaction.user.id) != self.uid:
             await interaction.response.send_message("Nejsi na tahu.", ephemeral=True)
             return
+        if self._declared:
+            await interaction.response.send_message("Již jsi prohlásil/a.", ephemeral=True)
+            return
+        self._declared = True
+        self.stop()
         val = interaction.data["values"][0]
         claim = int(val) if val != "jackpot" else "jackpot"
         await self.cog._process_declaration(interaction, self.game, self.uid, claim)
+
+    async def on_timeout(self):
+        """Hráč nestihl deklarovat — přeskočíme tah."""
+        if self._declared:
+            return
+        channel = self.cog.bot.get_channel(self.game.get("channel_id", 0))
+        if channel and self.game.get("channel_id") in self.cog.active_games:
+            pdata = self.game["players"][self.uid]
+            await channel.send(f"⏱️ **{pdata['name']}** nestihl/a deklarovat — tah přeskočen.")
+            order = self.game["turn_order"]
+            self.game["turn_idx"] = (self.game["turn_idx"] + 1) % len(order)
+            await self.cog._start_turn(channel, self.game)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -299,8 +434,8 @@ class ResponseView(discord.ui.View):
         self.claim         = claim
         self.resolve_event = resolve_event
         self.liar_caller_uid: str | None = None
-        self._accepted: set[str] = set()   # hráči kteří klikli Věřím
-        self._bets: dict[str, int] = {}    # uid -> vsazená částka (sázka na lež)
+        self._accepted: set[str] = set()
+        self._bets: dict[str, int] = {}
 
         liar_btn = discord.ui.Button(
             label="🚨 LIAR!", style=discord.ButtonStyle.danger, custom_id="ls_liar", row=0
@@ -413,12 +548,24 @@ class SlotsCog(commands.Cog):
     # ── Slash commandy ────────────────────────────────────────────────────────
 
     @app_commands.command(name="liar_slots", description="Spustí hru Liar Slots")
-    async def liar_slots_cmd(self, interaction: discord.Interaction):
+    @app_commands.describe(sazka="Vstupní sázka v zlaťácích (0 = bez sázky)")
+    async def liar_slots_cmd(self, interaction: discord.Interaction, sazka: int = 0):
         cid = interaction.channel_id
         if cid in self.active_games:
             await interaction.response.send_message("Ve tomto kanálu již běží hra!", ephemeral=True)
             return
-        view = SlotsLobbyView(self, interaction.user)
+        if sazka < 0:
+            await interaction.response.send_message("Sázka nesmí být záporná.", ephemeral=True)
+            return
+        if sazka > 0:
+            uid = str(interaction.user.id)
+            eco = _load_eco()
+            if eco.get(uid, 0) < sazka:
+                await interaction.response.send_message(
+                    f"❌ Nemáš dost zlaťáků! Potřebuješ **{sazka}** {COIN}.", ephemeral=True
+                )
+                return
+        view = SlotsLobbyView(self, interaction.user, sazka)
         await interaction.response.send_message(embed=view._embed(), view=view)
 
     @app_commands.command(name="slots_leaderboard", description="Žebříček výher Liar Slots")
@@ -435,9 +582,26 @@ class SlotsCog(commands.Cog):
         e = discord.Embed(title="🎰 Liar Slots — Žebříček", description="\n".join(lines), color=0xFFD700)
         await interaction.response.send_message(embed=e)
 
+    @app_commands.command(name="slots_cancel", description="[Admin] Zruší probíhající Liar Slots")
+    async def slots_cancel_cmd(self, interaction: discord.Interaction):
+        if interaction.channel_id not in self.active_games:
+            await interaction.response.send_message("Žádná hra neběží.", ephemeral=True)
+            return
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("Pouze admin může zrušit hru.", ephemeral=True)
+            return
+        del self.active_games[interaction.channel_id]
+        await interaction.response.send_message("🛑 Hra zrušena.")
+
     # ── Spuštění hry ──────────────────────────────────────────────────────────
 
-    async def _start_game(self, channel: discord.TextChannel, players: list[discord.Member]):
+    async def _start_game(
+        self,
+        channel: discord.TextChannel,
+        players: list[discord.Member],
+        bet: int = 0,
+        pot: int = 0,
+    ):
         random.shuffle(players)
         game: dict = {
             "channel_id": channel.id,
@@ -453,8 +617,10 @@ class SlotsCog(commands.Cog):
             },
             "turn_order": [str(m.id) for m in players],
             "turn_idx":   0,
-            "liar_called": False,
+            "liar_called":   False,
             "current_claim": None,
+            "bet": bet,
+            "pot": pot,
         }
         self.active_games[channel.id] = game
 
@@ -469,10 +635,12 @@ class SlotsCog(commands.Cog):
             "• Lhář chycen → **Death Spin** (40% přežití, jinak vyřazen)\n"
             "• Přežije → přijde o body posledního claimu\n"
             "• Falešné LIAR → volající přijde o 1 bod\n"
-            f"• **{EXECUTE_THRESHOLD} bodů** → odemkneš **⚡ EXECUTE** "
-            f"(okamžité zabití nejslabšího, jen když jsi jediný lídr)\n"
-            "• **🎰🎰 Double Spin** — 1× za hru, točíš dvakrát a vybereš výsledek"
+            f"• **{EXECUTE_THRESHOLD} bodů** + jediný lídr → odemkneš **⚡ EXECUTE**\n"
+            "• **🎰🎰 Double Spin** — 1× za hru, točíš dvakrát a vybereš výsledek\n"
+            "• **💰 Vsadit na lež** — vsaď body na to, že hráč lže (vyhodnotí se při odhalení)"
         )
+        if pot > 0:
+            e.add_field(name="💰 Pot", value=f"**{pot}** {COIN}", inline=True)
         await channel.send(embed=e)
         await self._start_turn(channel, game)
 
@@ -482,36 +650,39 @@ class SlotsCog(commands.Cog):
         if game["channel_id"] not in self.active_games:
             return
 
-        # Najít dalšího živého hráče
         order = game["turn_order"]
-        n = len(order)
+        n     = len(order)
+        if n == 0:
+            return
+
+        # Najít dalšího živého hráče
+        found = False
         for _ in range(n):
             uid = order[game["turn_idx"] % n]
             if game["players"][uid]["alive"]:
+                found = True
                 break
             game["turn_idx"] = (game["turn_idx"] + 1) % n
-        else:
-            return  # Nikdo živý
+
+        if not found:
+            return
 
         game["liar_called"] = False
-        pdata = game["players"][uid]
+        pdata  = game["players"][uid]
         member = channel.guild.get_member(int(uid))
 
-        e = discord.Embed(
-            title=f"🎰 Tah: {pdata['name']}",
-            color=0xFFD700,
-        )
+        pot_str = f" · Pot: **{game['pot']}** {COIN}" if game.get("pot", 0) > 0 else ""
+        e = discord.Embed(title=f"🎰 Tah: {pdata['name']}", color=0xFFD700)
         e.add_field(name="📊 Skóre", value=_standings_str(game), inline=False)
-        e.set_footer(text="Klikni 🎰 Točit! nebo použij speciální akci.")
+        e.set_footer(text=f"Klikni 🎰 Točit! nebo použij speciální akci.{pot_str}")
 
-        view = SpinView(self, game, uid)
+        view    = SpinView(self, game, uid)
         mention = member.mention if member else pdata["name"]
         await channel.send(f"{mention} — jsi na tahu!", embed=e, view=view)
 
     # ── Po točení ─────────────────────────────────────────────────────────────
 
     async def _after_spin(self, interaction: discord.Interaction, game: dict, uid: str, slots: list[str]):
-        """Zobrazí sloty hráči ephemerally + nabídne declare."""
         h = _hearts(slots)
         label = "🎰 **JACKPOT možný!**" if h == 4 else f"Srdcí: **{h}**"
         declare_view = DeclareView(self, game, uid, slots)
@@ -528,12 +699,12 @@ class SlotsCog(commands.Cog):
     async def _process_declaration(
         self, interaction: discord.Interaction, game: dict, uid: str, claim
     ):
-        slots = game["players"][uid]["current_slots"]
-        public_slot = slots[0]  # Vždy první slot je veřejný
+        slots       = game["players"][uid]["current_slots"]
+        public_slot = slots[0]
         game["current_claim"] = {"uid": uid, "claim": claim, "slots": slots}
 
         channel = interaction.client.get_channel(game["channel_id"])
-        pdata = game["players"][uid]
+        pdata   = game["players"][uid]
 
         resolve_event = asyncio.Event()
         response_view = ResponseView(self, game, uid, claim, resolve_event)
@@ -548,13 +719,11 @@ class SlotsCog(commands.Cog):
         await interaction.response.send_message("✅ Prohlášení odesláno!", ephemeral=True)
         msg = await channel.send(embed=e, view=response_view)
 
-        # Čekat na LIAR nebo timeout
         try:
             await asyncio.wait_for(resolve_event.wait(), timeout=RESPONSE_TIMEOUT + 2)
         except asyncio.TimeoutError:
             pass
 
-        # Zakázat tlačítka
         for child in response_view.children:
             child.disabled = True
         try:
@@ -564,7 +733,9 @@ class SlotsCog(commands.Cog):
 
         bets = response_view._bets
         if game.get("liar_called") and response_view.liar_caller_uid:
-            await self._resolve_liar(channel, game, response_view.liar_caller_uid, uid, claim, slots, bets)
+            await self._resolve_liar(
+                channel, game, response_view.liar_caller_uid, uid, claim, slots, bets
+            )
         else:
             await self._award_claim(channel, game, uid, claim, slots, bets)
 
@@ -670,7 +841,7 @@ class SlotsCog(commands.Cog):
     # ── Death Spin ────────────────────────────────────────────────────────────
 
     async def _death_spin(self, channel: discord.TextChannel, game: dict, uid: str):
-        pdata     = game["players"][uid]
+        pdata      = game["players"][uid]
         death_slot = HEART if random.random() < DEATH_HEART_CHANCE else random.choice(NON_HEARTS)
 
         e = discord.Embed(title=f"💀 Death Spin: {pdata['name']}", color=0x8B0000)
@@ -712,8 +883,8 @@ class SlotsCog(commands.Cog):
             await interaction.response.send_message("Nikdo k eliminaci.", ephemeral=True)
             return
 
-        min_pts = min(p["points"] for _, p in alive_others)
-        targets = [(u, p) for u, p in alive_others if p["points"] == min_pts]
+        min_pts    = min(p["points"] for _, p in alive_others)
+        targets    = [(u, p) for u, p in alive_others if p["points"] == min_pts]
         target_uid, target = random.choice(targets)
         target["alive"] = False
 
@@ -761,6 +932,12 @@ class SlotsCog(commands.Cog):
             w = game["players"][winner_uid]
             e.description = f"🏆 Vítěz: **{w['name']}**!"
             _record_win(winner_uid)
+            pot = game.get("pot", 0)
+            if pot > 0:
+                eco = _load_eco()
+                eco[winner_uid] = eco.get(winner_uid, 0) + pot
+                _save_eco(eco)
+                e.description += f"\n🏆 Výhra: **{pot}** {COIN}"
         else:
             e.description = "Všichni byli eliminováni — remíza!"
         e.add_field(name="Výsledky", value="\n".join(rows), inline=False)
