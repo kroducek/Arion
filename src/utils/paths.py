@@ -41,6 +41,7 @@ KOSTKY_LB      = data("kostky_leaderboard.json")
 KOSTKY_MAGIC   = data("kostky_magic_dice.json")
 GUESS_SCORES       = data("guess_scores.json")
 LIAR_SCORES        = data("liar_scores.json")
+LIAR_SLOTS_SCORES  = data("liar_slots_scores.json")
 LABYRINTH_SCORES   = data("labyrinth_scores.json")
 
 # ── Příběhy / novinky ────────────────────────────────────────
