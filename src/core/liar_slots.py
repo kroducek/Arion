@@ -299,18 +299,33 @@ class ResponseView(discord.ui.View):
         self.claim         = claim
         self.resolve_event = resolve_event
         self.liar_caller_uid: str | None = None
+        self._accepted: set[str] = set()   # hráči kteří klikli Věřím
+        self._bets: dict[str, int] = {}    # uid -> vsazená částka (sázka na lež)
 
         liar_btn = discord.ui.Button(
-            label="🚨 LIAR!", style=discord.ButtonStyle.danger, custom_id="ls_liar"
+            label="🚨 LIAR!", style=discord.ButtonStyle.danger, custom_id="ls_liar", row=0
         )
         liar_btn.callback = self._liar_cb
         self.add_item(liar_btn)
 
         accept_btn = discord.ui.Button(
-            label="✅ Věřím", style=discord.ButtonStyle.success, custom_id="ls_accept"
+            label="✅ Věřím", style=discord.ButtonStyle.success, custom_id="ls_accept", row=0
         )
         accept_btn.callback = self._accept_cb
         self.add_item(accept_btn)
+
+        bet_sel = discord.ui.Select(
+            placeholder="💰 Vsadit body na lež…",
+            options=[
+                discord.SelectOption(label="💰 Vsadit 1 bod na lež",  value="1"),
+                discord.SelectOption(label="💰 Vsadit 2 body na lež", value="2"),
+                discord.SelectOption(label="💰 Vsadit 3 body na lež", value="3"),
+            ],
+            custom_id="ls_bet",
+            row=1,
+        )
+        bet_sel.callback = self._bet_cb
+        self.add_item(bet_sel)
 
     async def _liar_cb(self, interaction: discord.Interaction):
         uid = str(interaction.user.id)
@@ -339,7 +354,47 @@ class ResponseView(discord.ui.View):
         if not self.game["players"].get(uid, {}).get("alive"):
             await interaction.response.send_message("Nejsi aktivní hráč.", ephemeral=True)
             return
-        await interaction.response.send_message("✅ Věříš.", ephemeral=True)
+        if self.game.get("liar_called"):
+            await interaction.response.send_message("LIAR byl již zavolán.", ephemeral=True)
+            return
+        self._accepted.add(uid)
+        alive_others = {u for u, p in self.game["players"].items()
+                        if p["alive"] and u != self.declaring_uid}
+        remaining = alive_others - self._accepted
+        if not remaining:
+            self.resolve_event.set()
+            await interaction.response.send_message(
+                "✅ Všichni věří — tah se ukončuje!", ephemeral=False
+            )
+        else:
+            await interaction.response.send_message(
+                f"✅ Věříš. ({len(self._accepted)}/{len(alive_others)})", ephemeral=True
+            )
+
+    async def _bet_cb(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        if uid == self.declaring_uid:
+            await interaction.response.send_message("Nemůžeš vsadit na vlastní claim.", ephemeral=True)
+            return
+        if not self.game["players"].get(uid, {}).get("alive"):
+            await interaction.response.send_message("Nejsi aktivní hráč.", ephemeral=True)
+            return
+        if uid in self._bets:
+            await interaction.response.send_message(
+                f"Už jsi vsadil/a {self._bets[uid]} bod(ů).", ephemeral=True
+            )
+            return
+        amount = int(interaction.data["values"][0])
+        pdata = self.game["players"][uid]
+        if pdata["points"] < amount:
+            await interaction.response.send_message(
+                f"Nemáš dost bodů (máš {pdata['points']}).", ephemeral=True
+            )
+            return
+        self._bets[uid] = amount
+        await interaction.response.send_message(
+            f"💰 Vsazeno **{amount}** bod(ů) na lež. Výsledek uvidíš při odhalení.", ephemeral=True
+        )
 
     async def on_timeout(self):
         if not self.resolve_event.is_set():
@@ -507,10 +562,11 @@ class SlotsCog(commands.Cog):
         except Exception:
             pass
 
+        bets = response_view._bets
         if game.get("liar_called") and response_view.liar_caller_uid:
-            await self._resolve_liar(channel, game, response_view.liar_caller_uid, uid, claim, slots)
+            await self._resolve_liar(channel, game, response_view.liar_caller_uid, uid, claim, slots, bets)
         else:
-            await self._award_claim(channel, game, uid, claim)
+            await self._award_claim(channel, game, uid, claim, slots, bets)
 
     # ── Rozhodnutí o LIAR ─────────────────────────────────────────────────────
 
@@ -522,6 +578,7 @@ class SlotsCog(commands.Cog):
         declarer_uid: str,
         claim,
         slots: list[str],
+        bets: dict | None = None,
     ):
         caller   = game["players"][caller_uid]
         declarer = game["players"][declarer_uid]
@@ -544,6 +601,7 @@ class SlotsCog(commands.Cog):
                 inline=False,
             )
             await channel.send(embed=e)
+            await self._apply_bets(channel, game, bets or {}, is_lie)
             await self._death_spin(channel, game, declarer_uid)
         else:
             e.add_field(
@@ -556,20 +614,58 @@ class SlotsCog(commands.Cog):
             await channel.send(
                 f"📉 **{caller['name']}** přichází o 1 bod → **{caller['points']}** bodů"
             )
+            await self._apply_bets(channel, game, bets or {}, is_lie)
             await self._next_turn(channel, game)
 
     # ── Udělení bodů (nikdo nevolal LIAR) ────────────────────────────────────
 
-    async def _award_claim(self, channel: discord.TextChannel, game: dict, uid: str, claim):
+    async def _award_claim(
+        self,
+        channel: discord.TextChannel,
+        game: dict,
+        uid: str,
+        claim,
+        slots: list[str] | None = None,
+        bets: dict | None = None,
+    ):
         pdata = game["players"][uid]
         pts   = CLAIM_POINTS.get(claim, 1)
         pdata["points"] += pts
         suffix = "bodů" if pts > 4 else ("body" if pts > 1 else "bod")
         await channel.send(
-            f"⏱️ Nikdo nevolal LIAR. "
+            f"✅ Nikdo nevolal LIAR. "
             f"**{pdata['name']}** získává +**{pts}** {suffix} → celkem **{pdata['points']}**"
         )
+        if slots is not None and bets:
+            is_lie = not _claim_true(claim, slots)
+            await self._apply_bets(channel, game, bets, is_lie)
         await self._next_turn(channel, game)
+
+    # ── Sázky ─────────────────────────────────────────────────────────────────
+
+    async def _apply_bets(
+        self, channel: discord.TextChannel, game: dict, bets: dict, is_lie: bool
+    ):
+        if not bets:
+            return
+        lines = []
+        for bet_uid, amount in bets.items():
+            bp = game["players"].get(bet_uid)
+            if not bp:
+                continue
+            if is_lie:
+                bp["points"] += amount
+                lines.append(f"💰 **{bp['name']}** vsadil/a správně → **+{amount}** bod(ů)")
+            else:
+                bp["points"] = max(0, bp["points"] - amount)
+                lines.append(f"💸 **{bp['name']}** vsadil/a špatně → **−{amount}** bod(ů)")
+        if lines:
+            e = discord.Embed(
+                title="💰 Výsledky sázek",
+                description="\n".join(lines),
+                color=0xF39C12,
+            )
+            await channel.send(embed=e)
 
     # ── Death Spin ────────────────────────────────────────────────────────────
 
