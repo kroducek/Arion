@@ -249,6 +249,8 @@ class StopWordModal(discord.ui.Modal, title="STOP! Zadej slovo pro hráče"):
 # ── Main Cog ──────────────────────────────────────────────────────────────────
 
 class StoryCog(commands.Cog):
+    story_group = app_commands.Group(name="story", description="Kronika — kolaborativní příběh")
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.active_games: dict = {}
@@ -496,7 +498,7 @@ class StoryCog(commands.Cog):
 
     # ── Slash příkazy ─────────────────────────────────────────────────────────
 
-    @app_commands.command(name="story_create", description="Založ novou Kroniku!")
+    @story_group.command(name="create", description="Založ novou Kroniku!")
     @app_commands.describe(max_kol="Počet kol do konce hry", tema="Téma příběhu")
     async def story_create(self, interaction: discord.Interaction, max_kol: int, tema: str):
         if interaction.channel.id in self.active_games:
@@ -508,7 +510,7 @@ class StoryCog(commands.Cog):
             view=view
         )
 
-    @app_commands.command(name="story_skip", description="Přeskočí aktuálního hráče.")
+    @story_group.command(name="skip", description="Přeskočí aktuálního hráče.")
     async def story_skip(self, interaction: discord.Interaction):
         if interaction.channel.id not in self.active_games:
             await interaction.response.send_message("Tady se nic nehraje.", ephemeral=True)
@@ -518,7 +520,7 @@ class StoryCog(commands.Cog):
         await interaction.response.send_message("⏩ Hráč byl přeskočen.")
         await self.next_turn(interaction.channel.id, interaction.channel)
 
-    @app_commands.command(name="story_cancel", description="Zruší hru v tomto kanálu.")
+    @story_group.command(name="cancel", description="Zruší hru v tomto kanálu.")
     async def story_cancel(self, interaction: discord.Interaction):
         if interaction.channel.id in self.active_games:
             del self.active_games[interaction.channel.id]
@@ -526,7 +528,7 @@ class StoryCog(commands.Cog):
         else:
             await interaction.response.send_message("Žádná hra neběží.", ephemeral=True)
 
-    @app_commands.command(name="story_stop", description="[DIVÁK] Zastav příběh a zadej slovo!")
+    @story_group.command(name="stop", description="[DIVÁK] Zastav příběh a zadej slovo!")
     async def story_stop(self, interaction: discord.Interaction):
         if interaction.channel.id not in self.active_games:
             await interaction.response.send_message("Tady se nic nehraje.", ephemeral=True)
@@ -534,7 +536,7 @@ class StoryCog(commands.Cog):
         modal = StopWordModal(self, interaction.channel.id)
         await interaction.response.send_modal(modal)
 
-    @app_commands.command(name="story_library", description="Zobraz uložené příběhy z Kroniky.")
+    @story_group.command(name="library", description="Zobraz uložené příběhy z Kroniky.")
     @app_commands.describe(index="Číslo příběhu (nech prázdné pro seznam)")
     async def story_library(self, interaction: discord.Interaction, index: int = None):
         library = load_library()
@@ -579,7 +581,7 @@ class StoryCog(commands.Cog):
 
 
 
-    @app_commands.command(name="story_resume", description="Obnoví rozehranou hru po pádu bota")
+    @story_group.command(name="resume", description="Obnoví rozehranou hru po pádu bota")
     @app_commands.describe(index="Číslo kola od kterého pokračovat (nech prázdné = pokračuj od posledního uloženého)")
     @app_commands.checks.has_permissions(administrator=True)
     async def story_resume(self, interaction: discord.Interaction, index: int = None):

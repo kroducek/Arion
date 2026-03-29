@@ -239,7 +239,7 @@ class SentenceInputView(discord.ui.View):
 
 class GuessModal(discord.ui.Modal, title="Hádat"):
     guess = discord.ui.TextInput(
-        label="Písmeno — nebo celá věta (= -2 chyby při špatné)",
+        label="Písmeno nebo celá věta (+2 chyby při chybě)",
         placeholder="1 písmeno, nebo celá věta najednou",
         max_length=80,
         min_length=1,
