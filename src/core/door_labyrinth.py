@@ -169,6 +169,15 @@ def _build_map(rows: int, cols: int) -> dict:
             }
     return rooms
 
+async def _delete_after(msg: discord.Message, delay: float = 10.0) -> None:
+    """Smaže zprávu po určité době — zabrání odhalení identity přes historii vlákna."""
+    await asyncio.sleep(delay)
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
+
 def _scatter_items_and_codes(game: dict):
     """Rozmístí předměty, klíč, čísla kódu, výstup, hlasovací místnost a tmu po mapě."""
     room_ids = list(game["map"].keys())
@@ -220,7 +229,8 @@ def _scatter_items_and_codes(game: dict):
 
     # ── Garantovaný loot v každé neprázdné ne-exitové místnosti ─────────────────
     # Každá místnost dostane 1-2 běžné předměty (bez duplikátů)
-    common_items_all = ["baterka", "zapalovač", "svíčka", "kanystr"]
+    # Kanystr NENÍ v běžném poolu — spawní se dedikovaně níže
+    common_items_all = ["baterka", "zapalovač", "svíčka"]
     for room_id in non_exit_rooms:
         count = 1 if game["map"][room_id].get("dark") else random.randint(1, 2)
         pool = common_items_all * 2
@@ -243,15 +253,16 @@ def _scatter_items_and_codes(game: dict):
         if weapon not in game["map"][room_id]["items"]:
             game["map"][room_id]["items"].append(weapon)
 
-    # ── Garantovat dostatek kanystru: min(6, n_rooms//2 + 2), přednost ne-tmavým ──
-    # Kanystry: základ ze velikosti mapy (3 nutné + buffer ~n_rooms/4), max 10
-    target_fuel = max(5, min(n_rooms // 3 + 3, 10))
-    spawned_fuel = sum(1 for r in game["map"].values() for i in r["items"] if i == "kanystr")
+    # ── Kanystry: potřeba 3 pro generátor + buffer pro každého hráče ─────────────
+    # Cíl: aspoň (hráčů + 3) kanystru, max 12. Start room nevylučujeme.
+    n_players = len(game["players"])
+    target_fuel = max(n_players + 3, min(n_rooms // 2 + 2, 12))
+    spawned_fuel = sum(1 for r in game["map"].values() for i in r.get("items", []) if i == "kanystr")
     extra_needed = max(0, target_fuel - spawned_fuel)
     if extra_needed > 0:
-        fuel_candidates = [r for r in non_exit_rooms if r != start_room and not game["map"][r].get("dark")]
+        fuel_candidates = [r for r in non_exit_rooms if not game["map"][r].get("dark")]
         if not fuel_candidates:
-            fuel_candidates = [r for r in non_exit_rooms if r != start_room]
+            fuel_candidates = list(non_exit_rooms)
         placed = 0
         attempts = 0
         cands = fuel_candidates[:]
@@ -2474,8 +2485,8 @@ class LabyrinthCog(commands.Cog):
             ]
             action_view = RoomActionView(self, game, room_id)
             await thread.send(
-                f"**Kolo {game['round']} — Fáze akcí**\n"
-                f"Hráči v místnosti: {', '.join(players_here)}\n"
+                f"**Kolo {game['round']} — Fáze akcí** "
+                f"({len(players_here)} {'hráč' if len(players_here) == 1 else 'hráči' if len(players_here) < 5 else 'hráčů'})\n"
                 f"⏱️ Máte **60 sekund** na akce, nebo klikněte ✅ Zakončit tah.",
                 view=action_view,
             )
@@ -2838,10 +2849,11 @@ class LabyrinthCog(commands.Cog):
                 rt = channel.guild.get_channel_or_thread(thread_id)
                 if rt:
                     try:
-                        await rt.send(
+                        msg = await rt.send(
                             f"💀💀 **Masová vražda!** **{', '.join(killed_names)}** "
                             f"byli zabiti jedním úderem!"
                         )
+                        asyncio.create_task(_delete_after(msg, 10.0))
                     except Exception:
                         pass
 
@@ -2989,10 +3001,11 @@ class LabyrinthCog(commands.Cog):
         if rt_id:
             rt = channel.guild.get_channel_or_thread(rt_id)
             if rt:
-                await rt.send(
+                msg = await rt.send(
                     f"💀 **{victim['name']}** byl/a nalezen/a mrtvý/á. "
                     f"Tělo leží v místnosti {room_id}."
                 )
+                asyncio.create_task(_delete_after(msg, 10.0))
 
         # Amulet Druhé Naděje – přidat do fronty oživení
         if "amulet" in victim["items"]:
