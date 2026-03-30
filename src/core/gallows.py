@@ -71,6 +71,18 @@ _GALLOWS = [
 ]
 
 
+# ── Normalizace písmen ────────────────────────────────────────────────────────
+# Dlouhé samohlásky = základ (á→a, é→e, í→i, ó→o, ú/ů→u, ý→y).
+# Hákované souhlásky jsou samostatné (č≠c, š≠s, ž≠z, ř≠r, ě≠e, ď≠d, ť≠t, ň≠n).
+
+_VOWEL_NORM: dict[str, str] = {
+    "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ů": "u", "ý": "y",
+}
+
+def _normalize(ch: str) -> str:
+    return _VOWEL_NORM.get(ch.lower(), ch.lower())
+
+
 # ── Herní helpers ─────────────────────────────────────────────────────────────
 
 def _display_sentence(sentence: str, guessed: set[str]) -> str:
@@ -80,7 +92,7 @@ def _display_sentence(sentence: str, guessed: set[str]) -> str:
             parts.append("   ")
         elif not ch.isalpha():
             parts.append(ch)
-        elif ch.lower() in guessed:
+        elif _normalize(ch) in guessed:
             parts.append(ch.upper())
         else:
             parts.append("_")
@@ -88,7 +100,7 @@ def _display_sentence(sentence: str, guessed: set[str]) -> str:
 
 
 def _is_complete(sentence: str, guessed: set[str]) -> bool:
-    return all(not ch.isalpha() or ch.lower() in guessed for ch in sentence)
+    return all(not ch.isalpha() or _normalize(ch) in guessed for ch in sentence)
 
 
 def _sentence_matches(sentence: str, guess: str) -> bool:
@@ -252,15 +264,16 @@ class VoteLetterModal(discord.ui.Modal, title="Hlasovat pro písmeno"):
         if not pdata or not pdata["alive"]:
             await interaction.response.send_message("Jsi mimo hru.", ephemeral=True)
             return
-        raw = self.letter.value.strip().lower()
+        raw  = self.letter.value.strip().lower()
         if len(raw) != 1 or not raw.isalpha():
             await interaction.response.send_message("Zadej přesně jedno písmeno.", ephemeral=True)
             return
-        if raw in game["guessed"]:
+        norm = _normalize(raw)
+        if norm in game["guessed"]:
             await interaction.response.send_message(f"Písmeno **{raw.upper()}** už bylo hádáno.", ephemeral=True)
             return
 
-        game["current_votes"][uid] = raw
+        game["current_votes"][uid] = norm  # ukládáme normalizovanou formu
         await interaction.response.send_message(f"✅ Hlasoval/a jsi pro **{raw.upper()}**", ephemeral=True)
 
         channel = self.cog.bot.get_channel(self.channel_id)
@@ -409,6 +422,7 @@ class GallowsCog(commands.Cog):
             "sentence":      "",
             "guessed":       set(),
             "current_votes": {},
+            "round_count":   0,
             "players": {
                 str(p.id): {"name": p.display_name, "alive": True, "wrong": 0}
                 for p in guessers
@@ -451,11 +465,13 @@ class GallowsCog(commands.Cog):
 
     async def _start_vote_round(self, channel: discord.TextChannel, game: dict):
         game["current_votes"] = {}
+        game["round_count"]   = game.get("round_count", 0) + 1
         view = VoteView(self, channel.id)
         game["vote_view"] = view
 
         e = self._build_embed(game)
-        if game.get("board_msg"):
+        # Každé 3 kola pošli novou zprávu (hráči nemusí scrollovat)
+        if game.get("board_msg") and game["round_count"] % 3 != 1:
             try:
                 await game["board_msg"].edit(embed=e, view=view)
                 return
@@ -486,12 +502,16 @@ class GallowsCog(commands.Cog):
     # ── Zpracování písmene (skupinové) ────────────────────────────────────────
 
     async def _process_letter(self, channel: discord.TextChannel, game: dict, letter: str):
+        # letter přichází již normalizované
         game["guessed"].add(letter)
         sentence = game["sentence"]
 
-        if letter in sentence.lower():
-            count = sentence.lower().count(letter)
-            await channel.send(f"✅ **{letter.upper()}** je ve větě! ({count}×)")
+        matching = [ch for ch in sentence if ch.isalpha() and _normalize(ch) == letter]
+        if matching:
+            count  = len(matching)
+            unique = sorted(set(ch.upper() for ch in matching))
+            label  = "/".join(unique)
+            await channel.send(f"✅ **{label}** je ve větě! ({count}×)")
             if _is_complete(sentence, game["guessed"]):
                 await self._end_game(channel, game, winner="skupina")
                 return
@@ -599,11 +619,18 @@ class GallowsCog(commands.Cog):
         sentence = game["sentence"]
         e = discord.Embed(title="🪢 Šibenice — Konec!", color=0x2C3E50)
         if winner:
-            e.description = f"🎉 **{winner}** uhádl/a větu a vyhrál/a!\n\nVěta byla: **{sentence}**"
+            # Tým vyhrál → šibeničář oběšen
+            e.description = (
+                f"🎉 Tým vyhrál! **{game['hangman_name']}** (šibeničář) byl/a oběšen/a!\n\n"
+                f"```\n{_GALLOWS[6]}\n```\n"
+                f"Věta byla: **{sentence}**"
+            )
             e.color = 0x27AE60
         else:
+            # Šibeničář vyhrál → utekl, prázdná šibenice
             e.description = (
-                f"🏆 **{game['hangman_name']}** (šibeničář) vyhrál/a — nikdo větu neuhodl!\n\n"
+                f"🏆 **{game['hangman_name']}** (šibeničář) vyhrál/a — utekl/a!\n\n"
+                f"```\n{_GALLOWS[0]}\n```\n"
                 f"Věta byla: **{sentence}**"
             )
             e.color = 0xFF4500
