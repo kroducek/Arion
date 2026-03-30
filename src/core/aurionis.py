@@ -196,7 +196,7 @@ class Aurionis(commands.Cog):
             name="🎮 MINIHRY",
             value=(
                 "`/kostky` — Dice minihra\n"
-                "`/story_create` — Psaná minihra\n"
+                "`/story create` — Psaná minihra\n"
                 "`/poll` — Hlasování\n"
                 "`/countdown` — Odpočet"
             ),
