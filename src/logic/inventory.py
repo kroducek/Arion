@@ -1266,6 +1266,7 @@ class Inventory(commands.Cog):
         consumable="Po použití se zničí (výchozí: False).",
         hp_bonus="Bonus k max HP při equipu (trvalý dokud equipnuto).",
         mana_bonus="Bonus k max maně při equipu (trvalý dokud equipnuto).",
+        stat_bonus="Bonusy ke statům při equipu, např. STR:3 DEX:1 (0 = odebrat).",
         desc="Popis, lore, perky — volný text.",
     )
     @app_commands.choices(
@@ -1296,6 +1297,7 @@ class Inventory(commands.Cog):
         requires: Optional[str] = None,
         stackable: bool = False, consumable: bool = False,
         hp_bonus: Optional[int] = None, mana_bonus: Optional[int] = None,
+        stat_bonus: Optional[str] = None,
         desc: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
@@ -1331,6 +1333,10 @@ class Inventory(commands.Cog):
         equip_bonus: dict = {}
         if hp_bonus:   equip_bonus["hp_max"]   = hp_bonus
         if mana_bonus: equip_bonus["mana_max"] = mana_bonus
+        if stat_bonus:
+            for k, v in _parse_requires(stat_bonus).items():
+                if v != 0:
+                    equip_bonus[k] = v
         if equip_bonus: item["equip_bonus"] = equip_bonus
         items_db[item_id] = item
         _save_items(items_db)
@@ -1354,6 +1360,7 @@ class Inventory(commands.Cog):
         stackable="Změnit stackable příznak.",
         hp_bonus="Bonus k max HP při equipu (0 = odebrat).",
         mana_bonus="Bonus k max maně při equipu (0 = odebrat).",
+        stat_bonus="Bonusy ke statům při equipu, např. STR:3 DEX:1 (stat:0 = odebrat).",
     )
     @app_commands.autocomplete(item_id=_ac_database_item)
     async def inv_db_edit(
@@ -1372,6 +1379,7 @@ class Inventory(commands.Cog):
         stackable: Optional[bool] = None,
         hp_bonus: Optional[int] = None,
         mana_bonus: Optional[int] = None,
+        stat_bonus: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -1407,7 +1415,7 @@ class Inventory(commands.Cog):
             req_dict = _parse_requires(requires)
             if req_dict: item["requires"] = req_dict
             else:        item.pop("requires", None)
-        if hp_bonus is not None or mana_bonus is not None:
+        if hp_bonus is not None or mana_bonus is not None or stat_bonus is not None:
             eb = item.setdefault("equip_bonus", {})
             if hp_bonus is not None:
                 if hp_bonus != 0: eb["hp_max"]   = hp_bonus
@@ -1415,6 +1423,10 @@ class Inventory(commands.Cog):
             if mana_bonus is not None:
                 if mana_bonus != 0: eb["mana_max"] = mana_bonus
                 else:               eb.pop("mana_max", None)
+            if stat_bonus is not None:
+                for k, v in _parse_requires(stat_bonus).items():
+                    if v != 0: eb[k]         = v
+                    else:      eb.pop(k, None)
             if not eb:
                 item.pop("equip_bonus", None)
         _save_items(items_db)
