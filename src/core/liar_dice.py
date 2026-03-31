@@ -86,24 +86,6 @@ def _next_active_index(game: dict, from_index: int) -> int:
         idx = (idx + 1) % n
     return from_index
 
-async def _send_dice(member: discord.Member, dice: list[int], round_n: int,
-                     count: int, total_on_table: int):
-    """Pošle hráči jeho kostky do DM — s obrázkem pokud je dostupný."""
-    emoji_str = _fmt_emoji(dice)
-    content   = (
-        f"🎲 **Kostka lháře — Kolo {round_n}**\n"
-        f"Tvoje kostky: **{emoji_str}**\n"
-        f"-# Tvoje kostky: {count}  ·  Celkem na stole: {total_on_table}"
-    )
-    try:
-        if DICE_IMAGES:
-            buf  = build_dice_image(sorted(dice))
-            file = discord.File(buf, filename="kostky.png")
-            await member.send(content=content, file=file)
-        else:
-            await member.send(content=content)
-    except discord.Forbidden:
-        pass   # DM zakázány — hráč může kliknout "Moje kostky"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -336,7 +318,7 @@ class LiarLobby(discord.ui.View):
         if self.bet > 0:
             embed.add_field(name="Sázka", value=f"{self.bet} {COIN} každý", inline=True)
             embed.add_field(name="Pot",   value=f"{pot} {COIN}", inline=True)
-        embed.set_footer(text=f"Min. {MIN_PLAYERS} hráči  ·  kostky se pošlou do DM")
+        embed.set_footer(text=f"Min. {MIN_PLAYERS} hráči  ·  kostky si zobrazíš tlačítkem 👁 Moje kostky")
         return embed
 
     @discord.ui.button(label="Připojit se", style=discord.ButtonStyle.success, custom_id="ld_join")
@@ -464,20 +446,6 @@ class LiarDiceCog(commands.Cog):
         game["current_bid"]     = None
         game["last_bidder_uid"] = None
         game["phase"]           = "bidding"
-
-        total = sum(game["dice_count"][u] for u in _active(game))
-
-        # DM každému hráči
-        for uid in _active(game):
-            member = channel.guild.get_member(int(uid))
-            if member:
-                await _send_dice(
-                    member,
-                    game["dice"][uid],
-                    game["round"],
-                    game["dice_count"][uid],
-                    total,
-                )
 
         await self._send_turn_embed(channel, game)
 
