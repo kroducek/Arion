@@ -284,6 +284,9 @@ def _equip_item(profile: dict, item_id: str, preferred_slot: str | None,
     slot_target = db_item.get("slot")
     if not slot_target:
         return False, f"**{db_item['name']}** nelze equipnout."
+    # Backwards-compat: "weapon" byl legacy slot value, normalizuj na "hand_l"
+    if slot_target == "weapon":
+        slot_target = "hand_l"
 
     inventory = profile["inventory"]
     equipment = profile["equipment"]
@@ -1259,6 +1262,8 @@ class Inventory(commands.Cog):
         requires="Požadavky na staty (např. STR:2 INS:1 CHA:3).",
         stackable="Lze stackovat (výchozí: False).",
         consumable="Po použití se zničí (výchozí: False).",
+        hp_bonus="Bonus k max HP při equipu (trvalý dokud equipnuto).",
+        mana_bonus="Bonus k max maně při equipu (trvalý dokud equipnuto).",
         desc="Popis, lore, perky — volný text.",
     )
     @app_commands.choices(
@@ -1288,6 +1293,7 @@ class Inventory(commands.Cog):
         mana_restore: int = 0, mana_cost: int = 0,
         requires: Optional[str] = None,
         stackable: bool = False, consumable: bool = False,
+        hp_bonus: Optional[int] = None, mana_bonus: Optional[int] = None,
         desc: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
@@ -1300,10 +1306,12 @@ class Inventory(commands.Cog):
             await interaction.followup.send(
                 f"❌ Item `{item_id}` již existuje. Použij `/inv-db-edit`.")
             return
+        # "weapon" je display alias pro "hand_l" — normalizuj před uložením
+        resolved_slot = None if slot == "none" else ("hand_l" if slot == "weapon" else slot)
         item: dict = {
             "name":       name,
             "category":   category,
-            "slot":       None if slot == "none" else slot,
+            "slot":       resolved_slot,
             "stackable":  stackable,
             "consumable": consumable,
         }
@@ -1318,6 +1326,10 @@ class Inventory(commands.Cog):
         if requires:
             req_dict = _parse_requires(requires)
             if req_dict:       item["requires"]       = req_dict
+        equip_bonus: dict = {}
+        if hp_bonus:   equip_bonus["hp_max"]   = hp_bonus
+        if mana_bonus: equip_bonus["mana_max"] = mana_bonus
+        if equip_bonus: item["equip_bonus"] = equip_bonus
         items_db[item_id] = item
         _save_items(items_db)
         await interaction.followup.send(
@@ -1338,6 +1350,8 @@ class Inventory(commands.Cog):
         requires="Nové požadavky (např. STR:2 INS:1 · prázdné = beze změny).",
         consumable="Změnit consumable příznak.",
         stackable="Změnit stackable příznak.",
+        hp_bonus="Bonus k max HP při equipu (0 = odebrat).",
+        mana_bonus="Bonus k max maně při equipu (0 = odebrat).",
     )
     @app_commands.autocomplete(item_id=_ac_database_item)
     async def inv_db_edit(
@@ -1354,6 +1368,8 @@ class Inventory(commands.Cog):
         requires: Optional[str] = None,
         consumable: Optional[bool] = None,
         stackable: Optional[bool] = None,
+        hp_bonus: Optional[int] = None,
+        mana_bonus: Optional[int] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -1389,6 +1405,16 @@ class Inventory(commands.Cog):
             req_dict = _parse_requires(requires)
             if req_dict: item["requires"] = req_dict
             else:        item.pop("requires", None)
+        if hp_bonus is not None or mana_bonus is not None:
+            eb = item.setdefault("equip_bonus", {})
+            if hp_bonus is not None:
+                if hp_bonus != 0: eb["hp_max"]   = hp_bonus
+                else:             eb.pop("hp_max", None)
+            if mana_bonus is not None:
+                if mana_bonus != 0: eb["mana_max"] = mana_bonus
+                else:               eb.pop("mana_max", None)
+            if not eb:
+                item.pop("equip_bonus", None)
         _save_items(items_db)
         await interaction.followup.send(
             f"✅ Item **{item['name']}** (`{item_id}`) upraven.")
