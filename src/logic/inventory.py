@@ -98,10 +98,12 @@ def _ensure_inv_fields(profile: dict) -> dict:
     """Zajistí že profil má všechna potřebná pole inventáře."""
     profile.setdefault("inventory", [])
     profile.setdefault("notes", [])
-    profile.setdefault("equipment", _default_equipment())
+    profile.setdefault("equipment", {})
     profile.setdefault("ring_slots", 2)
     profile.setdefault("amulet_slots", 2)
-    # Zajisti že všechny aktivní sloty existují v equipment dictu
+    # Zajisti že všechny sloty existují (i v případě starého/částečného profilu)
+    for s in ["hand_l", "hand_r", "helmet", "armor", "boots", "cloak", "belt"]:
+        profile["equipment"].setdefault(s, None)
     for i in range(1, profile["ring_slots"] + 1):
         profile["equipment"].setdefault(f"ring_{i}", None)
     for i in range(1, profile["amulet_slots"] + 1):
