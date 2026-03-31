@@ -236,11 +236,6 @@ class SpinView(discord.ui.View):
             ex_btn.callback = self._execute_cb
             self.add_item(ex_btn)
 
-        pass_btn = discord.ui.Button(
-            label="⏭️ Pass", style=discord.ButtonStyle.secondary, custom_id=f"ls_pass_{uid}"
-        )
-        pass_btn.callback = self._pass_cb
-        self.add_item(pass_btn)
 
     async def _spin_cb(self, interaction: discord.Interaction):
         if str(interaction.user.id) != self.uid:
@@ -290,25 +285,6 @@ class SpinView(discord.ui.View):
         self._used = True
         self.stop()
         await self.cog._handle_execute(interaction, self.game, self.uid)
-
-    async def _pass_cb(self, interaction: discord.Interaction):
-        if str(interaction.user.id) != self.uid:
-            await interaction.response.send_message("Nejsi na tahu.", ephemeral=True)
-            return
-        if self._used:
-            await interaction.response.send_message("Tah byl již použit.", ephemeral=True)
-            return
-        self._used = True
-        self.stop()
-        pdata   = self.game["players"][self.uid]
-        channel = self.cog.bot.get_channel(self.game["channel_id"])
-        await interaction.response.send_message("⏭️ Přeskakuješ tah.", ephemeral=True)
-        if channel:
-            await channel.send(f"⏭️ **{pdata['name']}** přeskočil/a tah.")
-        order = self.game["turn_order"]
-        self.game["turn_idx"] = (self.game["turn_idx"] + 1) % len(order)
-        if channel:
-            await self.cog._start_turn(channel, self.game)
 
     async def on_timeout(self):
         if self._used:
@@ -441,6 +417,83 @@ class DeclareView(discord.ui.View):
         if channel and self.game.get("channel_id") in self.cog.active_games:
             pdata = self.game["players"][self.uid]
             await channel.send(f"⏱️ **{pdata['name']}** nestihl/a deklarovat — tah přeskočen.")
+            order = self.game["turn_order"]
+            self.game["turn_idx"] = (self.game["turn_idx"] + 1) % len(order)
+            await self.cog._start_turn(channel, self.game)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BET OR PASS VIEW  (veřejná – malý embed po zatočení)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class BetOrPassView(discord.ui.View):
+    def __init__(self, cog: "SlotsCog", game: dict, uid: str, slots: list):
+        super().__init__(timeout=60)
+        self.cog   = cog
+        self.game  = game
+        self.uid   = uid
+        self.slots = slots
+        self._done = False
+
+        bet_btn = discord.ui.Button(
+            label="📢 Vsadit", style=discord.ButtonStyle.primary, custom_id=f"ls_bet_{uid}"
+        )
+        bet_btn.callback = self._bet_cb
+        self.add_item(bet_btn)
+
+        pass_btn = discord.ui.Button(
+            label="⏭️ Pass", style=discord.ButtonStyle.secondary, custom_id=f"ls_bpass_{uid}"
+        )
+        pass_btn.callback = self._pass_cb
+        self.add_item(pass_btn)
+
+    async def _bet_cb(self, interaction: discord.Interaction):
+        if str(interaction.user.id) != self.uid:
+            await interaction.response.send_message("Nejsi na tahu.", ephemeral=True)
+            return
+        if self._done:
+            await interaction.response.send_message("Tah byl již použit.", ephemeral=True)
+            return
+        self._done = True
+        self.stop()
+        await interaction.response.edit_message(view=None)
+        h = _hearts(self.slots)
+        label = "🎰 **JACKPOT možný!**" if h == 4 else f"Srdcí: **{h}**"
+        declare_view = DeclareView(self.cog, self.game, self.uid, self.slots)
+        await interaction.followup.send(
+            f"🎰 **Tvoje sloty:** {_slots_str(self.slots)}\n"
+            f"{label}\n\nCo prohlásíš ostatním?",
+            view=declare_view,
+            ephemeral=True,
+        )
+
+    async def _pass_cb(self, interaction: discord.Interaction):
+        if str(interaction.user.id) != self.uid:
+            await interaction.response.send_message("Nejsi na tahu.", ephemeral=True)
+            return
+        if self._done:
+            await interaction.response.send_message("Tah byl již použit.", ephemeral=True)
+            return
+        self._done = True
+        self.stop()
+        pdata = self.game["players"][self.uid]
+        await interaction.response.edit_message(
+            content=f"⏭️ **{pdata['name']}** přeskočil/a tah.", embed=None, view=None
+        )
+        order = self.game["turn_order"]
+        self.game["turn_idx"] = (self.game["turn_idx"] + 1) % len(order)
+        channel = self.cog.bot.get_channel(self.game["channel_id"])
+        if channel:
+            await self.cog._start_turn(channel, self.game)
+
+    async def on_timeout(self):
+        if self._done:
+            return
+        self._done = True
+        channel = self.cog.bot.get_channel(self.game.get("channel_id", 0))
+        if channel and self.game.get("channel_id") in self.cog.active_games:
+            pdata = self.game["players"][self.uid]
+            await channel.send(f"⏱️ **{pdata['name']}** nestihl/a vsadit — tah přeskočen.")
             order = self.game["turn_order"]
             self.game["turn_idx"] = (self.game["turn_idx"] + 1) % len(order)
             await self.cog._start_turn(channel, self.game)
@@ -669,16 +722,15 @@ class SlotsCog(commands.Cog):
     # ── Po točení ─────────────────────────────────────────────────────────────
 
     async def _after_spin(self, interaction: discord.Interaction, game: dict, uid: str, slots: list[str]):
-        h = _hearts(slots)
-        label = "🎰 **JACKPOT možný!**" if h == 4 else f"Srdcí: **{h}**"
-        declare_view = DeclareView(self, game, uid, slots)
-        await interaction.response.send_message(
-            f"🎰 **Tvoje sloty:** {_slots_str(slots)}\n"
-            f"{label}\n\n"
-            f"Co prohlásíš ostatním?",
-            view=declare_view,
-            ephemeral=True,
+        pdata = game["players"][uid]
+        e = discord.Embed(
+            title=f"🎰 {pdata['name']} zatočil/a",
+            description=f"**Veřejný slot:** {slots[0]}",
+            color=0xFFD700,
         )
+        e.set_footer(text="📢 Vsadit = prohlásíš kolik ❤️ máš  ·  ⏭️ Pass = přeskočit tah")
+        view = BetOrPassView(self, game, uid, slots)
+        await interaction.response.send_message(embed=e, view=view)
 
     # ── Deklarace ─────────────────────────────────────────────────────────────
 
