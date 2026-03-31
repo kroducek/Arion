@@ -236,6 +236,12 @@ class SpinView(discord.ui.View):
             ex_btn.callback = self._execute_cb
             self.add_item(ex_btn)
 
+        pass_btn = discord.ui.Button(
+            label="⏭️ Pass", style=discord.ButtonStyle.secondary, custom_id=f"ls_pass_{uid}"
+        )
+        pass_btn.callback = self._pass_cb
+        self.add_item(pass_btn)
+
     async def _spin_cb(self, interaction: discord.Interaction):
         if str(interaction.user.id) != self.uid:
             await interaction.response.send_message("Nejsi na tahu.", ephemeral=True)
@@ -284,6 +290,25 @@ class SpinView(discord.ui.View):
         self._used = True
         self.stop()
         await self.cog._handle_execute(interaction, self.game, self.uid)
+
+    async def _pass_cb(self, interaction: discord.Interaction):
+        if str(interaction.user.id) != self.uid:
+            await interaction.response.send_message("Nejsi na tahu.", ephemeral=True)
+            return
+        if self._used:
+            await interaction.response.send_message("Tah byl již použit.", ephemeral=True)
+            return
+        self._used = True
+        self.stop()
+        pdata   = self.game["players"][self.uid]
+        channel = self.cog.bot.get_channel(self.game["channel_id"])
+        await interaction.response.send_message("⏭️ Přeskakuješ tah.", ephemeral=True)
+        if channel:
+            await channel.send(f"⏭️ **{pdata['name']}** přeskočil/a tah.")
+        order = self.game["turn_order"]
+        self.game["turn_idx"] = (self.game["turn_idx"] + 1) % len(order)
+        if channel:
+            await self.cog._start_turn(channel, self.game)
 
     async def on_timeout(self):
         if self._used:
