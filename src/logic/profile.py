@@ -318,6 +318,14 @@ class Profile(commands.Cog):
         if profile.get("motivation"):
             embed.add_field(name="✨ Motivace", value=profile["motivation"], inline=False)
 
+        memories = profile.get("memories", [])
+        if memories:
+            embed.add_field(
+                name="📜 Poslední vzpomínka",
+                value=f"*{memories[-1]}*",
+                inline=False,
+            )
+
         if profile.get("portrait_url"):
             embed.set_image(url=profile["portrait_url"])
 

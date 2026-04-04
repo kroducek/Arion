@@ -8,6 +8,7 @@ import json
 from src.logic.stats import init_stats, STAT_LABELS
 from src.utils.json_utils import load_json, save_json
 from src.logic.roll import _radar_chart
+from src.core.roll_stats import record_roll
 
 # ── Konfigurace ───────────────────────────────────────────────────────────────
 
@@ -29,21 +30,21 @@ DESTINATIONS = {
     "lumenie": {
         "emoji": "🏰",
         "name":  "Lumenie",
-        "desc":  "Město začátků, kde každý slavný dobrodruh napsal první řádek svého příběhu. Dominuje mu **katedrála světla** a kamenný **most přes řeku Auriel** — symbol naděje a řádu. Domov **Paladina Reinharda** a jeho bratrstva.",
+        "desc":  "Město začátků. Každý slavný dobrodruh napsal první řádek svého příběhu zrovna tady. Dominuje mu **katedrála světla** a kamenný most přes řeku **Auriel**, symbol naděje a řádu. Domov nejvyššího paladina **Reinharda** a jeho bratrstva paladinů a rytířů. Lumenie nyní prochází krizí..",
         "color": 0x3498db,
         "image": "https://media.discordapp.net/attachments/1484572118267068598/1484572933023334621/Copilot_20260320_145920.png?ex=69beb7c9&is=69bd6649&hm=a624e462ff950ed84f2542777c22d63ca5710c50834113b85afbc532176cc430&=&format=webp&quality=lossless&width=822&height=548",
     },
     "aquion": {
         "emoji": "🌊",
         "name":  "Aquion",
-        "desc":  "Největší obchodní město Aurionisu, postavené na síti kanálů a plovoucích plošin. Říká se, že tady se dá koupit cokoliv — i pravda, i lež. Klášter mágů vody střeží rovnováhu sil.",
+        "desc":  "Největší obchodní město Aurionisu, postavené na síti kanálů a plovoucích plošin. Říká se, že tady se dá koupit cokoliv.. i pravda, i lež. Klášter mágů vody střeží rovnováhu sil a prakticky řídí celou ekonomickou situaci Kalexie.",
         "color": 0x1abc9c,
         "image": "https://media.discordapp.net/attachments/1484572118267068598/1484572857559285801/Copilot_20260320_150340.png?ex=69beb7b7&is=69bd6637&hm=80ace1e169079d9845326e567a5ded22e9d6bcf3dd3dc01a0b22c214864cbc40&=&format=webp&quality=lossless&width=822&height=548",
     },
     "draci_skala": {
         "emoji": "🏔️",
         "name":  "Dračí skála",
-        "desc":  "Mladé město vytesané do útesů vyhaslé sopky, kde vládne **Alice Aurelion** — samozvaná královna s darem dračí řeči. Její draci krouží nad hradbami a každý nový příchozí si musí vybrat: sloužit nebo odejít.",
+        "desc":  "Mladé město vytesané do útesů vyhaslé sopky kde vládne **Alice Aurelion** — samozvaná královna s darem dračí řeči. Její draci krouží nad hradbami a každý nový příchozí si musí vybrat: věrně sloužit a nebo odejít. Alice nebyla viděna na veřejnosti od té doby co se ukázala v Aquionu.",
         "color": 0xe74c3c,
         "image": "https://media.discordapp.net/attachments/1484572118267068598/1484573012585087057/Copilot_20260320_150049.png?ex=69beb7dc&is=69bd665c&hm=7a0e1d64b751d2b6476e900a3f8b2f2ade7b238bfcf5b662b2487eee7d775d05&=&format=webp&quality=lossless&width=822&height=548",
     },
@@ -75,7 +76,7 @@ class TutorialPartOneView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=600)
 
-    @discord.ui.button(label="Naslouchat hlasu", style=discord.ButtonStyle.primary, emoji="✨")
+    @discord.ui.button(label="Naslouchat hlasu❓", style=discord.ButtonStyle.primary, emoji="✨")
     async def listen(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Ochrana — hráč s dokončeným profilem nemůže spustit tutorial znovu
         uid = str(interaction.user.id)
@@ -86,7 +87,7 @@ class TutorialPartOneView(discord.ui.View):
                 if data.get(uid, {}).get("gold_received"):
                     return await interaction.response.send_message(
                         "Už jsi tutorial dokončil/a! "
-                        "Pokud potřebuješ pomoc, napiš adminovi",
+                        "Pokud potřebuješ pomoc, napiš DM",
                         ephemeral=True,
                     )
             except Exception:
@@ -96,9 +97,9 @@ class TutorialPartOneView(discord.ui.View):
             title="🌌 Aurionis: Act II",
             description=(
                 "Svět se mění pod tíhou nových zkoušek.\n\n"
-                "**Turnaj Hvězdy** byl vyhlášen a jeho vítěz si může přát cokoliv. "
-                "Mocní se pohybují ve stínech, slabí mizí beze stopy. "
-                "Ti, kdo jsou zváni **Vyvolenými**, stojí na rozhraní mezi oběma světy.\n\n"
+                "**Turnaj Hvězdy** byl vyhlášen a jeho vítěz si může přát úplně cokoliv"
+                "Mocní se pohybují ve stínech zatímco slabí mizí beze stopy"
+                "Ti, jenž jsou zváni **Vyvolenými** stojí na rozhraní mezi oběma světy\n\n"
                 "*Pravda byla odhalena, ale jaká ta pravda vlastně je?*"
             ),
             color=0x2f3136,
@@ -118,7 +119,7 @@ class ActSelectionView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=600)
 
-    @discord.ui.button(label="Znám příběh", style=discord.ButtonStyle.success, emoji="⚔️")
+    @discord.ui.button(label="Já už příběh znám", style=discord.ButtonStyle.success, emoji="⚔️")
     async def old_player(self, interaction: discord.Interaction, button: discord.ui.Button):
         await _show_destination_choice(interaction)
 
@@ -145,35 +146,34 @@ class RecapView(discord.ui.View):
     def get_embed(self) -> discord.Embed:
         pages = {
             1: discord.Embed(
-                title="👑 Kapitola I: Rozdělená koruna",
+                title="Kapitola I 👑 Rozdělená koruna",
                 description=(
-                    "**Alice Aurelion** přišla s nárokem, který nikdo nečekal — krev starého rodu, "
-                    "dar dračí řeči a legitimní právo na trůn Kalexie\n\n"
-                    "**Král Talias** ji odmítl uznat, označil ji za lhářku a podvodnici "
-                    "Aurionis se ocitl na hraně občanské války — a nad vším visí stín "
-                    "**Turnaje Hvězdy**, kde si vítěz může přát cokoliv"
+                    "**Alice Aurelion** přišla s nárokem, který nikdo nečekal.. krev starého rodu,"
+                    "dar dračí řeči a legitimní právo na trůn Kalexie a vlastně i všech ostatních říší\n\n"
+                    "**Král Talias** ji odmítl uznat, označil ji za lhářku a podvodnici. Nyní shromažďuje vazaly a zbraně."
+                    "Aurionis se ocitl na hraně občanské války a nad vším visí stín **Turnaje Hvězdy** kde si vítěz může přát cokoliv"
                 ),
                 color=0xe74c3c,
             ),
             2: discord.Embed(
-                title="🛡️ Kapitola II: Zrazená přísaha",
+                title="Kapitola II 🛡️ Zrazená přísaha",
                 description=(
-                    "**Reinhard** — nejvyšší paladin, symbol cti a řádu — odložil insignii "
-                    "a vstoupil do Turnaje sám za sebe\n\n"
+                    "**Reinhard**, nejvyšší paladin, symbol cti a řádu odložil insignii"
+                    "Ochránce Kalexie a vstoupil do Turnaje Hvězdy sám za sebe\n\n"
                     "*'Stanu se králem hvězdy pro vás všechny'*\n\n"
                     "Za ním zůstala prázdnota, obrana Kalexie se zhroutila a ti, kdo mu "
-                    "věřili, zůstali bez odpovědí"
+                    "věřili zůstali bez odpovědí. Talias zuří, je pro něj stejným samozvancem jako Alice"
                 ),
                 color=0x3498db,
             ),
             3: discord.Embed(
-                title="🎭 Kapitola III: Vládce stínů",
+                title="Kapitola III 🎭 Vládce stínů",
                 description=(
-                    "Muž bez jména, kterému říkají **Vládce stínů**, ovládá sílu zvanou "
-                    "esenciální očistění — dokáže vzít schopnosti, identitu i smysl existence\n\n"
-                    "Během jediné noci v Lumenii přišly tisíce upírů o svou podstatu "
-                    "Město je plné uprchlíků, kteří ani nevědí, kým jsou — "
-                    "a nikdo neví, kde Vládce udeří příště"
+                    "Muž beze jména, kterému všichni říkají **Vládce stínů**, ovládá sílu zvanou"
+                    "esenciální očistění, ta dokáže vzít schopnosti, identitu i smysl existence\n\n"
+                    "Během jediné noci v Lumenii přišli tisíce upírů o svou podstatu a"
+                    "město je nyní plné uprchlíků, kteří ani nevědí kým jsou vlastně jsou"
+                    "a nikdo neví kde Vládce udeří příště.. První byla Lumenie, pak Aquion.."
                 ),
                 color=0x2c3e50,
             ),
@@ -209,8 +209,8 @@ def _destination_embed() -> discord.Embed:
     embed = discord.Embed(
         title="🌍  Kde se probudíš?",
         description=(
-            "Světlo tě táhne třemi různými směry najednou. "
-            "Každé místo tě čeká — ale jen jedno tě přivítá jako domov.\n\n"
+            "Světlo tě táhne třemi různými směry najednou, z každého směru cítíš úplně jinou energii"
+            "Každé místo tě čeká.. ale ty si můžeš vybrat jen jednu cestu\n\n"
             "Vyber svoji destinaci:"
         ),
         color=0xFFD700,
@@ -253,14 +253,14 @@ async def _start_encounter(interaction: discord.Interaction, dest_key: str):
     arion_roll = random.randint(1, 12)
 
     embed = discord.Embed(
-        title="🐱  Setkání s Arion",
+        title="🐱",
         description=(
-            "> *Pomalu otevřeš oči a všechno se ti zdá zmatené, ale až děsivě známé... "
-            "Hlavou ti prochází myšlenka.. nebyl jsem tu už někdy? "
-            "Modré lampy osvětlují ulici, zatímco ty se nacházíš před cechem dobrodruhů...*\n\n"
-            "Z rohu uličky vyběhne bronzová kočička v magickém klobouku.\n\n"
+            "> *Pomalu otevřeš oči a všechno se ti zdá zmatené, ale až děsivě známé..."
+            "Hlavou ti prochází myšlenka jestli jsi tu už někdy nebyl "
+            "Modré lampy osvětlují ulici zatímco ty se nacházíš před cechem dobrodruhů*\n\n"
+            "Z rohu uličky vyběhne bronzová kočička v magickém klobouku a šťastně zamňouká\n\n"
             "**'No ne, další! Heeej, ahoooj, nechceš být dobrodruh?'**\n\n"
-            "Dřív než stačíš odpovědět, Kočička zamrská tlapkou a vyčaruje "
+            "Dřív než stačíš odpovědět, tak kočička zamrská tlapkou a vyčaruje"
             "třpytivou kouli vody, kterou hodí rovnou po tobě"
         ),
         color=0x3498db,
@@ -273,7 +273,7 @@ async def _start_encounter(interaction: discord.Interaction, dest_key: str):
     embed.add_field(
         name="🛡️ Tvůj tah!",
         value=(
-            "Musíš hodit na **Obranost** — zvládneš se vyhnout?\n"
+            "Musíš hodit na **Obratnost** — zvládneš se vyhnout?\n"
             "Hoď `/roll 1d20`  ·  hranice úspěchu: **10+**\n\n"
             "-# *(Simulace: klikni na tlačítko níže)*"
         ),
@@ -463,7 +463,7 @@ class ArionLeapView(discord.ui.View):
         if roll >= 11:
             desc = (
                 "Chytíš ji za límec klobouku a prudce zahodíš\n\n"
-                "Arion přistane na čtyřech tlapách pár metrů od tebe, "
+                "Arion přistane na čtyřech tlapách pár metrů od tebe,"
                 "narovná si klobouk a kouká na tebe s novým respektem\n\n"
                 "***'Oooh... Takže ty jsi tenhle typ'***\n\n"
                 "Chvíli vypadá jako by nad nečím přemýšlela\n\n"
@@ -471,9 +471,9 @@ class ArionLeapView(discord.ui.View):
             )
         else:
             desc = (
-                "Zkusíš ji schodit, ale Arion se drží jako klíště "
+                "Zkusíš ji schodit, ale Arion se drží jako klíště"
                 "Přeleze přes tvé rameno, pak po zádech, pak zase zpátky..\n\n"
-                "***'Nedaří se ti mě schodit, že?'*** poznamená spokojeně \n\n"
+                "***'Nedaří se ti mě schodit, že?'*** poznamená spokojeně\n\n"
                 "***'Vzpomínáš si na něco?'***"
             )
 
@@ -491,10 +491,10 @@ class ArionLeapView(discord.ui.View):
         embed = discord.Embed(
             title="🐾  ..Co to dělá?",
             description=(
-                "Necháš ji a Arion začne šplhat po tobě se soustředěným výrazem."
+                "Necháš ji a Arion začne šplhat po tobě se soustředěným výrazem"
                 "Přičichne ke tvému ramenu, pak ke krku, pak strčí nos přímo do tvých vlasů\n\n"
                 "***'Hm..'***\n\n"
-                "Sleze dolů a postaví se před tebe.\n\n"
+                "Sleze dolů a postaví se před tebe\n\n"
                 "***'Vzpomínáš si na něco?'***"
             ),
             color=0x9b59b6,
@@ -515,21 +515,45 @@ class ArionMemoryView(discord.ui.View):
         super().__init__(timeout=600)
         self.dest_key = dest_key
 
+    async def _go_hm(self, interaction: discord.Interaction, title: str, description: str):
+        embed = discord.Embed(title=title, description=description, color=0x2c3e50)
+        embed.set_footer(text="⭐ Aurionis")
+        await interaction.response.edit_message(embed=embed, view=ArionHmView(dest_key=self.dest_key))
+
     @discord.ui.button(label="Nevzpomínám si na nic..", style=discord.ButtonStyle.secondary, emoji="🤔")
     async def just_no(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(
+        await self._go_hm(
+            interaction,
             title="🐱  Hm..",
             description=(
                 "Arion tě chvíli pozoruje a pak tiše sklopí pohled\n\n"
                 "***'Hm..'***\n\n"
                 "*Trapné ticho přerušuje jen rušná ulice a zvednutý vítr*"
             ),
-            color=0x2c3e50,
         )
-        embed.set_footer(text="⭐ Aurionis")
-        await interaction.response.edit_message(
-            embed=embed,
-            view=ArionHmView(dest_key=self.dest_key),
+
+    @discord.ui.button(label="Já myslel, že kočky nemluví..", style=discord.ButtonStyle.secondary, emoji="🐱")
+    async def cats_dont_talk(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._go_hm(
+            interaction,
+            title="🐱  ..",
+            description=(
+                "Arion na tebe zírá s výrazem absolutní pohrdavé nadřazenosti\n\n"
+                "***'Většina lidí taky nemluví..'***\n\n"
+                "*Otočí se s pocitem povýšení. Diskuse zřejmě skončila*"
+            ),
+        )
+
+    @discord.ui.button(label="Mám divný pocit..", style=discord.ButtonStyle.secondary, emoji="💭")
+    async def weird_feeling(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._go_hm(
+            interaction,
+            title="🐱  ..",
+            description=(
+                "Arion se na tebe podívá trochu jinak než předtím\n\n"
+                "***'Hm..'***\n\n"
+                "*Nic neřekne. Ale chvíli trvá než odvrátí pohled*"
+            ),
         )
 
 
@@ -569,14 +593,14 @@ class EnterGuildInsideView(discord.ui.View):
         embed = discord.Embed(
             title="🏛️  Cech dobrodruhů",
             description=(
-                "Dveře se za tebou zavřou a hluk ulice utichne.\n\n"
-                "Uvnitř panuje svérázný pořádek, u stolu v rohu se hádají dva trpaslíci "
+                "Dveře se za tebou zavřou a hluk ulice utichne\n\n"
+                "Uvnitř panuje svérázný pořádek, u stolu v rohu se hádají dva trpaslíci"
                 "o tom kdo zabil draka jako poslední. Častokrát slyšíš jméno Aurelion."
                 "Někdo jiný spí na lavici s helmou přes obličej.\n\n"
-                "Arion přeskočí pult jedním plynulým pohybem a "
+                "Arion přeskočí pult jedním plynulým pohybem a"
                 "přistane na druhé straně kde otevře tlustou, živoucí knihu\n\n"
                 "***'..Standardní procedura, přijmu tě mezi dobrodruhy'***\n\n"
-                "Přejede tlapkou přes zvláštní destičku vedle knihy "
+                "Přejede tlapkou přes zvláštní destičku vedle knihy"
                 "Destička se rozsvítí modrou aurou jako by reagovala na dotyk\n\n"
                 "***'Tak se podíváme z jakého jsi těsta'***"
             ),
@@ -655,11 +679,11 @@ class PostScanView(discord.ui.View):
         embed = discord.Embed(
             title="🖼️  Ještě jedna věc...",
             description=(
-                "Arion nakloní hlavu na stranu.\n\n"
-                "***'Archiváři jsme taky. Můžu tě nakreslit do záznamu? "
-                "Miluji umění.'***\n\n"
-                "*Kouká na tebe s výrazem, který dává jasně najevo, "
-                "že odmítnutí by ji osobně urazilo.*"
+                "Arion nakloní hlavu na stranu\n\n"
+                "***'Můžu si tě nakreslit do záznamu?'***"
+                "***'Miluji umění'***\n\n"
+                "*Kouká na tebe s výrazem, který dává jasně najevo,"
+                "že odmítnutí by ji osobně urazilo*"
             ),
             color=0x9b59b6,
         )
@@ -705,7 +729,7 @@ class TutorialSPView(discord.ui.View):
         labels = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
         for stat in labels:
             btn = discord.ui.Button(
-                label=f"{stat}  ({STAT_FULL_NAMES[stat]})",
+                label=f"{stat} {self.stats.get(stat, 0)}  ({STAT_FULL_NAMES[stat]})",
                 style=discord.ButtonStyle.secondary,
                 disabled=(self.sp_remaining <= 0),
             )
@@ -885,14 +909,14 @@ async def _show_motivation_prompt(
     stats: dict | None,
 ):
     embed = discord.Embed(
-        title="📜  Ještě jedno pole..",
+        title="📜",
         description=(
             "Arion otočí průkaz dobrodruha k tobě\n\n"
-            "Všechna pole jsou vyplněna... jméno, sken i tvůj portrét. "
-            "Zbývá jen jedno prázdné místo ve spodní části a\n\n"
-            "*pero se samo zdvihne nad stránku a začne zapisovat tvou odpověď*\n\n"
+            "Všechna pole jsou vyplněna... jméno, sken i tvůj portrét"
+            "Zbývá jen jedno prázdné místo ve spodní části\n\n"
+            "*Pero se samo zdvihne nad stránku a začne zapisovat tvou odpověď*\n\n"
             "***'Proč vlastně chceš být dobrodruhem?'***\n\n"
-            "-# *Tohle pole uvidí každý, kdo si průkaz prohlédne*"
+            "-# *Tohle pole uvidí každý kdo si průkaz prohlédne*"
         ),
         color=0x9b59b6,
     )
@@ -925,8 +949,8 @@ async def _show_guild_card(
 
     if portrait_url:
         portrait_text = (
-            "Arion vytvoří magické plátno a chvíli tě soustředěně pozoruje "
-            "a pak začne kreslit. Za pár vteřin je hotovo, spokojeně přikývne sama pro sebe.\n\n"
+            "Arion vytvoří magické plátno a chvíli tě soustředěně pozoruje"
+            "A pak začne kreslit. Za pár vteřin je hotovo, spokojeně přikývne sama pro sebe.\n\n"
             "***'Moc hezké...'***\n\n"
         )
     else:
@@ -984,7 +1008,7 @@ class StatsDialogView(discord.ui.View):
                 "Arion se přehoupne přes pult a kouká na čísla na tvým průkazu\n\n"
                 "***'Magický sken dokáže z části odhadnout tvou přirozenou sílu "
                 "a převést ji na konkrétní čísla..'***\n\n"
-                "Přirozená síla?..\n\n"
+                "***'Přirozená síla?..'***\n\n"
                 "***'Můžeš se od toho odrazit a vědět v čem se chceš zlepšit'***"
             ),
             color=0x9b59b6,
@@ -1038,10 +1062,10 @@ class GoldView(discord.ui.View):
                 "Zlaté uvnitř cinkají velmi přesvědčivě\n\n"
                 f"**+100** {COIN} připsáno na tvé konto\n\n"
                 "Ještě než tě nechá odejít tak prohodí\n\n"
-                f"***'Svět tam venku není moc přívětivý.. "
-                f"Obzvlášť teď, za Turnaje. Dávej na sebe pozor.. "
-                f"{dest['emoji']} {dest['name']} tě čeká.'***\n\n"
-                "*Arion ti přestane věnovat pozornost. To je zřejmě rozloučení.*"
+                f"***'Svět tam venku není moc přívětivý..'***"
+                f"***'Obzvlášť teď, za Turnaje. Dávej na sebe pozor..'***"
+                f"***'{dest['emoji']} {dest['name']} tě čeká'***\n\n"
+                "*Arion ti přestane věnovat pozornost. To je zřejmě rozloučení*"
             ),
             color=0xFFD700,
         )
@@ -1146,23 +1170,16 @@ class MemoryCheckView(discord.ui.View):
         button.disabled = True
         await interaction.response.defer()
 
-        import random as _r
-
-        # Simulace check.py — labels: STR DEX INS INT CHA WIS (indexy 2,3,5)
-        labels    = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
-        luck_stat = _r.randint(1, 10)
-        luck_mod  = (luck_stat - 5) // 2
-        base      = [_r.randint(3, 9) for _ in range(6)]
-        stats     = [max(1, s + luck_mod) for s in base]
-
-        # WIS=5, INT=3, INS=2 — průměr těchto tří určuje úspěch (práh: 5)
+        # Použij hráčovy skutečné stats — WIS, INT, INS
+        profiles = load_json(DATA_FILE, default={})
+        profile_stats = profiles.get(str(interaction.user.id), {}).get("stats", {})
         memory_stats = {
-            'WIS': stats[5],
-            'INT': stats[3],
-            'INS': stats[2],
+            'WIS': profile_stats.get('WIS', 1),
+            'INT': profile_stats.get('INT', 1),
+            'INS': profile_stats.get('INS', 1),
         }
-        avg   = sum(memory_stats.values()) / 3
-        success = avg >= 5
+        avg     = sum(memory_stats.values()) / 3
+        success = True  # vždy úspěch — plná vzpomínka
 
         # ── Arion reakce ──────────────────────────────────────────────────
         if success:
@@ -1248,102 +1265,59 @@ class CollisionTransitionView(discord.ui.View):
         )
         if self.portrait_url:
             embed.set_thumbnail(url=self.portrait_url)
-        embed.set_footer(text="⭐ Aurionis  ·  Charisma check.")
+        embed.set_footer(text="⭐ Aurionis  ·  Moudrost check.")
 
         await interaction.response.edit_message(
             embed=embed,
-            view=CharismaRollView(dest_key=self.dest_key, portrait_url=self.portrait_url),
+            view=WisdomRollView(dest_key=self.dest_key, portrait_url=self.portrait_url),
         )
 
 
-class CharismaRollView(discord.ui.View):
-    """Hráč hází /roll 1d20 — Arion sleduje výsledek."""
+class WisdomRollView(discord.ui.View):
+    """Hráč hází na Moudrost — vždy nat20, vzpomene si."""
     def __init__(self, dest_key: str, portrait_url: str | None = None):
         super().__init__(timeout=600)
         self.dest_key     = dest_key
         self.portrait_url = portrait_url
         self._rolled      = False   # ochrana před double-klikem
 
-    @discord.ui.button(label="🎲 Hodit na Charisma  /roll 1d20", style=discord.ButtonStyle.primary)
-    async def roll_charisma(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="🎲 Hodit na Moudrost  /roll 1d20", style=discord.ButtonStyle.primary)
+    async def roll_wisdom(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self._rolled:
             await interaction.response.defer()
             return
-        self._rolled      = True
-        button.disabled   = True
+        self._rolled    = True
+        button.disabled = True
         await interaction.response.defer()
 
-        import random as _r
-        roll = _r.randint(1, 20)
-        nat20 = roll == 20
-        nat1  = roll == 1
+        # Vždy nat20 — hráč si vzpomene
+        roll = 20
 
-        # ── Arion komentář podle výsledku ────────────────────────────────
-        if nat20:
-            arion_note = (
-                "*Arion zvedne oči od knihy. Jen se podívá. Pak se vrátí ke čtení.*\n"
-                "***'..Hmm.'***"
-            )
-            outcome_title = "🌟  Přirozená 20!"
-            outcome_desc  = (
-                f"Hodil/a jsi **{roll}** — přirozená dvacítka.\n\n"
-                "Zvládneš situaci s překvapivou elegancí. "
-                "Muž s rohy se zastaví, přeměří tě — pak se krátce zasměje.\n\n"
-                "***\"První den v práci co? "
-                "Hao je moc silný.. nevím jestli má cenu se do toho turnaje vůbec hlásit.\"***\n\n"
-                "*Odejde. Ani se neohlédne.*\n\n"
-                f"{arion_note}"
-            )
-        elif nat1:
-            arion_note = (
-                "*Arion se podívá přes okraj knihy. Zavře ji.*\n"
-                "***'..Hmm.'***"
-            )
-            outcome_title = "💀  Přirozená 1."
-            outcome_desc  = (
-                f"Hodil/a jsi **{roll}** — přirozená jednička.\n\n"
-                "Snažíš se omluvit — a při tom omylem narazíš do korbelu. "
-                "Zbytek piva se vylije přímo na muže s rohy.\n\n"
-                "*Vedlejší stůl, který už sledoval celou situaci, "
-                "umírá smíchy.*\n\n"
-                "Muž se na tebe dlouze podívá. Nic neřekne. Odejde.\n\n"
-                f"{arion_note}"
-            )
-        elif roll >= 10:
-            arion_note = (
-                "*Arion si tě přeměří pohledem a vrátí se ke knize.*\n"
-                "***'Ujde to.'***"
-            )
-            outcome_title = "✅  Úspěch."
-            outcome_desc  = (
-                f"Hodil/a jsi **{roll}** — úspěch.\n\n"
-                "Rychle se zorientuješ a omluvíš se dřív než situace stihne eskalovat.\n\n"
-                "***\"V pohodě, sakra.. dávej větší pozor\"***\n\n"
-                "*Muž s rohy si prorazí cestu ke dveřím. Situace zažehnána.*\n\n"
-                f"{arion_note}"
-            )
-        else:
-            arion_note = (
-                "*Arion se ani nepodívá*"
-            )
-            outcome_title = "❌  Neúspěch."
-            outcome_desc  = (
-                f"Hodil/a jsi **{roll}** — neúspěch.\n\n"
-                "Něco zakoktáš. Ani sám nevíš co.\n\n"
-                "*Muž s rohy zakroutí očima a odejde naštvaně pryč.*\n\n"
-                f"{arion_note}"
+        # Zapiš do roll stats
+        if interaction.guild:
+            record_roll(
+                interaction.guild.id, interaction.user.id,
+                nat20=True, nat1=False, hit24=False, is_check=True,
             )
 
-        roll_emoji = "🎲"
-        if nat20:
-            roll_emoji = "🌟"
-        elif nat1:
-            roll_emoji = "💀"
+        arion_note = (
+            "*Arion zvedne oči od knihy. Jen se podívá. Pak se vrátí ke čtení.*\n"
+            "***'..Hmm.'***"
+        )
+        outcome_desc = (
+            f"Hodil/a jsi **{roll}** — přirozená dvacítka.\n\n"
+            "Zvládneš situaci s překvapivou elegancí. "
+            "Muž s rohy se zastaví, přeměří tě — pak se krátce zasměje.\n\n"
+            "***\"První den v práci co? "
+            "Hao je moc silný.. nevím jestli má cenu se do toho turnaje vůbec hlásit.\"***\n\n"
+            "*Odejde. Ani se neohlédne.*\n\n"
+            f"{arion_note}"
+        )
 
         embed = discord.Embed(
-            title=f"{roll_emoji}  {outcome_title}",
-            description=f"-# *Charisma check — /roll 1d20*\n\n{outcome_desc}",
-            color=0x27ae60 if roll >= 10 else 0xe74c3c,
+            title="🌟  Přirozená 20!",
+            description=f"-# *Moudrost check — /roll 1d20*\n\n{outcome_desc}",
+            color=0x27ae60,
         )
         if self.portrait_url:
             embed.set_thumbnail(url=self.portrait_url)
@@ -1353,6 +1327,24 @@ class CharismaRollView(discord.ui.View):
             embed=embed,
             view=FinalEnterView(dest_key=self.dest_key, portrait_url=self.portrait_url),
         )
+
+        # Zapiš první vzpomínku do profilu
+        uid = str(interaction.user.id)
+        try:
+            profiles = load_json(DATA_FILE, default={})
+            profiles.setdefault(uid, {}).setdefault("memories", [])
+            if not profiles[uid]["memories"]:   # jen pokud ještě žádná není
+                profiles[uid]["memories"].append(
+                    "Muž v masce šaška. Ostrov, voda a písek. Krev na rukou. "
+                    "\"Dávej pozor.\" — Jméno ani místo si nevybavím, ale vím, že to nebylo poprvé."
+                )
+                save_json(DATA_FILE, profiles)
+                if interaction.channel:
+                    await interaction.channel.send(
+                        f"📜 **{interaction.user.display_name}** si úspěšně vzpomněl/a."
+                    )
+        except Exception as e:
+            print(f"[onboard] Nepodařilo se zapsat vzpomínku: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

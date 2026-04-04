@@ -5,7 +5,7 @@ import json
 import logging
 import os
 
-from src.utils.paths import ECONOMY as ECONOMY_FILE, SHOP as SHOP_FILE
+from src.utils.paths import ECONOMY as ECONOMY_FILE, SHOPS as SHOPS_FILE, PROFILES as PROFILES_FILE
 from src.utils.json_utils import load_json, save_json
 
 COIN         = "<:goldcoin:1477303464781680772>"
@@ -22,6 +22,29 @@ def _save(path: str, data):
     save_json(path, data)
 
 
+# ── Shops datová vrstva ───────────────────────────────────────────────────────
+
+def _load_shops() -> dict:
+    return load_json(SHOPS_FILE, default={})
+
+def _save_shops(data: dict) -> None:
+    save_json(SHOPS_FILE, data)
+
+async def _ac_preset(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    shops = _load_shops()
+    cur   = current.lower()
+    return [
+        app_commands.Choice(
+            name=f"{'🟢' if s.get('open') else '🔴'}  {sid}  —  {s.get('nazev', sid)}",
+            value=sid,
+        )
+        for sid, s in shops.items()
+        if not cur or cur in sid.lower() or cur in s.get("nazev", "").lower()
+    ][:25]
+
+
 # ── Shop embed ────────────────────────────────────────────────────────────────
 
 def _build_shop_embed(shop: dict, is_open: bool) -> discord.Embed:
@@ -29,73 +52,97 @@ def _build_shop_embed(shop: dict, is_open: bool) -> discord.Embed:
         title=f"🏪  {shop['nazev']}",
         color=0xC9A84C if is_open else 0x5D6D7E,
     )
-
     status_line = "" if is_open else "\n*— Obchod je momentálně zavřený —*"
     if shop.get("popis") or status_line:
         embed.description = (f"*{shop['popis']}*" if shop.get("popis") else "") + status_line
 
     items = shop.get("items", [])
     if items:
-        item_lines = []
-        for i, item in enumerate(items, 1):
-            item_lines.append(
-                f"**{i}.** {item['emoji']} **{item['name']}**\n"
-                f"-# {item['price']} {COIN}"
-            )
+        item_lines = [
+            f"**{i}.** {item['emoji']} **{item['name']}**\n-# {item['price']} {COIN}"
+            for i, item in enumerate(items, 1)
+        ]
         embed.add_field(name="⚔️  Předměty", value="\n\n".join(item_lines), inline=False)
 
     if shop.get("ostatni"):
         embed.add_field(name="🧪  Ostatní", value=shop["ostatni"], inline=False)
 
-    footer = "⭐ Aurionis  ·  Klikni na tlačítko pro nákup" if is_open else "⭐ Aurionis"
-    embed.set_footer(text=footer)
+    embed.set_footer(text="⭐ Aurionis  ·  Klikni na tlačítko pro nákup" if is_open else "⭐ Aurionis")
     return embed
 
 
 # ── Shop View (tlačítka) ──────────────────────────────────────────────────────
 
 class ShopView(discord.ui.View):
-    def __init__(self, shop: dict):
+    def __init__(self, preset_id: str, shop: dict):
         super().__init__(timeout=None)
+        self.preset_id = preset_id
         for i, item in enumerate(shop.get("items", [])):
             btn = discord.ui.Button(
                 label=f"{item['emoji']}  {item['name']}  ·  {item['price']} zl.",
                 style=discord.ButtonStyle.secondary,
-                custom_id=f"shop_buy_{i}",
+                custom_id=f"gshop_{preset_id}_{i}",
             )
             btn.callback = self._make_callback(i)
             self.add_item(btn)
 
     def _make_callback(self, item_index: int):
+        preset_id = self.preset_id
         async def callback(interaction: discord.Interaction):
-            shop = _load(SHOP_FILE, dict)
-
-            # Zkontroluj že shop je otevřený
+            shops = _load_shops()
+            shop  = shops.get(preset_id)
+            if not shop:
+                return await interaction.response.send_message(
+                    "Tento shop už neexistuje.", ephemeral=True
+                )
             if not shop.get("open", False):
                 return await interaction.response.send_message(
                     "Obchod je momentálně zavřený.", ephemeral=True
                 )
-
             items = shop.get("items", [])
             if item_index >= len(items):
                 return await interaction.response.send_message(
                     "Tento item už neexistuje.", ephemeral=True
                 )
-
             item    = items[item_index]
             price   = item["price"]
             uid     = str(interaction.user.id)
             economy = _load(ECONOMY_FILE, dict)
             balance = economy.get(uid, 0)
-
             if balance < price:
                 return await interaction.response.send_message(
                     f"Nemáš dost zlaťáků! (Chybí ti **{price - balance}** {COIN})",
                     ephemeral=True,
                 )
-
             economy[uid] = balance - price
             _save(ECONOMY_FILE, economy)
+
+            # Přidej item do inventáře hráče
+            profiles  = load_json(PROFILES_FILE, default={})
+            profile   = profiles.setdefault(uid, {})
+            inventory = profile.setdefault("inventory", [])
+            item_id   = item.get("item_id")
+            if item_id:
+                # Registered item — stackuje se s ostatními stejnými
+                entry = next(
+                    (e for e in inventory if e.get("type") == "registered" and e.get("id") == item_id),
+                    None,
+                )
+                if entry:
+                    entry["qty"] = entry.get("qty", 1) + 1
+                else:
+                    inventory.append({"type": "registered", "id": item_id, "qty": 1})
+            else:
+                # Free item — stackuje se podle jména
+                entry = next(
+                    (e for e in inventory if e.get("type") == "free" and e.get("name") == item["name"]),
+                    None,
+                )
+                if entry:
+                    entry["qty"] = entry.get("qty", 1) + 1
+                else:
+                    inventory.append({"type": "free", "name": item["name"], "qty": 1})
+            save_json(PROFILES_FILE, profiles)
 
             await interaction.response.send_message(
                 f"✅ Koupil/a jsi **{item['emoji']} {item['name']}** za **{price}** {COIN}.\n"
@@ -109,7 +156,10 @@ class ShopView(discord.ui.View):
 
 def _parse_items(raws: list[str | None]) -> tuple[list, str | None]:
     """
-    Parsuje seznam raw stringů ve formátu 'emoji;název;cena'.
+    Parsuje seznam raw stringů.
+    Formáty:
+      emoji;název;cena              → free item (podle jména)
+      emoji;název;cena;item_id      → registered item (propojeno s items DB)
     Vrátí (parsed_items, error_message).
     """
     items = []
@@ -117,12 +167,19 @@ def _parse_items(raws: list[str | None]) -> tuple[list, str | None]:
         if not raw:
             continue
         parts = [p.strip() for p in raw.split(";")]
-        if len(parts) != 3:
-            return [], f"Špatný formát: `{raw}`\nPoužij: `emoji;název;cena`  (např. `⚔️;Železný meč;50`)"
-        emoji_part, name_part, price_part = parts
+        if len(parts) not in (3, 4):
+            return [], (
+                f"Špatný formát: `{raw}`\n"
+                f"Použij: `emoji;název;cena` nebo `emoji;název;cena;item_id`"
+            )
+        emoji_part, name_part, price_part = parts[0], parts[1], parts[2]
+        item_id = parts[3] if len(parts) == 4 else None
         if not price_part.isdigit() or int(price_part) <= 0:
             return [], f"Cena musí být kladné číslo: `{price_part}`"
-        items.append({"emoji": emoji_part, "name": name_part, "price": int(price_part)})
+        entry: dict = {"emoji": emoji_part, "name": name_part, "price": int(price_part)}
+        if item_id:
+            entry["item_id"] = item_id
+        items.append(entry)
     return items, None
 
 
@@ -277,12 +334,13 @@ class Economy(commands.Cog):
 
     # ── /gshop ────────────────────────────────────────────────────────────────
 
-    shop_group = app_commands.Group(name="gshop", description="Admin: Správa shopu")
+    shop_group = app_commands.Group(name="gshop", description="Admin: Správa shopů")
 
-    @shop_group.command(name="create", description="Admin: Vytvoř nový shop (uloží, ale nezveřejní)")
+    @shop_group.command(name="create", description="Admin: Vytvoř nový preset shopu")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
-        nazev   = "Název shopu",
+        preset  = "Unikátní ID presetu (např. kovarna_lumenie)",
+        nazev   = "Zobrazovaný název shopu",
         popis   = "Krátký popis / uvítací text (volitelné)",
         item1   = "Item 1  —  formát: emoji;název;cena  (např. ⚔️;Železný meč;50)",
         item2   = "Item 2",
@@ -294,6 +352,7 @@ class Economy(commands.Cog):
     async def gshop_create(
         self,
         interaction: discord.Interaction,
+        preset:  str,
         nazev:   str,
         popis:   str | None = None,
         item1:   str | None = None,
@@ -304,6 +363,12 @@ class Economy(commands.Cog):
         ostatni: str | None = None,
     ):
         await interaction.response.defer(ephemeral=True)
+        preset = preset.strip().lower().replace(" ", "_")
+        shops  = _load_shops()
+        if preset in shops:
+            return await interaction.followup.send(
+                f"❌ Preset `{preset}` už existuje. Použij `/gshop edit`.", ephemeral=True
+            )
         parsed, err = _parse_items([item1, item2, item3, item4, item5])
         if err:
             return await interaction.followup.send(f"❌ {err}", ephemeral=True)
@@ -311,26 +376,26 @@ class Economy(commands.Cog):
             return await interaction.followup.send(
                 "❌ Shop musí mít alespoň jeden item nebo sekci Ostatní.", ephemeral=True
             )
-
-        shop = {
+        shops[preset] = {
             "nazev":   nazev,
             "popis":   popis or "",
             "items":   parsed,
             "ostatni": ostatni or "",
-            "open":    False,           # výchozí stav — zavřeno
-            "message": None,            # ID zprávy s embedem (pro pozdější edit)
+            "open":    False,
+            "message": None,
             "channel": None,
         }
-        _save(SHOP_FILE, shop)
+        _save_shops(shops)
         await interaction.followup.send(
-            f"✅ Shop **{nazev}** byl vytvořen.\n"
-            f"-# Použij `/gshop open` pro zveřejnění do kanálu.",
+            f"✅ Preset **`{preset}`** — **{nazev}** vytvořen.\n"
+            f"-# Použij `/gshop open preset:{preset}` pro zveřejnění.",
             ephemeral=True,
         )
 
-    @shop_group.command(name="edit", description="Admin: Uprav existující shop")
+    @shop_group.command(name="edit", description="Admin: Uprav existující preset shopu")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
+        preset  = "Preset k úpravě",
         nazev   = "Nový název (ponech prázdné pro beze změny)",
         popis   = "Nový popis",
         item1   = "Item 1  —  přepíše celý seznam itemů pokud zadáš alespoň jeden",
@@ -340,9 +405,11 @@ class Economy(commands.Cog):
         item5   = "Item 5",
         ostatni = "Nová sekce Ostatní",
     )
+    @app_commands.autocomplete(preset=_ac_preset)
     async def gshop_edit(
         self,
         interaction: discord.Interaction,
+        preset:  str,
         nazev:   str | None = None,
         popis:   str | None = None,
         item1:   str | None = None,
@@ -353,31 +420,28 @@ class Economy(commands.Cog):
         ostatni: str | None = None,
     ):
         await interaction.response.defer(ephemeral=True)
-        shop = _load(SHOP_FILE, dict)
+        shops = _load_shops()
+        shop  = shops.get(preset)
         if not shop:
             return await interaction.followup.send(
-                "❌ Žádný shop neexistuje. Nejdřív ho vytvoř přes `/gshop create`.", ephemeral=True
+                f"❌ Preset `{preset}` neexistuje.", ephemeral=True
             )
 
-        # Aktualizuj jen zadané hodnoty
         if nazev:
             shop["nazev"] = nazev
         if popis is not None:
             shop["popis"] = popis
-
-        raw_items = [item1, item2, item3, item4, item5]
-        if any(raw_items):
-            parsed, err = _parse_items(raw_items)
+        if any([item1, item2, item3, item4, item5]):
+            parsed, err = _parse_items([item1, item2, item3, item4, item5])
             if err:
                 return await interaction.followup.send(f"❌ {err}", ephemeral=True)
             shop["items"] = parsed
-
         if ostatni is not None:
             shop["ostatni"] = ostatni
 
-        _save(SHOP_FILE, shop)
+        _save_shops(shops)
 
-        # Pokud je shop otevřený a má živou zprávu — uprav ji rovnou
+        # Pokud je shop otevřený — aktualizuj živou zprávu
         if shop.get("open") and shop.get("message") and shop.get("channel"):
             try:
                 channel = interaction.guild.get_channel(shop["channel"])
@@ -385,76 +449,132 @@ class Economy(commands.Cog):
                     msg = await channel.fetch_message(shop["message"])
                     await msg.edit(
                         embed=_build_shop_embed(shop, is_open=True),
-                        view=ShopView(shop),
+                        view=ShopView(preset, shop),
                     )
                     return await interaction.followup.send(
-                        "✅ Shop upraven a živá zpráva aktualizována.", ephemeral=True
+                        "✅ Preset upraven a živá zpráva aktualizována.", ephemeral=True
                     )
             except discord.NotFound:
-                # Zpráva byla smazána — vyčisti stale reference
                 shop["message"] = None
                 shop["channel"] = None
-                _save(SHOP_FILE, shop)
+                _save_shops(shops)
             except Exception:
                 logging.exception("[gshop_edit] Nelze aktualizovat živou zprávu")
 
-        await interaction.followup.send("✅ Shop upraven.", ephemeral=True)
+        await interaction.followup.send(f"✅ Preset `{preset}` upraven.", ephemeral=True)
 
-    @shop_group.command(name="open", description="Admin: Zveřejni shop do kanálu a otevři nakupování")
+    @shop_group.command(name="open", description="Admin: Zveřejni preset shopu do kanálu")
     @app_commands.checks.has_permissions(administrator=True)
-    async def gshop_open(self, interaction: discord.Interaction):
+    @app_commands.describe(preset="Preset k otevření")
+    @app_commands.autocomplete(preset=_ac_preset)
+    async def gshop_open(self, interaction: discord.Interaction, preset: str):
         await interaction.response.defer(ephemeral=True)
-        shop = _load(SHOP_FILE, dict)
+        shops = _load_shops()
+        shop  = shops.get(preset)
         if not shop:
             return await interaction.followup.send(
-                "❌ Žádný shop neexistuje. Nejdřív ho vytvoř přes `/gshop create`.", ephemeral=True
+                f"❌ Preset `{preset}` neexistuje.", ephemeral=True
             )
         if shop.get("open"):
-            return await interaction.followup.send("Shop je už otevřený.", ephemeral=True)
+            ch = interaction.guild.get_channel(shop.get("channel", 0))
+            where = ch.mention if ch else "neznámý kanál"
+            return await interaction.followup.send(
+                f"Shop je už otevřený v {where}.", ephemeral=True
+            )
 
         shop["open"] = True
-        embed = _build_shop_embed(shop, is_open=True)
-        view  = ShopView(shop)
-        msg   = await interaction.channel.send(embed=embed, view=view)
-
-        # Ulož referenci na zprávu pro pozdější edit/close
+        msg = await interaction.channel.send(
+            embed=_build_shop_embed(shop, is_open=True),
+            view=ShopView(preset, shop),
+        )
         shop["message"] = msg.id
         shop["channel"] = interaction.channel.id
-        _save(SHOP_FILE, shop)
+        _save_shops(shops)
+        await interaction.followup.send(f"🏪 **{shop['nazev']}** otevřen.", ephemeral=True)
 
-        await interaction.followup.send("🏪 Shop otevřen.", ephemeral=True)
-
-    @shop_group.command(name="close", description="Admin: Zavři shop a deaktivuj tlačítka")
+    @shop_group.command(name="close", description="Admin: Zavři preset shopu")
     @app_commands.checks.has_permissions(administrator=True)
-    async def gshop_close(self, interaction: discord.Interaction):
+    @app_commands.describe(preset="Preset k zavření")
+    @app_commands.autocomplete(preset=_ac_preset)
+    async def gshop_close(self, interaction: discord.Interaction, preset: str):
         await interaction.response.defer(ephemeral=True)
-        shop = _load(SHOP_FILE, dict)
+        shops = _load_shops()
+        shop  = shops.get(preset)
         if not shop:
-            return await interaction.followup.send("❌ Žádný shop neexistuje.", ephemeral=True)
+            return await interaction.followup.send(
+                f"❌ Preset `{preset}` neexistuje.", ephemeral=True
+            )
         if not shop.get("open"):
             return await interaction.followup.send("Shop je už zavřený.", ephemeral=True)
 
         shop["open"] = False
-        _save(SHOP_FILE, shop)
-
-        # Uprav původní zprávu — odstraň tlačítka, zešedni embed
         if shop.get("message") and shop.get("channel"):
             try:
                 channel = interaction.guild.get_channel(shop["channel"])
                 if channel:
                     msg = await channel.fetch_message(shop["message"])
-                    await msg.edit(
-                        embed=_build_shop_embed(shop, is_open=False),
-                        view=None,
-                    )
+                    await msg.edit(embed=_build_shop_embed(shop, is_open=False), view=None)
             except discord.NotFound:
-                shop["message"] = None
-                shop["channel"] = None
-                _save(SHOP_FILE, shop)
+                pass
             except Exception:
                 logging.exception("[gshop_close] Nelze aktualizovat živou zprávu")
+        shop["message"] = None
+        shop["channel"] = None
+        _save_shops(shops)
+        await interaction.followup.send(f"🔒 **{shop['nazev']}** zavřen.", ephemeral=True)
 
-        await interaction.followup.send("🔒 Shop zavřen.", ephemeral=True)
+    @shop_group.command(name="presets", description="Admin: Seznam všech shopů a jejich stav")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def gshop_presets(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        shops = _load_shops()
+        if not shops:
+            return await interaction.followup.send(
+                "Žádné presety. Vytvoř první přes `/gshop create`.", ephemeral=True
+            )
+        lines = []
+        for sid, s in shops.items():
+            status = "🟢 otevřeno" if s.get("open") else "🔴 zavřeno"
+            ch = interaction.guild.get_channel(s.get("channel") or 0)
+            ch_txt = f"  ·  {ch.mention}" if ch and s.get("open") else ""
+            lines.append(
+                f"**`{sid}`** — {s.get('nazev', '?')}  ·  {status}{ch_txt}\n"
+                f"-# {len(s.get('items', []))} itemů"
+            )
+        embed = discord.Embed(
+            title="🏪  Přehled shopů",
+            description="\n\n".join(lines),
+            color=0xC9A84C,
+        )
+        embed.set_footer(text="⭐ Aurionis")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @shop_group.command(name="delete", description="Admin: Smaž preset shopu")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(preset="Preset ke smazání")
+    @app_commands.autocomplete(preset=_ac_preset)
+    async def gshop_delete(self, interaction: discord.Interaction, preset: str):
+        await interaction.response.defer(ephemeral=True)
+        shops = _load_shops()
+        shop  = shops.get(preset)
+        if not shop:
+            return await interaction.followup.send(
+                f"❌ Preset `{preset}` neexistuje.", ephemeral=True
+            )
+        # Zavři živou zprávu pokud je otevřená
+        if shop.get("open") and shop.get("message") and shop.get("channel"):
+            try:
+                channel = interaction.guild.get_channel(shop["channel"])
+                if channel:
+                    msg = await channel.fetch_message(shop["message"])
+                    await msg.edit(embed=_build_shop_embed(shop, is_open=False), view=None)
+            except Exception:
+                pass
+        del shops[preset]
+        _save_shops(shops)
+        await interaction.followup.send(
+            f"🗑️ Preset **`{preset}`** — **{shop.get('nazev', '')}** smazán.", ephemeral=True
+        )
 
 
 async def setup(bot):

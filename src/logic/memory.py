@@ -72,6 +72,10 @@ class MemoryCog(commands.Cog):
         count = len(data[uid]["memories"])
         await interaction.response.send_message(
             f"📜 Vzpomínka zapsána na řádek **{count}**.", ephemeral=True)
+        if interaction.channel:
+            await interaction.channel.send(
+                f"📜 **{interaction.user.display_name}** si úspěšně vzpomněl/a."
+            )
 
     # ── /memory remove ────────────────────────────────────────────────────────
 
