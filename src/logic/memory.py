@@ -62,8 +62,9 @@ class MemoryCog(commands.Cog):
     # ── /memory add ───────────────────────────────────────────────────────────
 
     @memory.command(name="add", description="Zapiš novou vzpomínku.")
-    @app_commands.describe(text="Text vzpomínky.")
-    async def memory_add(self, interaction: discord.Interaction, text: str):
+    @app_commands.describe(text="Text vzpomínky (max 512 znaků).")
+    @app_commands.rename(text="text")
+    async def memory_add(self, interaction: discord.Interaction, text: app_commands.Range[str, 1, 512]):
         data = _load()
         uid  = str(interaction.user.id)
         data.setdefault(uid, {}).setdefault("memories", [])

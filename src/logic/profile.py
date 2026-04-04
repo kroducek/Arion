@@ -320,11 +320,10 @@ class Profile(commands.Cog):
 
         memories = profile.get("memories", [])
         if memories:
-            embed.add_field(
-                name="📜 Poslední vzpomínka",
-                value=f"*{memories[-1]}*",
-                inline=False,
-            )
+            mem = memories[-1]
+            if len(mem) > 1020:
+                mem = mem[:1020] + "…"
+            embed.add_field(name="📜 Poslední vzpomínka", value=f"*{mem}*", inline=False)
 
         if profile.get("portrait_url"):
             embed.set_image(url=profile["portrait_url"])
