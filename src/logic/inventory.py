@@ -1443,6 +1443,22 @@ class Inventory(commands.Cog):
         await interaction.followup.send(
             f"✅ Item **{item['name']}** (`{item_id}`) upraven.")
 
+    @app_commands.command(name="inv-db-remove", description="[DM] Odebere item z databáze.")
+    @app_commands.describe(item_id="ID itemu k odebrání.")
+    @app_commands.autocomplete(item_id=_ac_database_item)
+    async def inv_db_remove(self, interaction: discord.Interaction, item_id: str):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM může spravovat databázi.")
+            return
+        items_db = _load_items()
+        item = items_db.pop(item_id, None)
+        if not item:
+            await interaction.followup.send(f"❌ Item `{item_id}` neexistuje.")
+            return
+        _save_items(items_db)
+        await interaction.followup.send(f"🗑️ Item **{item['name']}** (`{item_id}`) odebrán z databáze.")
+
     @app_commands.command(name="inv-db-find", description="Prohledá databázi itemů.")
     @app_commands.describe(query="Název nebo ID itemu.")
     @app_commands.autocomplete(query=_ac_database_item)
