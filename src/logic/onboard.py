@@ -860,7 +860,7 @@ async def _show_motivation_prompt(
         title="📜",
         description=(
             "Arion otočí průkaz dobrodruha k tobě\n\n"
-            "Všechna pole jsou vyplněna... jméno, sken i tvůj portrét"
+            "Všechna pole jsou vyplněna... jméno, sken i tvůj portrét. "
             "Zbývá jen jedno prázdné místo ve spodní části\n\n"
             "*Pero se samo zdvihne nad stránku a začne zapisovat tvou odpověď*\n\n"
             "***'Proč vlastně chceš být dobrodruhem?'***\n\n"
@@ -1044,11 +1044,11 @@ class BulletinBoardView(discord.ui.View):
             title="📋  Nástěnka cechu",
             description=(
                 "Zastavíš se u vývěsky u dveří.\n\n"
-                "Visí tu různé zakázky.. vybírání odměn, eskorty, průzkum"
+                "Visí tu různé zakázky.. vybírání odměn, eskorty, průzkum "
                 "a každý má vedle sebe cechovní pečeť s označením minimálního ranku."
                 "**Žádný není pro F3...**\n\n"
                 "*Jasně. Musíš si nejdřív dobudovat jméno..*\n\n"
-                "Pod úkoly visí ručně psaný list"
+                "Pod úkoly visí ručně psaný list, "
                 "jiný papír, jiný rukopis. Nadpis říká:\n\n"
                 "**✨ Turnaj Hvězdy — postupující do 2. kola**\n\n"
                 "*Hao · Darryn · Gabriel*\n\n"
@@ -1118,148 +1118,29 @@ class MemoryCheckView(discord.ui.View):
         button.disabled = True
         await interaction.response.defer()
 
-        # Použij hráčovy skutečné stats — WIS, INT, INS
-        profiles = load_json(DATA_FILE, default={})
-        profile_stats = profiles.get(str(interaction.user.id), {}).get("stats", {})
-        memory_stats = {
-            'WIS': profile_stats.get('WIS', 1),
-            'INT': profile_stats.get('INT', 1),
-            'INS': profile_stats.get('INS', 1),
-        }
-        avg     = sum(memory_stats.values()) / 3
-        success = True  # vždy úspěch — plná vzpomínka
-
-        # ── Arion reakce ──────────────────────────────────────────────────
-        if success:
-            arion_line = (
-                "*Arion zvedne oči od knihy a chvíli tě ostražitě sleduje bez pohnutí*\n"
-                "***'..Paměť se ti vrací. Pomalu... ale vrací.'***"
-            )
-            outcome_title = "✅  Útržek vzpomínky"
-            outcome_desc  = (
-                "Soustředíš se a z hluboka se nadechneš\n\n"
-                "Na vteřinu se obraz zostří\n\n"
-                "*Muž v masce.. Šašek.. stojí blíž než v první vizi, vidíš ho zřetelněji.*\n\n"
-                "*Maska nedává najevo žádné emoce. Ani úsměv, ani hněv. Jen prázdnota.*\n\n"
-                "*Za ním..? nebo pod ním? — voda. Všude voda a písek*\n"
-                "*Ostrov. Malý a izolovaný. Cítíš sůl a vítr..*\n\n"
-                "*A pak ten hlas je klidný jako rozsudek:*\n\n"
-                "**\"Dávej pozor\"**\n\n"
-                "*Jméno se ti nevybaví, ani místo se ti nevybaví.*\n"
-                "*Ale víš, že to není poprvé co jsi ho viděl/a.*\n\n"
-                f"{arion_line}"
-            )
-        else:
-            arion_line = (
-                "*Arion si tě přeměří a pak se vrátí ke knize.*\n"
-                "***'Nic'***"
-            )
-            outcome_title = "❌  Mlha"
-            outcome_desc  = (
-                "Zkusíš se soustředit ale obraz se rozpadne dřív "
-                "než ho stihneš zachytit.\n\n"
-                "*Zůstane jen ten hlas. \"Dávej pozor\"*\n\n"
-                f"{arion_line}"
-            )
-
-        stats_line = "  ·  ".join(f"**{k}** {v}" for k, v in memory_stats.items())
-        embed = discord.Embed(
-            title=f"{'✅' if success else '❌'}  {outcome_title}",
-            description=(
-                f"-# *Memory check — WIS · INT · INS  (průměr: {avg:.1f} / práh: 5.0)*\n"
-                f"-# {stats_line}\n\n"
-                f"{outcome_desc}"
-            ),
-            color=0x27ae60 if success else 0x636e72,
-        )
-        if self.portrait_url:
-            embed.set_thumbnail(url=self.portrait_url)
-        embed.set_footer(text="⭐ Aurionis")
-
-        # Předej výsledek dál — CharismaRollView dostane memory_success pro případné navázání
-        await interaction.edit_original_response(
-            embed=embed,
-            view=CollisionTransitionView(
-                dest_key=self.dest_key,
-                portrait_url=self.portrait_url,
-                memory_success=success,
-            ),
-        )
-
-
-class CollisionTransitionView(discord.ui.View):
-    """Přechod — vzpamatuješ se a narazíš do muže s rohy."""
-    def __init__(self, dest_key: str, portrait_url: str | None = None, memory_success: bool = False):
-        super().__init__(timeout=600)
-        self.dest_key       = dest_key
-        self.portrait_url   = portrait_url
-        self.memory_success = memory_success
-
-    @discord.ui.button(label="Vzpamatovat se", style=discord.ButtonStyle.secondary, emoji="👁️")
-    async def snap_back(self, interaction: discord.Interaction, button: discord.ui.Button):
-        desc = (
-            "Jsi stále v cechu a\n\n"
-            "*nikdo si toho nevšiml.*\n\n"
-            "Nebo.. skoro nikdo...\n\n"
-            "Ramenem narazíš do mohutného muže, "
-            "který právě míjí dveře. Ohléde se. "
-            "Na hlavě má démonní rohy a na tebe se"
-            "valí pivo z dnes právě vyleveného džbánu."
-        )
-        embed = discord.Embed(
-            title="💥  ..",
-            description=desc,
-            color=0x2c3e50,
-        )
-        if self.portrait_url:
-            embed.set_thumbnail(url=self.portrait_url)
-        embed.set_footer(text="⭐ Aurionis  ·  Moudrost check.")
-
-        await interaction.response.edit_message(
-            embed=embed,
-            view=WisdomRollView(dest_key=self.dest_key, portrait_url=self.portrait_url),
-        )
-
-
-class WisdomRollView(discord.ui.View):
-    """Hráč hází na Moudrost — vždy nat20, vzpomene si."""
-    def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
-        self.dest_key     = dest_key
-        self.portrait_url = portrait_url
-        self._rolled      = False   # ochrana před double-klikem
-
-    @discord.ui.button(label="🎲 Hodit na Moudrost  /roll 1d20", style=discord.ButtonStyle.primary)
-    async def roll_wisdom(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self._rolled:
-            await interaction.response.defer()
-            return
-        self._rolled    = True
-        button.disabled = True
-        await interaction.response.defer()
-
-        # Vždy nat20 — hráč si vzpomene
-        roll = 20
-
-        # Zapiš do roll stats
+        # Vždy nat20 WIS — hráč si v tutorialu vždy vzpomene
         if interaction.guild:
             record_roll(
                 interaction.guild.id, interaction.user.id,
                 nat20=True, nat1=False, hit24=False, is_check=True,
             )
 
-        arion_note = (
-            "*Arion zvedne oči od knihy. Jen se podívá. Pak se vrátí ke čtení.*\n"
-            "***'..Hmm.'***"
+        arion_line = (
+            "*Arion zvedne oči od knihy a chvíli tě ostražitě sleduje bez pohnutí.*\n"
+            "***'..Paměť se ti vrací. Pomalu... ale vrací.'***"
         )
         outcome_desc = (
-            f"Hodil/a jsi **{roll}** — přirozená dvacítka.\n\n"
-            "Zvládneš situaci s překvapivou elegancí. "
-            "Muž s rohy se zastaví, přeměří tě — pak se krátce zasměje.\n\n"
-            "***\"První den v práci co? "
-            "Hao je moc silný.. nevím jestli má cenu se do toho turnaje vůbec hlásit.\"***\n\n"
-            "*Odejde. Ani se neohlédne.*\n\n"
-            f"{arion_note}"
+            "Soustředíš se a z hluboka se nadechneš.\n\n"
+            "Na vteřinu se obraz zostří.\n\n"
+            "*Muž v masce.. Šašek.. stojí blíž než v první vizi, vidíš ho zřetelněji.*\n\n"
+            "*Maska nedává najevo žádné emoce. Ani úsměv, ani hněv. Jen prázdnota.*\n\n"
+            "*Za ním..? nebo pod ním? — voda. Všude voda a písek.*\n"
+            "*Ostrov. Malý a izolovaný. Cítíš sůl a vítr..*\n\n"
+            "*A pak ten hlas, klidný jako rozsudek:*\n\n"
+            "**\"Dávej pozor\"**\n\n"
+            "*Jméno se ti nevybaví, ani místo se ti nevybaví.*\n"
+            "*Ale víš, že to není poprvé co jsi ho viděl/a.*\n\n"
+            f"{arion_line}"
         )
 
         embed = discord.Embed(
@@ -1273,15 +1154,18 @@ class WisdomRollView(discord.ui.View):
 
         await interaction.edit_original_response(
             embed=embed,
-            view=FinalEnterView(dest_key=self.dest_key, portrait_url=self.portrait_url),
+            view=CollisionTransitionView(
+                dest_key=self.dest_key,
+                portrait_url=self.portrait_url,
+            ),
         )
 
-        # Zapiš první vzpomínku do profilu
+        # Zapiš první vzpomínku
         uid = str(interaction.user.id)
         try:
             profiles = load_json(DATA_FILE, default={})
             profiles.setdefault(uid, {}).setdefault("memories", [])
-            if not profiles[uid]["memories"]:   # jen pokud ještě žádná není
+            if not profiles[uid]["memories"]:
                 profiles[uid]["memories"].append(
                     "Muž v masce šaška. Ostrov, voda a písek. Krev na rukou. "
                     "\"Dávej pozor.\" — Jméno ani místo si nevybavím, ale vím, že to nebylo poprvé."
@@ -1293,6 +1177,134 @@ class WisdomRollView(discord.ui.View):
                     )
         except Exception as e:
             print(f"[onboard] Nepodařilo se zapsat vzpomínku: {e}")
+
+
+class CollisionTransitionView(discord.ui.View):
+    """Přechod — vzpamatuješ se a narazíš do muže s rohy."""
+    def __init__(self, dest_key: str, portrait_url: str | None = None):
+        super().__init__(timeout=600)
+        self.dest_key     = dest_key
+        self.portrait_url = portrait_url
+
+    @discord.ui.button(label="Vzpamatovat se", style=discord.ButtonStyle.secondary, emoji="👁️")
+    async def snap_back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        desc = (
+            "Jsi stále v cechu a\n\n"
+            "*nikdo si toho nevšiml.*\n\n"
+            "Nebo.. skoro nikdo...\n\n"
+            "Ramenem narazíš do mohutného muže, "
+            "který právě míjí dveře. Ohlédne se. "
+            "Na hlavě má démonní rohy a na tebe se "
+            "valí pivo z právě vyleveného džbánu."
+        )
+        embed = discord.Embed(
+            title="💥  ..",
+            description=desc,
+            color=0x2c3e50,
+        )
+        if self.portrait_url:
+            embed.set_thumbnail(url=self.portrait_url)
+        embed.set_footer(text="⭐ Aurionis  ·  Charisma check.")
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=CharismaRollView(dest_key=self.dest_key, portrait_url=self.portrait_url),
+        )
+
+
+class CharismaRollView(discord.ui.View):
+    """Hráč hází na Charisma — skutečný náhodný roll."""
+    def __init__(self, dest_key: str, portrait_url: str | None = None):
+        super().__init__(timeout=600)
+        self.dest_key     = dest_key
+        self.portrait_url = portrait_url
+        self._rolled      = False
+
+    @discord.ui.button(label="🎲 Hodit na Charisma  /roll 1d20", style=discord.ButtonStyle.primary)
+    async def roll_charisma(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self._rolled:
+            await interaction.response.defer()
+            return
+        self._rolled    = True
+        button.disabled = True
+        await interaction.response.defer()
+
+        roll  = random.randint(1, 20)
+        nat20 = roll == 20
+        nat1  = roll == 1
+
+        if interaction.guild:
+            record_roll(
+                interaction.guild.id, interaction.user.id,
+                nat20=nat20, nat1=nat1, hit24=(roll == 24), is_check=True,
+            )
+
+        if nat20:
+            arion_note = (
+                "*Arion zvedne oči od knihy. Jen se podívá. Pak se vrátí ke čtení.*\n"
+                "***'..Hmm.'***"
+            )
+            outcome_title = "🌟  Přirozená 20!"
+            outcome_desc  = (
+                f"Hodil/a jsi **{roll}** — přirozená dvacítka.\n\n"
+                "Zvládneš situaci s překvapivou elegancí. "
+                "Muž s rohy se zastaví, přeměří tě — pak se krátce zasměje.\n\n"
+                "***\"První den v práci co? "
+                "Hao je moc silný.. nevím jestli má cenu se do toho turnaje vůbec hlásit.\"***\n\n"
+                "*Odejde. Ani se neohlédne.*\n\n"
+                f"{arion_note}"
+            )
+        elif nat1:
+            arion_note = (
+                "*Arion se podívá přes okraj knihy. Zavře ji.*\n"
+                "***'..Hmm.'***"
+            )
+            outcome_title = "💀  Přirozená 1."
+            outcome_desc  = (
+                f"Hodil/a jsi **{roll}** — přirozená jednička.\n\n"
+                "Snažíš se omluvit — a při tom omylem strčíš do korbelu. "
+                "Zbytek piva se vylije přímo na muže s rohy.\n\n"
+                "*Vedlejší stůl, který už sledoval celou situaci, umírá smíchy.*\n\n"
+                "Muž se na tebe dlouze podívá. Nic neřekne. Odejde.\n\n"
+                f"{arion_note}"
+            )
+        elif roll >= 10:
+            arion_note = (
+                "*Arion si tě přeměří pohledem a vrátí se ke knize.*\n"
+                "***'Ujde to.'***"
+            )
+            outcome_title = "✅  Úspěch."
+            outcome_desc  = (
+                f"Hodil/a jsi **{roll}** — úspěch.\n\n"
+                "Rychle se zorientuješ a omluvíš se dřív než situace stihne eskalovat.\n\n"
+                "***\"V pohodě, sakra.. dávej větší pozor.\"***\n\n"
+                "*Muž s rohy si prorazí cestu ke dveřím. Situace zažehnána.*\n\n"
+                f"{arion_note}"
+            )
+        else:
+            arion_note = "*Arion se ani nepodívá.*"
+            outcome_title = "❌  Neúspěch."
+            outcome_desc  = (
+                f"Hodil/a jsi **{roll}** — neúspěch.\n\n"
+                "Něco zakoktáš. Ani sám nevíš co.\n\n"
+                "*Muž s rohy zakroutí očima a odejde naštvaně pryč.*\n\n"
+                f"{arion_note}"
+            )
+
+        emoji = "🌟" if nat20 else ("💀" if nat1 else "🎲")
+        embed = discord.Embed(
+            title=f"{emoji}  {outcome_title}",
+            description=f"-# *Charisma check — /roll 1d20*\n\n{outcome_desc}",
+            color=0x27ae60 if roll >= 10 else 0xe74c3c,
+        )
+        if self.portrait_url:
+            embed.set_thumbnail(url=self.portrait_url)
+        embed.set_footer(text="⭐ Aurionis")
+
+        await interaction.edit_original_response(
+            embed=embed,
+            view=FinalEnterView(dest_key=self.dest_key, portrait_url=self.portrait_url),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
