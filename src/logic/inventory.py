@@ -1086,9 +1086,10 @@ class Inventory(commands.Cog):
         _save_profiles(profiles)
 
         effect_str = "\n".join(effects) if effects else ""
+        use_text = db_item.get("lore_drop") or db_item.get("desc", "…")
         embed = discord.Embed(
             title=f"✨ {db_item['name']}",
-            description=f"*{db_item.get('desc', '…')}*" + (f"\n\n{effect_str}" if effect_str else ""),
+            description=f"*{use_text}*" + (f"\n\n{effect_str}" if effect_str else ""),
             color=0xf0a500,
         )
         embed.set_footer(text=f"{interaction.user.display_name}  ·  item použit a odebrán")
@@ -1176,9 +1177,10 @@ class Inventory(commands.Cog):
 
         _save_profiles(profiles)
         effect_str = "\n".join(effects) if effects else ""
+        use_text = db_item.get("lore_drop") or db_item.get("desc", "…")
         embed = discord.Embed(
             title=f"✨ {db_item['name']}",
-            description=f"*{db_item.get('desc', '…')}*" + (f"\n\n{effect_str}" if effect_str else ""),
+            description=f"*{use_text}*" + (f"\n\n{effect_str}" if effect_str else ""),
             color=0xf0a500,
         )
         embed.set_footer(text=f"{interaction.user.display_name}  ·  item použit a odebrán")
@@ -1268,6 +1270,7 @@ class Inventory(commands.Cog):
         mana_bonus="Bonus k max maně při equipu (trvalý dokud equipnuto).",
         stat_bonus="Bonusy ke statům při equipu, např. STR:3 DEX:1 (0 = odebrat).",
         desc="Popis, lore, perky — volný text.",
+        lore_drop="Narativní hláška zobrazená při použití itemu (místo desc).",
     )
     @app_commands.choices(
         category=[app_commands.Choice(name=c, value=c) for c in CATEGORIES],
@@ -1299,6 +1302,7 @@ class Inventory(commands.Cog):
         hp_bonus: Optional[int] = None, mana_bonus: Optional[int] = None,
         stat_bonus: Optional[str] = None,
         desc: Optional[str] = None,
+        lore_drop: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -1327,6 +1331,7 @@ class Inventory(commands.Cog):
         if mana_restore > 0:   item["mana_restore"]   = mana_restore
         if mana_cost > 0:      item["mana_cost"]      = mana_cost
         if desc:               item["desc"]           = desc
+        if lore_drop:          item["lore_drop"]      = lore_drop
         if requires:
             req_dict = _parse_requires(requires)
             if req_dict:       item["requires"]       = req_dict
@@ -1361,6 +1366,7 @@ class Inventory(commands.Cog):
         hp_bonus="Bonus k max HP při equipu (0 = odebrat).",
         mana_bonus="Bonus k max maně při equipu (0 = odebrat).",
         stat_bonus="Bonusy ke statům při equipu, např. STR:3 DEX:1 (stat:0 = odebrat).",
+        lore_drop="Narativní hláška při použití (prázdné = beze změny · 'clear' = odebrat).",
     )
     @app_commands.autocomplete(item_id=_ac_database_item)
     async def inv_db_edit(
@@ -1368,6 +1374,7 @@ class Inventory(commands.Cog):
         item_id: str,
         name: Optional[str] = None,
         desc: Optional[str] = None,
+        lore_drop: Optional[str] = None,
         atk: Optional[int] = None,
         defense: Optional[int] = None,
         hunger_restore: Optional[int] = None,
@@ -1392,6 +1399,9 @@ class Inventory(commands.Cog):
             return
         if name       is not None: item["name"]       = name
         if desc       is not None: item["desc"]       = desc
+        if lore_drop  is not None:
+            if lore_drop.lower() == "clear": item.pop("lore_drop", None)
+            else:                            item["lore_drop"] = lore_drop
         if consumable is not None: item["consumable"] = consumable
         if stackable  is not None: item["stackable"]  = stackable
         if atk is not None:
