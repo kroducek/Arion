@@ -7,7 +7,6 @@ import os
 import json
 from src.logic.stats import init_stats, STAT_LABELS
 from src.utils.json_utils import load_json, save_json
-from src.logic.roll import _radar_chart
 from src.core.roll_stats import record_roll
 
 # ── Konfigurace ───────────────────────────────────────────────────────────────
@@ -97,9 +96,9 @@ class TutorialPartOneView(discord.ui.View):
             title="🌌 Aurionis: Act II",
             description=(
                 "Svět se mění pod tíhou nových zkoušek.\n\n"
-                "**Turnaj Hvězdy** byl vyhlášen a jeho vítěz si může přát úplně cokoliv"
-                "Mocní se pohybují ve stínech zatímco slabí mizí beze stopy"
-                "Ti, jenž jsou zváni **Vyvolenými** stojí na rozhraní mezi oběma světy\n\n"
+                "**Turnaj Hvězdy** byl vyhlášen a jeho vítěz si může přát úplně cokoliv.\n\n"
+                "Mocní se pohybují ve stínech, zatímco slabí mizí beze stopy.\n\n"
+                "Ti, jenž jsou zváni **Vyvolenými**, stojí na rozhraní mezi oběma světy.\n\n"
                 "*Pravda byla odhalena, ale jaká ta pravda vlastně je?*"
             ),
             color=0x2f3136,
@@ -158,7 +157,7 @@ class RecapView(discord.ui.View):
             2: discord.Embed(
                 title="Kapitola II 🛡️ Zrazená přísaha",
                 description=(
-                    "**Reinhard**, nejvyšší paladin, symbol cti a řádu odložil insignii"
+                    "**Reinhard**, nejvyšší paladin, symbol cti a řádu odložil insignii.."
                     "Ochránce Kalexie a vstoupil do Turnaje Hvězdy sám za sebe\n\n"
                     "*'Stanu se králem hvězdy pro vás všechny'*\n\n"
                     "Za ním zůstala prázdnota, obrana Kalexie se zhroutila a ti, kdo mu "
@@ -169,7 +168,7 @@ class RecapView(discord.ui.View):
             3: discord.Embed(
                 title="Kapitola III 🎭 Vládce stínů",
                 description=(
-                    "Muž beze jména, kterému všichni říkají **Vládce stínů**, ovládá sílu zvanou"
+                    "Muž beze jména, kterému všichni říkají **Vládce stínů**, ovládá sílu zvanou "
                     "esenciální očistění, ta dokáže vzít schopnosti, identitu i smysl existence\n\n"
                     "Během jediné noci v Lumenii přišli tisíce upírů o svou podstatu a"
                     "město je nyní plné uprchlíků, kteří ani nevědí kým jsou vlastně jsou"
@@ -209,7 +208,7 @@ def _destination_embed() -> discord.Embed:
     embed = discord.Embed(
         title="🌍  Kde se probudíš?",
         description=(
-            "Světlo tě táhne třemi různými směry najednou, z každého směru cítíš úplně jinou energii"
+            "Světlo tě táhne třemi různými směry najednou, z každého směru cítíš úplně jinou energii "
             "Každé místo tě čeká.. ale ty si můžeš vybrat jen jednu cestu\n\n"
             "Vyber svoji destinaci:"
         ),
@@ -255,12 +254,12 @@ async def _start_encounter(interaction: discord.Interaction, dest_key: str):
     embed = discord.Embed(
         title="🐱",
         description=(
-            "> *Pomalu otevřeš oči a všechno se ti zdá zmatené, ale až děsivě známé..."
-            "Hlavou ti prochází myšlenka jestli jsi tu už někdy nebyl "
-            "Modré lampy osvětlují ulici zatímco ty se nacházíš před cechem dobrodruhů*\n\n"
+            "> *Pomalu otevřeš oči a všechno se ti zdá zmatené, ale až děsivě známé.\n"
+            "Hlavou ti prochází myšlenka — jestli jsi tu už někdy nebyl.\n"
+            "Modré lampy osvětlují ulici, zatímco ty se nacházíš před cechem dobrodruhů.*\n\n"
             "Z rohu uličky vyběhne bronzová kočička v magickém klobouku a šťastně zamňouká\n\n"
             "**'No ne, další! Heeej, ahoooj, nechceš být dobrodruh?'**\n\n"
-            "Dřív než stačíš odpovědět, tak kočička zamrská tlapkou a vyčaruje"
+            "Dřív než stačíš odpovědět, tak kočička zamrská tlapkou a vyčaruje "
             "třpytivou kouli vody, kterou hodí rovnou po tobě"
         ),
         color=0x3498db,
@@ -324,7 +323,7 @@ class EncounterView(discord.ui.View):
                     f"Koule vody ti trefí přímo do obličeje a jsi kompletně promočený.\n\n"
                     f"Arion se skoro sesype smíchy.\n\n"
                     f"**'AHA-HAHA-HAHA! Ach jo, ach jo..'**  *máchne tlapkou*\n\n"
-                    f"*Na kůži ti začínají růst malé toxické houby* Arion je sfoukne jedním dechem"
+                    f"*Na kůži ti začínají růst malé toxické houby.* Arion je sfoukne jedním dechem "
                     f"a ty se rozplynou. Stále se chichotající kočka ukáže na dveře.\n"
                     f"**'Ahaha, pojď dovnitř!'**"
                 ),
@@ -366,8 +365,8 @@ class ArionIntroView(discord.ui.View):
             )
         else:
             landing = (
-                "Kočička přistane *na tobě* — ...doslova "
-                "Použije tě jako odrazový můstek, odskočí a přistane o krok dál"
+                "Kočička přistane *na tobě* — ...doslova. "
+                "Použije tě jako odrazový můstek, odskočí a přistane o krok dál. "
                 "Otočí se a změří tě pohledem od hlavy k patě jako by se nic nestalo."
             )
 
@@ -463,15 +462,15 @@ class ArionLeapView(discord.ui.View):
         if roll >= 11:
             desc = (
                 "Chytíš ji za límec klobouku a prudce zahodíš\n\n"
-                "Arion přistane na čtyřech tlapách pár metrů od tebe,"
-                "narovná si klobouk a kouká na tebe s novým respektem\n\n"
+                "Arion přistane na čtyřech tlapách pár metrů od tebe, "
+                "narovná si klobouk a kouká na tebe s novým respektem.\n\n"
                 "***'Oooh... Takže ty jsi tenhle typ'***\n\n"
                 "Chvíli vypadá jako by nad nečím přemýšlela\n\n"
                 "***'Vzpomínáš si na něco?'***"
             )
         else:
             desc = (
-                "Zkusíš ji schodit, ale Arion se drží jako klíště"
+                "Zkusíš ji schodit, ale Arion se drží jako klíště. "
                 "Přeleze přes tvé rameno, pak po zádech, pak zase zpátky..\n\n"
                 "***'Nedaří se ti mě schodit, že?'*** poznamená spokojeně\n\n"
                 "***'Vzpomínáš si na něco?'***"
@@ -491,8 +490,8 @@ class ArionLeapView(discord.ui.View):
         embed = discord.Embed(
             title="🐾  ..Co to dělá?",
             description=(
-                "Necháš ji a Arion začne šplhat po tobě se soustředěným výrazem"
-                "Přičichne ke tvému ramenu, pak ke krku, pak strčí nos přímo do tvých vlasů\n\n"
+                "Necháš ji a Arion začne šplhat po tobě se soustředěným výrazem. "
+                "Přičichne ke tvému ramenu, pak ke krku, pak strčí nos přímo do tvých vlasů.\n\n"
                 "***'Hm..'***\n\n"
                 "Sleze dolů a postaví se před tebe\n\n"
                 "***'Vzpomínáš si na něco?'***"
@@ -567,11 +566,11 @@ class ArionHmView(discord.ui.View):
         embed = discord.Embed(
             title="🐱  ..Ale nic.",
             description=(
-                "Arion zvedne hlavu a její výraz se vrátí do normálu"
+                "Arion zvedne hlavu a její výraz se vrátí do normálu "
                 "nebo aspoň do toho co u ní normál je.\n\n"
                 "***'...Ale nic, vyvolený'***\n\n"
-                "Otočí se a zamíří ke dveřím cechu"
-                "Klobouk se na hlavě narovná sám od sebe\n\n"
+                "Otočí se a zamíří ke dveřím cechu. "
+                "Klobouk se na hlavě narovná sám od sebe.\n\n"
                 "***'Pojď dovnitř'***"
             ),
             color=0x2c3e50,
@@ -594,14 +593,14 @@ class EnterGuildInsideView(discord.ui.View):
             title="🏛️  Cech dobrodruhů",
             description=(
                 "Dveře se za tebou zavřou a hluk ulice utichne\n\n"
-                "Uvnitř panuje svérázný pořádek, u stolu v rohu se hádají dva trpaslíci"
-                "o tom kdo zabil draka jako poslední. Častokrát slyšíš jméno Aurelion."
+                "Uvnitř panuje svérázný pořádek, u stolu v rohu se hádají dva trpaslíci "
+                "o tom kdo zabil draka jako poslední. Častokrát slyšíš jméno Aurelion. "
                 "Někdo jiný spí na lavici s helmou přes obličej.\n\n"
-                "Arion přeskočí pult jedním plynulým pohybem a"
+                "Arion přeskočí pult jedním plynulým pohybem a "
                 "přistane na druhé straně kde otevře tlustou, živoucí knihu\n\n"
                 "***'..Standardní procedura, přijmu tě mezi dobrodruhy'***\n\n"
-                "Přejede tlapkou přes zvláštní destičku vedle knihy"
-                "Destička se rozsvítí modrou aurou jako by reagovala na dotyk\n\n"
+                "Přejede tlapkou přes zvláštní destičku vedle knihy a ta se "
+                "rozsvítí modrou aurou jako by reagovala na dotyk\n\n"
                 "***'Tak se podíváme z jakého jsi těsta'***"
             ),
             color=0x2c3e50,
@@ -664,33 +663,6 @@ class MotivationModal(discord.ui.Modal, title="Tvá motivace"):
             dest_key=self.dest_key,
             portrait_url=self.portrait_url,
             stats=self.stats,
-        )
-
-
-class PostScanView(discord.ui.View):
-    def __init__(self, dest_key: str, stats: dict | None = None, portrait_url: str | None = None):
-        super().__init__(timeout=600)
-        self.dest_key     = dest_key
-        self.stats        = stats
-        self.portrait_url = portrait_url
-
-    @discord.ui.button(label="Pokračovat", style=discord.ButtonStyle.secondary, emoji="➡️")
-    async def continue_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        embed = discord.Embed(
-            title="🖼️  Ještě jedna věc...",
-            description=(
-                "Arion nakloní hlavu na stranu\n\n"
-                "***'Můžu si tě nakreslit do záznamu?'***"
-                "***'Miluji umění'***\n\n"
-                "*Kouká na tebe s výrazem, který dává jasně najevo,"
-                "že odmítnutí by ji osobně urazilo*"
-            ),
-            color=0x9b59b6,
-        )
-        embed.set_footer(text="⭐ Aurionis  ·  Skoro hotovo.")
-        await interaction.response.edit_message(
-            embed=embed,
-            view=PortraitView(dest_key=self.dest_key, stats=self.stats),
         )
 
 
@@ -816,49 +788,25 @@ class TutorialSPView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
 
     async def _done_callback(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-
-        labels = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
-
-        # Vyber stat s nejvyšší hodnotou jako "check stat" pro radar
-        check_stat  = max(labels, key=lambda s: self.stats.get(s, 0))
-        stat_val    = self.stats.get(check_stat, 0)
-        roll        = random.randint(1, 20)
-
-        chart_file = None
-        try:
-            loop       = asyncio.get_event_loop()
-            buf        = await loop.run_in_executor(
-                None, _radar_chart, self.stats, roll, check_stat, 20
-            )
-            chart_file = discord.File(buf, filename="check.png")
-        except Exception as e:
-            print(f"[onboard] Graf selhal: {e}")
-
+        labels      = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
         stats_lines = "  ·  ".join(f"**{s}** {self.stats.get(s, 0)}" for s in labels)
 
         embed = discord.Embed(
-            title="🎲",
+            title="🖼️  Ještě jedna věc...",
             description=(
-                f"**Arion použila Magický sken**\n\n"
-                f"{stats_lines}\n\n"
-                f"***'To není špatné. Nejspíš se v Aurionisu neztratíš..'***"
+                f"-# {stats_lines}\n\n"
+                "Arion nakloní hlavu na stranu.\n\n"
+                "***'Můžu si tě nakreslit do záznamu? Miluji umění.'***\n\n"
+                "*Kouká na tebe s výrazem, který dává jasně najevo, "
+                "že odmítnutí by ji osobně urazilo.*"
             ),
-            color=0xf0a500,
+            color=0x9b59b6,
         )
-        embed.add_field(name="📜 Rozbor hodu", value=f"```diff\n+1d20({roll})\n```", inline=False)
-        embed.add_field(name="", value=f"# 🎲 **{roll}**", inline=False)
-        embed.set_footer(text=f"{check_stat} {stat_val}  ·  ✨ Aurionis ✨")
-        if chart_file:
-            embed.set_image(url="attachment://check.png")
-
-        kwargs: dict = {
-            "embed": embed,
-            "view": PostScanView(dest_key=self.dest_key, stats=self.stats, portrait_url=self.portrait_url),
-        }
-        if chart_file:
-            kwargs["attachments"] = [chart_file]
-        await interaction.edit_original_response(**kwargs)
+        embed.set_footer(text="⭐ Aurionis  ·  Skoro hotovo.")
+        await interaction.response.edit_message(
+            embed=embed,
+            view=PortraitView(dest_key=self.dest_key, stats=self.stats),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1062,8 +1010,8 @@ class GoldView(discord.ui.View):
                 "Zlaté uvnitř cinkají velmi přesvědčivě\n\n"
                 f"**+100** {COIN} připsáno na tvé konto\n\n"
                 "Ještě než tě nechá odejít tak prohodí\n\n"
-                f"***'Svět tam venku není moc přívětivý..'***"
-                f"***'Obzvlášť teď, za Turnaje. Dávej na sebe pozor..'***"
+                f"***'Svět tam venku není moc přívětivý.."
+                f"..obzvlášť teď, za Turnaje. Dávej na sebe pozor..'***\n\n"
                 f"***'{dest['emoji']} {dest['name']} tě čeká'***\n\n"
                 "*Arion ti přestane věnovat pozornost. To je zřejmě rozloučení*"
             ),
