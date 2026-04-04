@@ -461,25 +461,25 @@ class ArionLeapView(discord.ui.View):
 
         if roll >= 11:
             desc = (
-                "Chytíš ji za límec klobouku a prudce zahodíš\n\n"
+                f"-# 🎲 STR check — **{roll}**/20\n\n"
+                "Chytíš ji za límec klobouku a prudce zahodíš.\n\n"
                 "Arion přistane na čtyřech tlapách pár metrů od tebe, "
                 "narovná si klobouk a kouká na tebe s novým respektem.\n\n"
-                "***'Oooh... Takže ty jsi tenhle typ'***\n\n"
-                "Chvíli vypadá jako by nad nečím přemýšlela\n\n"
+                "***'Oooh... Takže ty jsi tenhle typ.'***\n\n"
+                "Chvíli vypadá jako by nad něčím přemýšlela.\n\n"
                 "***'Vzpomínáš si na něco?'***"
             )
         else:
             desc = (
-                "Zkusíš ji schodit, ale Arion se drží jako klíště. "
+                f"-# 🎲 STR check — **{roll}**/20\n\n"
+                "Zkusíš ji shodit, ale Arion se drží jako klíště. "
                 "Přeleze přes tvé rameno, pak po zádech, pak zase zpátky..\n\n"
-                "***'Nedaří se ti mě schodit, že?'*** poznamená spokojeně\n\n"
+                "***'Nedaří se ti mě shodit, že?'*** poznamená spokojeně.\n\n"
                 "***'Vzpomínáš si na něco?'***"
             )
 
         embed = discord.Embed(title="🎲", description=desc, color=0xf0a500)
-        embed.add_field(name="📜 Rozbor hodu", value=f"```diff\n+1d20({roll})\n```", inline=False)
-        embed.add_field(name="", value=f"# 🎲 **{roll}**", inline=False)
-        embed.set_footer(text="STR  ·  ✨ Aurionis ✨")
+        embed.set_footer(text="⭐ Aurionis")
         await interaction.response.edit_message(
             embed=embed,
             view=ArionMemoryView(dest_key=self.dest_key),
@@ -493,7 +493,7 @@ class ArionLeapView(discord.ui.View):
                 "Necháš ji a Arion začne šplhat po tobě se soustředěným výrazem. "
                 "Přičichne ke tvému ramenu, pak ke krku, pak strčí nos přímo do tvých vlasů.\n\n"
                 "***'Hm..'***\n\n"
-                "Sleze dolů a postaví se před tebe\n\n"
+                "Sleze dolů a postaví se před tebe.\n\n"
                 "***'Vzpomínáš si na něco?'***"
             ),
             color=0x9b59b6,
