@@ -8,7 +8,7 @@ import os
 from src.utils.paths import ECONOMY as ECONOMY_FILE, SHOPS as SHOPS_FILE, PROFILES as PROFILES_FILE
 from src.utils.json_utils import load_json, save_json
 
-COIN         = "<:goldcoin:1477303464781680772>"
+COIN         = "<:goldcoin:1490171741237018795>"
 
 # ── Datová vrstva ──────────────────────────────────────────────────────────────
 

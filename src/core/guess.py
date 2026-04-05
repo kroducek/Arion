@@ -11,7 +11,7 @@ from discord.ext import commands
 from src.utils.paths import ECONOMY as ECONOMY_FILE, GUESS_SCORES as SCORES_FILE
 from src.utils.json_utils import load_json, save_json
 
-COIN        = "<:goldcoin:1477303464781680772>"
+COIN        = "<:goldcoin:1490171741237018795>"
 MAX_GUESSES = 3
 MIN_PLAYERS = 2
 MAX_PLAYERS = 8

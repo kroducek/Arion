@@ -13,7 +13,7 @@ from src.core.roll_stats import record_roll
 
 ROLE_DOBRODRUH_F3_ID = 1476056192643104768
 from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE
-COIN                 = "<:goldcoin:1477303464781680772>"
+COIN                 = "<:goldcoin:1490171741237018795>"
 
 # Obrázky
 URL_PLAKAT_HVEZDA   = "https://media.discordapp.net/attachments/1484572118267068598/1484572264123994215/Copilot-20260316-144814.png?ex=69beb729&is=69bd65a9&hm=76e19b81f3b4a6e9effa21f03950a4eab18828ca8e1e81a93b42ff3cb8ddc63b&=&format=webp&quality=lossless&width=432&height=648"

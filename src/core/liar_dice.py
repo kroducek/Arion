@@ -33,7 +33,7 @@ except Exception:
 MIN_PLAYERS  = 2
 MAX_PLAYERS  = 6
 INITIAL_DICE = 5
-COIN         = "<:goldcoin:1477303464781680772>"
+COIN         = "<:goldcoin:1490171741237018795>"
 
 DICE_EMOJI = {1: "⚀", 2: "⚁", 3: "⚂", 4: "⚃", 5: "⚄", 6: "⚅"}
 

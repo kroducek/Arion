@@ -465,7 +465,7 @@ def lobby_embed(game: GameState, guild) -> discord.Embed:
     sazka_line = ""
     if game.sazka > 0:
         total_pool = game.sazka * (len([p for p in game.players if p != ARION_ID]) + (1 if game.has_arion else 0))
-        sazka_line = f"\n💰 **Sázka:** {game.sazka} <:goldcoin:1477303464781680772> na hráče  ·  pool: **{total_pool}** <:goldcoin:1477303464781680772>"
+        sazka_line = f"\n💰 **Sázka:** {game.sazka} <:goldcoin:1490171741237018795> na hráče  ·  pool: **{total_pool}** <:goldcoin:1490171741237018795>"
 
     embed = discord.Embed(
         title="🎲 Kostky (Farkle)",
@@ -572,7 +572,7 @@ def win_embed(game: GameState, guild, win_name: str, total: int, payout: int = 0
         parts.append("*🐾 Arion tleská tlapkami a zapisuje jméno zlatým inkoustem...*")
 
     if payout > 0:
-        parts.append(f"💰 **Výhra ze sázky: +{payout} <:goldcoin:1477303464781680772>**")
+        parts.append(f"💰 **Výhra ze sázky: +{payout} <:goldcoin:1490171741237018795>**")
 
     embed = discord.Embed(
         title="🏆 VÍTĚZ!",
@@ -842,7 +842,7 @@ class LobbyView(discord.ui.View):
             if not econ_deduct(uid, self.game.sazka):
                 bal = econ_get(uid)
                 return await interaction.response.send_message(
-                    f"Nemáš dost zlaťáků na sázku! Potřebuješ **{self.game.sazka}**, máš **{bal}** <:goldcoin:1477303464781680772>",
+                    f"Nemáš dost zlaťáků na sázku! Potřebuješ **{self.game.sazka}**, máš **{bal}** <:goldcoin:1490171741237018795>",
                     ephemeral=True
                 )
 
@@ -1231,7 +1231,7 @@ class Kostky(commands.Cog):
                 if not econ_deduct(uid, game.sazka):
                     bal = econ_get(uid)
                     return await interaction.response.send_message(
-                        f"Nemáš dost zlaťáků na sázku! Potřebuješ **{game.sazka}**, máš **{bal}** <:goldcoin:1477303464781680772>",
+                        f"Nemáš dost zlaťáků na sázku! Potřebuješ **{game.sazka}**, máš **{bal}** <:goldcoin:1490171741237018795>",
                         ephemeral=True
                     )
 
@@ -1242,7 +1242,7 @@ class Kostky(commands.Cog):
                     await game.game_message.edit(embed=lobby_embed(game, interaction.guild))
                 except Exception:
                     pass
-            sazka_msg = f" Sázka **{game.sazka}** <:goldcoin:1477303464781680772> stržena." if game.sazka > 0 else ""
+            sazka_msg = f" Sázka **{game.sazka}** <:goldcoin:1490171741237018795> stržena." if game.sazka > 0 else ""
             return await interaction.response.send_message(
                 f"✅ Připojil ses! ({len(game.players)}/{MAX_PLAYERS}){sazka_msg}",
                 ephemeral=True
@@ -1257,7 +1257,7 @@ class Kostky(commands.Cog):
             if not econ_deduct(uid, sazka):
                 bal = econ_get(uid)
                 return await interaction.response.send_message(
-                    f"Nemáš dost zlaťáků na sázku! Potřebuješ **{sazka}**, máš **{bal}** <:goldcoin:1477303464781680772>",
+                    f"Nemáš dost zlaťáků na sázku! Potřebuješ **{sazka}**, máš **{bal}** <:goldcoin:1490171741237018795>",
                     ephemeral=True
                 )
 
@@ -1374,9 +1374,9 @@ class Kostky(commands.Cog):
             profit = stats.get("profit", 0)
 
             if profit > 0:
-                profit_str = f"+{profit} <:goldcoin:1477303464781680772>"
+                profit_str = f"+{profit} <:goldcoin:1490171741237018795>"
             elif profit < 0:
-                profit_str = f"{profit} <:goldcoin:1477303464781680772>"
+                profit_str = f"{profit} <:goldcoin:1490171741237018795>"
             else:
                 profit_str = "—"
 
@@ -1403,7 +1403,7 @@ class Kostky(commands.Cog):
                 name="📍 Tvoje stats",
                 value=(
                     f"🏆 {cs.get('wins', 0)} {wins_word(cs.get('wins', 0))}  •  "
-                    f"📈 Profit: **{profit_fmt}** <:goldcoin:1477303464781680772>"
+                    f"📈 Profit: **{profit_fmt}** <:goldcoin:1490171741237018795>"
                 ),
                 inline=False
             )

@@ -66,11 +66,38 @@ def _bar(current: int, maximum: int, width: int = 10) -> str:
     filled = round(max(0, min(current, maximum)) / maximum * width)
     return "█" * filled + "░" * (width - filled)
 
-def _heart_bar(current: int, maximum: int, hearts: int = 10) -> str:
+HP_ON  = "<:hp:1490146344290222111>"
+HP_OFF = "🤍"
+MN_ON  = "<:mana:1490148547427831981>"
+MN_OFF = "⚪"
+HN_ON  = "<:hunger:1490169001890807928>"
+HN_OFF = "🦴"
+FU_EMO = "<:furioku:1490160933081972866>"
+MEM_EMO = "<:memory:1490167924768510083>"
+XP_EMO  = "<:xp:1490159053425348748>"
+VLIV_EMO    = "<:vliv:1490162671969112085>"
+SVETLO_EMO  = "<:svetlo:1490166284741120120>"
+TEMNOTA_EMO = "<:temnota:1490166345516581034>"
+ROVNO_EMO   = "<:rovnovaha:1490166409458749671>"
+COIN        = "<:goldcoin:1490171741237018795>"
+
+def _heart_bar(current: int, maximum: int, slots: int = 10) -> str:
     if maximum <= 0:
-        return "🤍" * hearts
-    filled = round(max(0, min(current, maximum)) / maximum * hearts)
-    return "❤️" * filled + "🤍" * (hearts - filled)
+        return HP_OFF * slots
+    filled = round(max(0, min(current, maximum)) / maximum * slots)
+    return HP_ON * filled + HP_OFF * (slots - filled)
+
+def _hunger_bar(current: int, maximum: int, slots: int = 10) -> str:
+    if maximum <= 0:
+        return HN_OFF * slots
+    filled = round(max(0, min(current, maximum)) / maximum * slots)
+    return HN_ON * filled + HN_OFF * (slots - filled)
+
+def _mana_bar(current: int, maximum: int, slots: int = 10) -> str:
+    if maximum <= 0:
+        return MN_OFF * slots
+    filled = round(max(0, min(current, maximum)) / maximum * slots)
+    return MN_ON * filled + MN_OFF * (slots - filled)
 
 def _compute_total_def(profile: dict, items_db: dict) -> int:
     equipment = profile.get("equipment", {})
@@ -262,7 +289,7 @@ class Profile(commands.Cog):
         embed.add_field(name="🎖️ Rank",   value=profile.get("rank", "F3"), inline=True)
         embed.add_field(name="👤 Jméno",   value=profile.get("name", "—"),  inline=True)
         embed.add_field(
-            name="<:goldcoin:1477303464781680772> Zlaťáky",
+            name=f"{COIN} Zlaťáky",
             value=str(balance),
             inline=True,
         )
@@ -286,8 +313,8 @@ class Profile(commands.Cog):
         total_def  = _compute_total_def(profile, items_db)
 
         hp_bar     = _heart_bar(hp_cur, hp_max)
-        hunger_bar = _bar(hunger_cur, hunger_max)
-        mana_bar   = _bar(mana_cur, mana_max)
+        hunger_bar = _hunger_bar(hunger_cur, hunger_max)
+        mana_bar   = _mana_bar(mana_cur, mana_max)
         fury_bar   = _bar(fury_cur, fury_max)
         xp_bar     = _bar(xp, cap if cap else 1)
 
@@ -297,18 +324,18 @@ class Profile(commands.Cog):
 
         status_lines = [
             f"{hp_bar}  {hp_cur}/{hp_max} HP{def_str}",
-            f"🍖  {hunger_bar}  {hunger_cur}/{hunger_max} hlad",
-            f"🔷  {mana_bar}  {mana_cur}/{mana_max} mana",
-            f"🔥  {fury_bar}  {fury_cur}/{fury_max} furioka",
-            f"⭐  {xp_bar}  {xp_str} XP  ·  **{level_label(level)}**{sp_str}",
+            f"{hunger_bar}  {hunger_cur}/{hunger_max} hlad",
+            f"{mana_bar}  {mana_cur}/{mana_max} mana",
+            f"{FU_EMO}  {fury_bar}  {fury_cur}/{fury_max} furioka",
+            f"{XP_EMO}  {xp_bar}  {xp_str} XP  ·  **{level_label(level)}**{sp_str}",
         ]
         embed.add_field(name="Stav", value="\n".join(status_lines), inline=False)
 
         # ── Vliv ──────────────────────────────────────────────────────────────
         embed.add_field(
-            name="🌗 Vliv",
+            name=f"{VLIV_EMO} Vliv",
             value=(
-                f"⚪ Světlo **{v_svetlo}**  ·  ⚫ Temnota **{v_temnota}**  ·  ⚖️ Rovnováha **{v_rovno}**"
+                f"{SVETLO_EMO} Světlo **{v_svetlo}**  ·  {TEMNOTA_EMO} Temnota **{v_temnota}**  ·  {ROVNO_EMO} Rovnováha **{v_rovno}**"
                 f"\n-# 1 Vliv = 5 furiok"
             ),
             inline=False,
@@ -329,7 +356,7 @@ class Profile(commands.Cog):
             mem = memories[-1]
             if len(mem) > 1020:
                 mem = mem[:1020] + "…"
-            embed.add_field(name="📜 Poslední vzpomínka", value=f"*{mem}*", inline=False)
+            embed.add_field(name=f"{MEM_EMO} Poslední vzpomínka", value=f"*{mem}*", inline=False)
 
         if profile.get("portrait_url"):
             embed.set_image(url=profile["portrait_url"])

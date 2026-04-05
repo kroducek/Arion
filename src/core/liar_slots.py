@@ -30,7 +30,7 @@ DEATH_HEART_CHANCE = 0.40
 
 CLAIM_POINTS: dict = {1: 1, 2: 2, 3: 3, "jackpot": 5}
 
-COIN = "<:goldcoin:1477303464781680772>"
+COIN = "<:goldcoin:1490171741237018795>"
 
 # ── Data helpers ──────────────────────────────────────────────────────────────
 

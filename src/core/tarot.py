@@ -23,7 +23,7 @@ from discord import app_commands
 from src.utils.paths import ECONOMY as ECONOMY_PATH, TAROT_DIR
 POPLATEK     = 50
 MAX_SESSION  = 8
-GOLD_EMOJI   = "<:goldcoin:1477303464781680772>"
+GOLD_EMOJI   = "<:goldcoin:1490171741237018795>"
 
 def load_eco():
     if not os.path.exists(ECONOMY_PATH):
