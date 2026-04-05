@@ -1,9 +1,59 @@
 import discord
+import asyncio
 import logging
 from discord.ext import commands
 from discord import app_commands
 from src.utils.paths import COMBAT_STATE
 from src.utils.json_utils import load_json, save_json
+
+
+# ── Boss bar helpers ──────────────────────────────────────────────────────────
+
+def _make_bar(current: int, maximum: int, length: int = 10) -> str:
+    if maximum <= 0:
+        return "░" * length
+    filled = max(0, min(length, round((current / maximum) * length)))
+    return "█" * filled + "░" * (length - filled)
+
+
+def _boss_embed(name: str, s: dict, flashing: bool = False) -> discord.Embed:
+    hp      = s["hp"]
+    max_hp  = s["max_hp"]
+    defense = s["def"]
+    hp_pct  = round((hp / max_hp) * 100) if max_hp > 0 else 0
+    rage    = 100 - hp_pct
+
+    color = 0xe74c3c if hp_pct <= 30 else (0xe67e22 if hp_pct <= 60 else 0x2ecc71)
+
+    if flashing:
+        return discord.Embed(
+            title=f"💥  {name}  💥",
+            description="*— přijímá poškození —*",
+            color=0xff0000,
+        )
+
+    hp_bar   = _make_bar(hp, max_hp)
+    rage_bar = _make_bar(rage, 100)
+    dead     = hp == 0
+
+    desc = (
+        f"```\n"
+        f"╔══════════════════════╗\n"
+        f"║  HP    {hp_bar}  {hp:>4}/{max_hp}\n"
+        f"║  Rage  {rage_bar}  {rage:>3}%\n"
+        f"╚══════════════════════╝\n"
+        f"```"
+    )
+    if defense > 0:
+        desc += f"\n🛡️ DEF: **{defense}**"
+    if dead:
+        desc += "\n\n💀 **Boss padl.**"
+
+    return discord.Embed(
+        title=f"{'💀' if dead else '☠️'}  {name}",
+        description=desc,
+        color=color,
+    )
 
 
 class CombatCog(commands.Cog):
@@ -33,6 +83,25 @@ class CombatCog(commands.Cog):
             return {}
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    async def _update_boss_bar(self, combat: dict, flashing: bool = False):
+        boss = combat.get("boss")
+        if not boss:
+            return
+        try:
+            channel = self.bot.get_channel(boss["channel_id"])
+            if not channel:
+                return
+            msg = await channel.fetch_message(boss["message_id"])
+            s = combat["stats"].get(boss["name"])
+            if not s:
+                return
+            if flashing:
+                await msg.edit(embed=_boss_embed(boss["name"], s, flashing=True))
+                await asyncio.sleep(0.7)
+            await msg.edit(embed=_boss_embed(boss["name"], s))
+        except Exception:
+            logging.exception("[combat] Nelze aktualizovat boss bar")
 
     def _format_name(self, name: str, stats: dict) -> str:
         """Vrátí jméno s HP/DEF barem pokud má stats."""
@@ -167,6 +236,51 @@ class CombatCog(commands.Cog):
 
         await self._show_order(interaction, f"💀 {final_name} se zapojuje do boje!", final_name)
 
+    @app_commands.command(name="combat_add_boss", description="GM přidá bosse s oddělených boss barem")
+    @app_commands.describe(
+        name="Jméno bosse",
+        hp="Maximum životů (výchozí: 200)",
+        defense="Obrana / DEF (výchozí: 0)",
+    )
+    async def combat_add_boss(
+        self,
+        interaction: discord.Interaction,
+        name: str,
+        hp: int = 200,
+        defense: int = 0,
+    ):
+        channel_id = interaction.channel_id
+        if channel_id not in self.active_combats:
+            return await interaction.response.send_message("Zde neběží combat.", ephemeral=True)
+
+        combat = self.active_combats[channel_id]
+        if combat.get("boss"):
+            return await interaction.response.send_message(
+                "V tomto combatu už boss je. Nejdřív ho odeber přes `/combat_remove`.", ephemeral=True
+            )
+
+        name = name.strip()
+        if not name:
+            return await interaction.response.send_message("Jméno bosse nesmí být prázdné.", ephemeral=True)
+
+        combat["order"].append(name)
+        combat["stats"][name] = {"hp": hp, "max_hp": hp, "def": defense}
+
+        await interaction.response.defer()
+
+        boss_msg = await interaction.channel.send(embed=_boss_embed(name, combat["stats"][name]))
+
+        combat["boss"] = {
+            "name": name,
+            "message_id": boss_msg.id,
+            "channel_id": channel_id,
+        }
+        self._save_state()
+
+        await interaction.followup.send(
+            f"☠️ Boss **{name}** vstoupil do boje!  ❤️ {hp} HP  🛡️ {defense} DEF"
+        )
+
     @app_commands.command(name="combat_sethp", description="Admin: Rucne nastavi HP NPC behem combatu")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
@@ -200,6 +314,8 @@ class CombatCog(commands.Cog):
         stats[name]["hp"] = new_hp
         self._save_state()
 
+        is_boss = combat.get("boss", {}).get("name") == name
+
         bar_filled = round((new_hp / max_hp) * 10) if max_hp > 0 else 0
         bar_filled = max(0, min(10, bar_filled))
         bar = "🟥" * bar_filled + "⬛" * (10 - bar_filled)
@@ -219,6 +335,9 @@ class CombatCog(commands.Cog):
             color=discord.Color.red() if new_hp == 0 else discord.Color.orange()
         )
         await interaction.response.send_message(embed=embed)
+
+        if is_boss:
+            asyncio.create_task(self._update_boss_bar(combat, flashing=(hp < 0)))
 
     @app_commands.command(name="combat_setdef", description="Admin: Rucne nastavi DEF NPC behem combatu")
     @app_commands.checks.has_permissions(administrator=True)
@@ -270,6 +389,9 @@ class CombatCog(commands.Cog):
         removed_idx = order.index(to_remove)
         order.remove(to_remove)
         combat["stats"].pop(to_remove, None)
+
+        if combat.get("boss", {}).get("name") == to_remove:
+            combat.pop("boss", None)
 
         # Pokud odstraněný byl active_player, resetuj ho
         if combat.get("active_player") == to_remove:
