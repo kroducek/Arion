@@ -278,23 +278,7 @@ class Profile(commands.Cog):
         balance  = economy.get(user_id, 0)
         items_db = _load_items()
 
-        # ── Embed ──────────────────────────────────────────────────────────────
-        embed = discord.Embed(
-            title=f"📜  Průkaz dobrodruha: {profile.get('name', target.display_name)}",
-            color=0x3498db,
-        )
-        embed.set_thumbnail(url=target.display_avatar.url)
-
-        # Základní info
-        embed.add_field(name="🎖️ Rank",   value=profile.get("rank", "F3"), inline=True)
-        embed.add_field(name="👤 Jméno",   value=profile.get("name", "—"),  inline=True)
-        embed.add_field(
-            name=f"{COIN} Zlaťáky",
-            value=str(balance),
-            inline=True,
-        )
-
-        # ── Stav (HP / Hlad / Mana / Furioka / XP) ───────────────────────────
+        # ── Data ──────────────────────────────────────────────────────────────
         hp_cur     = profile.get("hp_cur", 50)
         hp_max     = profile.get("hp_max", 50)
         hunger_cur = profile.get("hunger_cur", 10)
@@ -318,24 +302,39 @@ class Profile(commands.Cog):
         fury_bar   = _bar(fury_cur, fury_max)
         xp_bar     = _bar(xp, cap if cap else 1)
 
-        def_str   = f"  ·  🛡️ DEF **{total_def}**" if total_def else ""
-        xp_str    = f"{xp}/{cap}" if cap else f"{xp} (MAX)"
-        sp_str    = f"  ·  ⚡ **{sp}** SP" if sp > 0 else ""
+        def_str = f"  ·  🛡️ **{total_def}** DEF" if total_def else ""
+        xp_str  = f"{xp} (MAX)" if not cap else f"{xp}/{cap}"
+        sp_str  = f"  ⚡ **{sp}** SP" if sp > 0 else ""
 
+        char_name = profile.get("name", target.display_name)
+
+        # ── Embed ──────────────────────────────────────────────────────────────
+        embed = discord.Embed(
+            title=f"🪪  Průkaz dobrodruha: {char_name}",
+            color=0x3498db,
+        )
+        embed.set_thumbnail(url=target.display_avatar.url)
+
+        # Základní info
+        embed.add_field(name="🎖️ Rank",     value=profile.get("rank", "F3"), inline=True)
+        embed.add_field(name="👤 Jméno",     value=char_name,                 inline=True)
+        embed.add_field(name=f"{COIN} Zlaťáky", value=str(balance),          inline=True)
+
+        # ── Stav ──────────────────────────────────────────────────────────────
         status_lines = [
-            f"{hp_bar}  {hp_cur}/{hp_max} HP{def_str}",
-            f"{hunger_bar}  {hunger_cur}/{hunger_max} hlad",
-            f"{mana_bar}  {mana_cur}/{mana_max} mana",
-            f"{FU_EMO}  {fury_bar}  {fury_cur}/{fury_max} furioka",
-            f"{XP_EMO}  {xp_bar}  {xp_str} XP  ·  **{level_label(level)}**{sp_str}",
+            f"{HP_ON} Zdraví:  {hp_bar}  ·  {hp_cur}/{hp_max}{def_str}",
+            f"{MN_ON} Mana:  {mana_bar}  ·  {mana_cur}/{mana_max}",
+            f"{HN_ON} Hlad:  {hunger_bar}  ·  {hunger_cur}/{hunger_max}",
+            f"{FU_EMO} Furioka:  {fury_bar}  ·  {fury_cur}/{fury_max}",
+            f"·  Lvl **{level_label(level)}**  ·  {XP_EMO}  {xp_bar}  ·  {xp_str}{sp_str}",
         ]
-        embed.add_field(name="Stav", value="\n".join(status_lines), inline=False)
+        embed.add_field(name="", value="\n".join(status_lines), inline=False)
 
         # ── Vliv ──────────────────────────────────────────────────────────────
         embed.add_field(
-            name=f"{VLIV_EMO} Vliv",
+            name=f"{VLIV_EMO}",
             value=(
-                f"{SVETLO_EMO} Světlo **{v_svetlo}**  ·  {TEMNOTA_EMO} Temnota **{v_temnota}**  ·  {ROVNO_EMO} Rovnováha **{v_rovno}**"
+                f"{SVETLO_EMO} **{v_svetlo}**  ·  {TEMNOTA_EMO} **{v_temnota}**  ·  {ROVNO_EMO} **{v_rovno}**"
                 f"\n-# 1 Vliv = 5 furiok"
             ),
             inline=False,
@@ -345,12 +344,13 @@ class Profile(commands.Cog):
         stats = profile.get("stats")
         if stats:
             stats_line = "  ·  ".join(f"**{k}** {v}" for k, v in stats.items())
-            embed.add_field(name="📊 Statistiky", value=f"-# {stats_line}", inline=False)
+            embed.add_field(name="", value=f"-# {stats_line}", inline=False)
 
         # ── Motivace ──────────────────────────────────────────────────────────
         if profile.get("motivation"):
-            embed.add_field(name="✨ Motivace", value=profile["motivation"], inline=False)
+            embed.add_field(name="", value=f"✨  {profile['motivation']}", inline=False)
 
+        # ── Poslední vzpomínka ─────────────────────────────────────────────────
         memories = profile.get("memories", [])
         if memories:
             mem = memories[-1]
@@ -361,7 +361,7 @@ class Profile(commands.Cog):
         if profile.get("portrait_url"):
             embed.set_image(url=profile["portrait_url"])
 
-        embed.set_footer(text=f"ID: {user_id}  ·  Aurionis: Act II")
+        embed.set_footer(text=f"ID: {user_id}  ·  Act: Aurionis · Act II")
         await interaction.response.send_message(embed=embed)
 
     # ── /profile-edit ──────────────────────────────────────────────────────────
