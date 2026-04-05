@@ -83,21 +83,21 @@ COIN        = "<:goldcoin:1490171741237018795>"
 
 def _heart_bar(current: int, maximum: int, slots: int = 10) -> str:
     if maximum <= 0:
-        return HP_OFF * slots
+        return "🤍" * slots
     filled = round(max(0, min(current, maximum)) / maximum * slots)
-    return HP_ON * filled + HP_OFF * (slots - filled)
+    return "❤️" * filled + "🤍" * (slots - filled)
 
 def _hunger_bar(current: int, maximum: int, slots: int = 10) -> str:
     if maximum <= 0:
-        return HN_OFF * slots
+        return "🦴" * slots
     filled = round(max(0, min(current, maximum)) / maximum * slots)
-    return HN_ON * filled + HN_OFF * (slots - filled)
+    return "🍖" * filled + "🦴" * (slots - filled)
 
 def _mana_bar(current: int, maximum: int, slots: int = 10) -> str:
     if maximum <= 0:
-        return MN_OFF * slots
+        return "⚪" * slots
     filled = round(max(0, min(current, maximum)) / maximum * slots)
-    return MN_ON * filled + MN_OFF * (slots - filled)
+    return "🔹" * filled + "⚪" * (slots - filled)
 
 def _compute_total_def(profile: dict, items_db: dict) -> int:
     equipment = profile.get("equipment", {})
