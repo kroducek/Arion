@@ -307,56 +307,54 @@ class Profile(commands.Cog):
         sp_str  = f"  ⚡ **{sp}** SP" if sp > 0 else ""
 
         char_name = profile.get("name", target.display_name)
+        stats     = profile.get("stats", {})
+        memories  = profile.get("memories", [])
 
-        # ── Embed ──────────────────────────────────────────────────────────────
-        embed = discord.Embed(
-            title=f"🪪  Průkaz dobrodruha: {char_name}",
-            color=0x3498db,
-        )
-        embed.set_thumbnail(url=target.display_avatar.url)
+        # ── Sestavení description ──────────────────────────────────────────────
+        lines = []
 
         # Základní info
-        embed.add_field(name="🎖️ Rank",     value=profile.get("rank", "F3"), inline=True)
-        embed.add_field(name="👤 Jméno",     value=char_name,                 inline=True)
-        embed.add_field(name=f"{COIN} Zlaťáky", value=str(balance),          inline=True)
+        lines.append(f"🎖️ Rank: **{profile.get('rank', 'F3')}**  ·  👤 Jméno: **{char_name}**  ·  {COIN} **{balance}** zlaťáků")
+        lines.append("")
 
-        # ── Stav ──────────────────────────────────────────────────────────────
-        status_lines = [
-            f"{HP_ON} Zdraví:  {hp_bar}  ·  {hp_cur}/{hp_max}{def_str}",
-            f"{MN_ON} Mana:  {mana_bar}  ·  {mana_cur}/{mana_max}",
-            f"{HN_ON} Hlad:  {hunger_bar}  ·  {hunger_cur}/{hunger_max}",
-            f"{FU_EMO} Furioka:  {fury_bar}  ·  {fury_cur}/{fury_max}",
-            f"·  Lvl **{level_label(level)}**  ·  {XP_EMO}  {xp_bar}  ·  {xp_str}{sp_str}",
-        ]
-        embed.add_field(name="", value="\n".join(status_lines), inline=False)
+        # Stav
+        lines.append(f"{HP_ON} Zdraví:  {hp_bar}  ·  {hp_cur}/{hp_max}{def_str}")
+        lines.append(f"{MN_ON} Mana:  {mana_bar}  ·  {mana_cur}/{mana_max}")
+        lines.append(f"{HN_ON} Hlad:  {hunger_bar}  ·  {hunger_cur}/{hunger_max}")
+        lines.append(f"{FU_EMO} Furioka:  {fury_bar}  ·  {fury_cur}/{fury_max}")
+        lines.append(f"·  **{level_label(level)}**  ·  {XP_EMO}  {xp_bar}  ·  {xp_str}{sp_str}")
 
-        # ── Vliv ──────────────────────────────────────────────────────────────
-        embed.add_field(
-            name=f"{VLIV_EMO}",
-            value=(
-                f"{SVETLO_EMO} **{v_svetlo}**  ·  {TEMNOTA_EMO} **{v_temnota}**  ·  {ROVNO_EMO} **{v_rovno}**"
-                f"\n-# 1 Vliv = 5 furiok"
-            ),
-            inline=False,
-        )
+        # Vliv
+        lines.append(f"{VLIV_EMO}  {SVETLO_EMO} **{v_svetlo}**  ·  {TEMNOTA_EMO} **{v_temnota}**  ·  {ROVNO_EMO} **{v_rovno}**")
+        lines.append("-# 1 Vliv = 5 furiok")
 
-        # ── Statistiky ────────────────────────────────────────────────────────
-        stats = profile.get("stats")
+        # Statistiky
         if stats:
+            lines.append("")
             stats_line = "  ·  ".join(f"**{k}** {v}" for k, v in stats.items())
-            embed.add_field(name="", value=f"-# {stats_line}", inline=False)
+            lines.append(f"-# {stats_line}")
 
-        # ── Motivace ──────────────────────────────────────────────────────────
+        # Motivace
         if profile.get("motivation"):
-            embed.add_field(name="", value=f"✨  {profile['motivation']}", inline=False)
+            lines.append("")
+            lines.append(f"✨  {profile['motivation']}")
 
-        # ── Poslední vzpomínka ─────────────────────────────────────────────────
-        memories = profile.get("memories", [])
+        # Poslední vzpomínka
         if memories:
             mem = memories[-1]
             if len(mem) > 1020:
                 mem = mem[:1020] + "…"
-            embed.add_field(name=f"{MEM_EMO} Poslední vzpomínka", value=f"*{mem}*", inline=False)
+            lines.append("")
+            lines.append(f"{MEM_EMO} **Poslední vzpomínka**")
+            lines.append(f"*{mem}*")
+
+        # ── Embed ──────────────────────────────────────────────────────────────
+        embed = discord.Embed(
+            title=f"🪪  Průkaz dobrodruha: {char_name}",
+            description="\n".join(lines),
+            color=0x3498db,
+        )
+        embed.set_thumbnail(url=target.display_avatar.url)
 
         if profile.get("portrait_url"):
             embed.set_image(url=profile["portrait_url"])
