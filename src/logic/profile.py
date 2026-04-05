@@ -66,6 +66,12 @@ def _bar(current: int, maximum: int, width: int = 10) -> str:
     filled = round(max(0, min(current, maximum)) / maximum * width)
     return "█" * filled + "░" * (width - filled)
 
+def _heart_bar(current: int, maximum: int, hearts: int = 10) -> str:
+    if maximum <= 0:
+        return "🤍" * hearts
+    filled = round(max(0, min(current, maximum)) / maximum * hearts)
+    return "❤️" * filled + "🤍" * (hearts - filled)
+
 def _compute_total_def(profile: dict, items_db: dict) -> int:
     equipment = profile.get("equipment", {})
     seen = set()
@@ -279,7 +285,7 @@ class Profile(commands.Cog):
         cap        = get_xp_cap(level)
         total_def  = _compute_total_def(profile, items_db)
 
-        hp_bar     = _bar(hp_cur, hp_max)
+        hp_bar     = _heart_bar(hp_cur, hp_max)
         hunger_bar = _bar(hunger_cur, hunger_max)
         mana_bar   = _bar(mana_cur, mana_max)
         fury_bar   = _bar(fury_cur, fury_max)
@@ -290,7 +296,7 @@ class Profile(commands.Cog):
         sp_str    = f"  ·  ⚡ **{sp}** SP" if sp > 0 else ""
 
         status_lines = [
-            f"❤️  {hp_bar}  {hp_cur}/{hp_max} HP{def_str}",
+            f"{hp_bar}  {hp_cur}/{hp_max} HP{def_str}",
             f"🍖  {hunger_bar}  {hunger_cur}/{hunger_max} hlad",
             f"🔷  {mana_bar}  {mana_cur}/{mana_max} mana",
             f"🔥  {fury_bar}  {fury_cur}/{fury_max} furioka",
@@ -497,10 +503,10 @@ class Profile(commands.Cog):
 
         save_data(data)
 
-        bar = _bar(profile["hp_cur"], profile["hp_max"])
+        bar = _heart_bar(profile["hp_cur"], profile["hp_max"])
         await interaction.followup.send(
             f"✅ **{member.display_name}** — HP aktualizováno.\n"
-            f"❤️  {bar}  {profile['hp_cur']}/{profile['hp_max']}"
+            f"{bar}  {profile['hp_cur']}/{profile['hp_max']}"
         )
 
     # ── /profile-admin-mana ───────────────────────────────────────────────────
