@@ -86,6 +86,37 @@ class Aurionis(commands.Cog):
         ]
         await interaction.response.send_message(random.choice(responses))
 
+    @app_commands.command(name="erase", description="Smaže všechny zprávy v této místnosti")
+    @app_commands.describe(confirmation="Potvrzení smazání všech zpráv (napiš 'all')")
+    async def erase(self, interaction: discord.Interaction, confirmation: str):
+        if confirmation.lower() != "all":
+            await interaction.response.send_message("Pro smazání všech zpráv použij '/erase all'", ephemeral=True)
+            return
+
+        # Kontrola oprávnění
+        if not interaction.user.guild_permissions.manage_messages:
+            await interaction.response.send_message("Nemáš oprávnění mazat zprávy.", ephemeral=True)
+            return
+
+        channel = interaction.channel
+
+        # Defer odpověď, protože mazání může trvat
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            # Smaž všechny zprávy (loop kvůli limitu Discordu)
+            deleted_count = 0
+            while True:
+                deleted = await channel.purge(limit=100)
+                deleted_count += len(deleted)
+                if len(deleted) < 100:
+                    break
+            await interaction.followup.send(f"✅ Smazáno {deleted_count} zpráv v této místnosti.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Nemám oprávnění mazat zprávy v této místnosti.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Chyba při mazání: {str(e)}", ephemeral=True)
+
     @app_commands.command(name="kronika", description="Arion kronika (Nápověda)")
     async def help(self, interaction: discord.Interaction):
         embed = discord.Embed(
@@ -207,6 +238,7 @@ class Aurionis(commands.Cog):
             value=(
                 "`/vliv` — Uděl hráči Vliv (Světlo/Temnota/Rovnováha)\n"
                 "`/takedown` — Arion provede Takedown\n"
+                "`/erase all` — Smaže všechny zprávy v místnosti\n"
                 "`/hunger-balance` — Simulace hladu v čase\n"
                 "`/profile-admin-hp/mana/fury/vliv` — Nastav staty hráče\n"
                 "`/rep create/add/set/delete` — Správa reputace frakcí\n"
