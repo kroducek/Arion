@@ -48,6 +48,11 @@ LABYRINTH_SCORES   = data("labyrinth_scores.json")
 # ── Příběhy / novinky ────────────────────────────────────────
 NEWS        = data("news.json")
 STORY_LIB   = data("story_library.json")
+
+# ── Sběratelské karty ────────────────────────────────────────
+CARDS_DIR   = os.path.join(ROOT, "src", "assets", "cards")
+CARDS_DATA  = data("cards_data.json")
+CARDS_INVENTORY = data("cards_inventory.json")
 STORY_SAVE  = data("story_save.json")
 
 # ── Assets ───────────────────────────────────────────────────

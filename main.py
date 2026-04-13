@@ -55,6 +55,8 @@ if _data_dir_override:
     _paths.NEWS             = _paths.data("news.json")
     _paths.STORY_LIB        = _paths.data("story_library.json")
     _paths.STORY_SAVE       = _paths.data("story_save.json")
+    _paths.CARDS_DATA       = _paths.data("cards_data.json")
+    _paths.CARDS_INVENTORY  = _paths.data("cards_inventory.json")
 
 os.makedirs(_paths.DATA_DIR, exist_ok=True)
 

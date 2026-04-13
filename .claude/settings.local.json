@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls *.json)",
+      "Bash(ls src/*.json)",
+      "Bash(pip list:*)",
+      "Bash(python -c \"import PIL; import dotenv; print\\(''Pillow'', PIL.__version__\\); print\\(''dotenv OK''\\)\")",
+      "Bash(mkdir -p src/logic)",
+      "Bash(git mv:*)",
+      "Bash(mv src/core/onboard.py src/logic/onboard.py)",
+      "Bash(mv src/core/profile.py src/logic/profile.py)",
+      "Bash(mv src/core/inventory.py src/logic/inventory.py)",
+      "Bash(mv src/core/economy.py src/logic/economy.py)",
+      "Bash(mv src/core/stats.py src/logic/stats.py)",
+      "Bash(mv src/core/roll.py src/logic/roll.py)",
+      "Bash(mv src/core/check.py src/logic/check.py)",
+      "Bash(mv src/core/combat.py src/logic/combat.py)",
+      "Bash(mv src/core/inventory.py src/logic/)",
+      "Bash(mv src/core/economy.py src/logic/)",
+      "Bash(mv src/core/stats.py src/logic/)",
+      "Bash(mv src/core/roll.py src/logic/)",
+      "Bash(mv src/core/check.py src/logic/)",
+      "Bash(mv src/core/combat.py src/logic/)",
+      "Bash(wc -l /c/Users/Mathe/Desktop/ArionBot/src/core/*.py /c/Users/Mathe/Desktop/ArionBot/src/logic/*.py)"
+    ]
+  }
+}
