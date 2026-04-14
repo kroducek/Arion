@@ -75,12 +75,16 @@ def apply_frame_to_card(card_image_path: str, frame_id: str = None):
         BytesIO objekt s PNG obrázkem
     """
     
+    print(f"DEBUG apply_frame_to_card: card_image_path={card_image_path}, frame_id={frame_id}")
+    
     # Zkontroluj existenci karty
     if not os.path.exists(card_image_path):
+        print(f"DEBUG: Karta cesta neexistuje! {card_image_path}")
         raise FileNotFoundError(f"Obrázek karty nenalezen: {card_image_path}")
     
     # Pokud není frame_id, vrátí jen kartu
     if not frame_id or frame_id == "default":
+        print(f"DEBUG: Žádný frame_id, vrací jen kartu")
         img = Image.open(card_image_path).convert("RGB")
         byte_io = io.BytesIO()
         img.save(byte_io, format="PNG")
@@ -89,8 +93,11 @@ def apply_frame_to_card(card_image_path: str, frame_id: str = None):
     
     # Načti frame info
     frame = get_frame_by_id(frame_id)
+    print(f"DEBUG: get_frame_by_id({frame_id}) vrátil: {frame}")
+    
     if not frame or "image" not in frame:
         # Fallback: vrátí jen kartu (frame neexistuje)
+        print(f"DEBUG: Frame nenalezen nebo chybí 'image' pole, fallback na jen kartu")
         img = Image.open(card_image_path).convert("RGB")
         byte_io = io.BytesIO()
         img.save(byte_io, format="PNG")
@@ -99,8 +106,11 @@ def apply_frame_to_card(card_image_path: str, frame_id: str = None):
     
     # Pojď aplikovat frame image
     frame_image_path = os.path.join(FRAMES_DIR, frame.get("image"))
+    print(f"DEBUG: Frame image path: {frame_image_path}, existuje: {os.path.exists(frame_image_path)}")
+    
     if not os.path.exists(frame_image_path):
         # Asset soubor neexistuje - fallback na kartu
+        print(f"DEBUG: Frame soubor neexistuje! {frame_image_path}")
         img = Image.open(card_image_path).convert("RGB")
         byte_io = io.BytesIO()
         img.save(byte_io, format="PNG")
@@ -108,29 +118,43 @@ def apply_frame_to_card(card_image_path: str, frame_id: str = None):
         return byte_io
     
     try:
+        print(f"DEBUG: Otevírám kartu a frame...")
         # Otevři kartu a frame
         card_img = Image.open(card_image_path).convert("RGBA")
         frame_img = Image.open(frame_image_path).convert("RGBA")
         
+        print(f"DEBUG: Karty velikost: {card_img.size}, Frame velikost: {frame_img.size}")
+        
         # Zmenšuj frame aby odpovídal kartě
         frame_img = frame_img.resize(card_img.size, Image.Resampling.LANCZOS)
+        
+        print(f"DEBUG: Frame resizován na: {frame_img.size}")
         
         # Aplikuj frame jako overlay na kartu
         result = Image.new("RGBA", card_img.size, (0, 0, 0, 0))
         result.paste(card_img, (0, 0), card_img)
         result.paste(frame_img, (0, 0), frame_img)
         
+        print(f"DEBUG: Frame aplikován na kartu")
+        
         # Převeď na RGB pro Discord (bez alpha channelu)
         rgb_result = Image.new("RGB", result.size, (255, 255, 255))
         rgb_result.paste(result, mask=result.split()[3])
+        
+        print(f"DEBUG: Obrázek převeden na RGB, ukládám do BytesIO")
         
         # Ulož do BytesIO
         byte_io = io.BytesIO()
         rgb_result.save(byte_io, format="PNG")
         byte_io.seek(0)
+        
+        print(f"DEBUG: Hotovo! BytesIO velikost: {len(byte_io.getvalue())}")
         return byte_io
     except Exception as e:
         # Jakákoli chyba → fallback na jen kartu
+        print(f"DEBUG: Chyba při aplikování frame! {str(e)}")
+        import traceback
+        traceback.print_exc()
         img = Image.open(card_image_path).convert("RGB")
         byte_io = io.BytesIO()
         img.save(byte_io, format="PNG")
