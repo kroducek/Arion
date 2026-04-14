@@ -55,10 +55,12 @@ def ensure_frames_data(filepath):
 
 def get_frame_by_id(frame_id):
     """Vrátí data rámečku podle ID."""
+    # Vždy zkontroluj aby frames byly inicializované
     frames = load_json(FRAMES_FILE)
     for frame in frames:
         if frame.get("id") == frame_id:
             return frame
+    # Pokud frame nenajde ani po load_json (který inicializuje), vrátí None
     return None
 
 def apply_frame_to_card(card_image_path: str, frame_id: str = None):
@@ -88,7 +90,7 @@ def apply_frame_to_card(card_image_path: str, frame_id: str = None):
     # Načti frame info
     frame = get_frame_by_id(frame_id)
     if not frame or "image" not in frame:
-        # Fallback: vrátí jen kartu
+        # Fallback: vrátí jen kartu (frame neexistuje)
         img = Image.open(card_image_path).convert("RGB")
         byte_io = io.BytesIO()
         img.save(byte_io, format="PNG")
@@ -98,7 +100,7 @@ def apply_frame_to_card(card_image_path: str, frame_id: str = None):
     # Pojď aplikovat frame image
     frame_image_path = os.path.join(FRAMES_DIR, frame.get("image"))
     if not os.path.exists(frame_image_path):
-        # Fallback: vrátí jen kartu
+        # Asset soubor neexistuje - fallback na kartu
         img = Image.open(card_image_path).convert("RGB")
         byte_io = io.BytesIO()
         img.save(byte_io, format="PNG")
@@ -106,27 +108,29 @@ def apply_frame_to_card(card_image_path: str, frame_id: str = None):
         return byte_io
     
     try:
+        # Otevři kartu a frame
         card_img = Image.open(card_image_path).convert("RGBA")
         frame_img = Image.open(frame_image_path).convert("RGBA")
         
-        # Zmenšuj/zvětšuj frame aby odpovídal kartě
+        # Zmenšuj frame aby odpovídal kartě
         frame_img = frame_img.resize(card_img.size, Image.Resampling.LANCZOS)
         
-        # Vytvořuj nový obrázek s frame jako overlay
+        # Aplikuj frame jako overlay na kartu
         result = Image.new("RGBA", card_img.size, (0, 0, 0, 0))
         result.paste(card_img, (0, 0), card_img)
         result.paste(frame_img, (0, 0), frame_img)
         
-        # Převeď na RGB pro Discord
+        # Převeď na RGB pro Discord (bez alpha channelu)
         rgb_result = Image.new("RGB", result.size, (255, 255, 255))
         rgb_result.paste(result, mask=result.split()[3])
         
+        # Ulož do BytesIO
         byte_io = io.BytesIO()
         rgb_result.save(byte_io, format="PNG")
         byte_io.seek(0)
         return byte_io
-    except Exception:
-        # Fallback na jen kartu
+    except Exception as e:
+        # Jakákoli chyba → fallback na jen kartu
         img = Image.open(card_image_path).convert("RGB")
         byte_io = io.BytesIO()
         img.save(byte_io, format="PNG")
