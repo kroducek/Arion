@@ -29,33 +29,41 @@ def get_frame_by_id(frame_id):
             return frame
     return None
 
-def apply_frame_to_card(card_image_path: str, frame_id: str = "gold_frame"):
+def apply_frame_to_card(card_image_path: str, frame_id: str = None):
     """
     Aplikuje rámeček na kartu kombinací card image + frame image.
     
     Args:
         card_image_path: Cesta k PNG obrázku karty
-        frame_id: ID rámečku
+        frame_id: ID rámečku (pokud None, vrátí jen kartu)
     
     Returns:
-        BytesIO objekt s PNG obrázkem s rámečkem
+        BytesIO objekt s PNG obrázkem
     """
     
     # Zkontroluj existenci karty
     if not os.path.exists(card_image_path):
         raise FileNotFoundError(f"Obrázek karty nenalezen: {card_image_path}")
     
-    # Načti frame info
-    frame = get_frame_by_id(frame_id)
-    if not frame or "image" not in frame:
-        # Fallback: vrátí jen kartu bez rámečku
+    # Pokud není frame_id, vrátí jen kartu
+    if not frame_id or frame_id == "default":
         img = Image.open(card_image_path).convert("RGB")
         byte_io = io.BytesIO()
         img.save(byte_io, format="PNG")
         byte_io.seek(0)
         return byte_io
     
-    # Pojdi aplikovat frame image
+    # Načti frame info
+    frame = get_frame_by_id(frame_id)
+    if not frame or "image" not in frame:
+        # Fallback: vrátí jen kartu
+        img = Image.open(card_image_path).convert("RGB")
+        byte_io = io.BytesIO()
+        img.save(byte_io, format="PNG")
+        byte_io.seek(0)
+        return byte_io
+    
+    # Pojď aplikovat frame image
     frame_image_path = os.path.join(FRAMES_DIR, frame["image"])
     if not os.path.exists(frame_image_path):
         # Fallback: vrátí jen kartu

@@ -229,8 +229,7 @@ class Aurionis(commands.Cog):
                 "`/kostky` — Dice minihra\n"
                 "`/story create` — Psaná minihra\n"
                 "`/poll` — Hlasování\n"
-                "`/countdown` — Odpočet\n"
-                "`/cards collect/inventory/show/customize` — Sběratelské karty"
+                "`/countdown` — Odpočet"
             ),
             inline=True
         )
