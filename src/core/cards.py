@@ -259,7 +259,7 @@ class Cards(commands.Cog):
     @cards_group.command(name="upgrade", description="Nasadit rámeček na kartu")
     @app_commands.describe(unique_id="ID karty", frame="ID rámečku")
     async def upgrade_frame(self, interaction: discord.Interaction, unique_id: str, frame: str):
-        """Aplikuje rámeček na kartu."""
+        """Aplikuje rámeček na kartu a odstraní ho z inventáře."""
         uid = str(interaction.user.id)
         inventory = load_json(CARDS_INVENTORY)
         frames_inv = load_json(FRAMES_INVENTORY)
@@ -277,14 +277,19 @@ class Cards(commands.Cog):
             await interaction.response.send_message(f"Rámeček {frame} nemáš.", ephemeral=True)
             return
 
+        # Nasaď rámeček na kartu
         card["frame"] = frame
         inventory[unique_id] = card
         save_json(CARDS_INVENTORY, inventory)
 
+        # Odstraň rámeček z inventáře (byl "spotřebován")
+        frames_inv[uid] = [f for f in frames_inv[uid] if f.get("id") != frame]
+        save_json(FRAMES_INVENTORY, frames_inv)
+
         frame_data = get_frame_by_id(frame)
         frame_name = frame_data.get("name") if frame_data else frame
         await interaction.response.send_message(
-            f"✅ Rámeček {frame_name} nasazen na {unique_id}", 
+            f"✅ Rámeček {frame_name} nasazen na {unique_id} (spotřebován)", 
             ephemeral=True
         )
 
