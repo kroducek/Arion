@@ -18,7 +18,7 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 
-from src.utils.paths import ECONOMY as ECONOMY_PATH, CARDS_DIR, CARDS_DATA, CARDS_INVENTORY
+from src.utils.paths import ECONOMY as ECONOMY_PATH, CARDS_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES, FRAMES_INVENTORY, FRAMES_DIR
 from src.utils.card_image import apply_frame_to_card, get_card_image_path
 
 COLLECT_COST = 10
@@ -79,6 +79,19 @@ def load_inventory():
 
 def save_inventory(data):
     with open(CARDS_INVENTORY, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+
+def load_frames_inventory():
+    if not os.path.exists(FRAMES_INVENTORY):
+        return {}
+    try:
+        with open(FRAMES_INVENTORY, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_frames_inventory(data):
+    with open(FRAMES_INVENTORY, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
 class Cards(commands.Cog):
@@ -158,7 +171,7 @@ class Cards(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @cards_group.command(name="show", description="Zobrazit konkrétní kartu s rámečkem")
-    @app_commands.describe(card_id="ID karty z inventory (číslo)", frame="ID rámečku (default: aktuální)")
+    @app_commands.describe(card_id="ID karty z inventory (číslo)", frame="ID rámečku (volitelné—zvolí poslední použitý)")
     async def show(self, interaction: discord.Interaction, card_id: int, frame: str = None):
         uid = str(interaction.user.id)
         inventory = load_inventory()
@@ -171,16 +184,19 @@ class Cards(commands.Cog):
             return
 
         # Určí který rámeček použít
-        selected_frame = frame if frame else card.get("frame", "gold_frame")
+        if frame:
+            selected_frame = frame
+        else:
+            selected_frame = card.get("frame", "gold_frame")
 
-        # Defer odpověď, generování obrázku může trvat
+        # Defer odpověď
         await interaction.response.defer()
 
         try:
             # Pokud existuje obrázek, aplikuj rámeček
             image_path = get_card_image_path(card.get('id', 1))
             if image_path:
-                # Spusť generování v threadu aby neblokoval bot
+                # Spusť generování v threadu
                 loop = asyncio.get_event_loop()
                 image_bytes = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
                 file = discord.File(image_bytes, filename="card.png")
@@ -251,6 +267,80 @@ class Cards(commands.Cog):
             )
         
         await interaction.response.send_message(embed=embed)
+
+    frames_group = app_commands.Group(name="frames", description="Sbírka rámečků")
+
+    @frames_group.command(name="collect", description="Získat náhodný rámeček (10 zlatých)")
+    async def collect_frame(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+
+        if not deduct(uid, COLLECT_COST):
+            await interaction.response.send_message(f"Nemáš dostatek zlata. Potřebuješ {COLLECT_COST} {GOLD_EMOJI}.", ephemeral=True)
+            return
+
+        # Načti dostupné rámečky
+        frames_data = load_json(CARDS_FRAMES)
+        if not frames_data:
+            await interaction.response.send_message("Žádné rámečky nejsou k dispozici.", ephemeral=True)
+            return
+
+        # Vyber náhodný rámeček
+        frame = random.choice(frames_data)
+        
+        # Přidej do inventáře
+        inventory = load_frames_inventory()
+        if uid not in inventory:
+            inventory[uid] = []
+        
+        # Zkontroluj duplikáty
+        if frame["id"] not in [f["id"] if isinstance(f, dict) else f for f in inventory[uid]]:
+            inventory[uid].append(frame)
+            save_frames_inventory(inventory)
+            
+            embed = discord.Embed(
+                title=f"📦 Získal jsi rámeček!",
+                description=f"**{frame['name']}**",
+                color=0xFF6B9D
+            )
+            await interaction.response.send_message(embed=embed)
+        else:
+            await interaction.response.send_message(f"Už máš rámeček `{frame['name']}`.", ephemeral=True)
+
+    @frames_group.command(name="inventory", description="Zobrazit své rámečky")
+    async def frames_inventory(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        inventory = load_frames_inventory()
+        user_frames = inventory.get(uid, [])
+
+        if not user_frames:
+            await interaction.response.send_message("Nemáš žádné rámečky.", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title="📦 Tvé rámečky",
+            description=f"Máš {len(user_frames)} rámečků.",
+            color=0xFF6B9D
+        )
+
+        for i, frame in enumerate(user_frames[:15]):
+            frame_name = frame.get("name", "—") if isinstance(frame, dict) else "—"
+            frame_id = frame.get("id", f"frame_{i}") if isinstance(frame, dict) else frame
+            embed.add_field(
+                name=f"{i+1}. {frame_name}",
+                value=f"ID: `{frame_id}`",
+                inline=True
+            )
+
+        await interaction.response.send_message(embed=embed)
+
+def load_json(filepath):
+    if not os.path.exists(filepath):
+        return []
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
 
 async def setup(bot):
     await bot.add_cog(Cards(bot))

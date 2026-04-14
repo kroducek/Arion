@@ -51,9 +51,11 @@ STORY_LIB   = data("story_library.json")
 
 # ── Sběratelské karty ────────────────────────────────────────
 CARDS_DIR   = os.path.join(ROOT, "src", "assets", "cards")
+FRAMES_DIR  = os.path.join(ROOT, "src", "assets", "frames")
 CARDS_DATA  = data("cards_data.json")
 CARDS_INVENTORY = data("cards_inventory.json")
 CARDS_FRAMES = data("cards_frames.json")
+FRAMES_INVENTORY = data("frames_inventory.json")
 STORY_SAVE  = data("story_save.json")
 
 # ── Assets ───────────────────────────────────────────────────
