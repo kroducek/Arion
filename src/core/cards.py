@@ -28,9 +28,28 @@ def load_json(filepath):
         return {} if filepath.endswith("inventory.json") else []
     try:
         with open(filepath, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            # Pokud soubor existuje ale je prázdný, vrátí defaultní hodnotu
+            if not data:
+                return {} if filepath.endswith("inventory.json") else []
+            return data
     except Exception:
         return {} if filepath.endswith("inventory.json") else []
+
+def ensure_cards_data():
+    """Zajistí, aby soubor cards_data.json existoval a obsahoval alespoň Alice."""
+    cards = load_json(CARDS_DATA)
+    if not cards:
+        # Vytvoř defaultní kartu
+        default_cards = [
+            {
+                "id": 1,
+                "name": "Alice Aurelion",
+                "description": "Mystická postava z Aurionisu s aurou tajemství.",
+                "image": "unworthy_alice_aurelion.png"
+            }
+        ]
+        save_json(CARDS_DATA, default_cards)
 
 def save_json(filepath, data):
     """Uloží JSON soubor."""
@@ -45,7 +64,6 @@ def generate_unique_id():
 def get_card_by_id(card_id):
     """Vrátí data karty podle card_id."""
     cards = load_json(CARDS_DATA)
-    print(f"DEBUG get_card_by_id: card_id={card_id}, CARDS_DATA={CARDS_DATA}, cards={cards}")
     for card in cards:
         if card.get("id") == card_id:
             return card
@@ -298,4 +316,5 @@ class Cards(commands.Cog):
 
 async def setup(bot):
     """Registruje cog do bota."""
+    ensure_cards_data()  # Zajistí, že databáze karet existuje
     await bot.add_cog(Cards(bot))
