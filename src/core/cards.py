@@ -323,6 +323,51 @@ class Cards(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
+    @app_commands.command(name="give_frame", description="[ADMIN] Dát rámeček hráči")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(user="Hráč, kterému chceš dát rámeček", frame_id="ID rámečku")
+    async def give_frame(self, interaction: discord.Interaction, user: discord.Member, frame_id: str):
+        """Admin příkaz pro přidání rámečku do inventáře hráče."""
+        # Zkontroluj jestli rámmeček existuje
+        frame = get_frame_by_id(frame_id)
+        if not frame:
+            await interaction.response.send_message(
+                f"Rámeček `{frame_id}` neexistuje.", 
+                ephemeral=True
+            )
+            return
+
+        uid = str(user.id)
+        frames_inv = load_json(FRAMES_INVENTORY)
+        
+        # Vytvoř pole pro uživatele, pokud neexistuje
+        if uid not in frames_inv:
+            frames_inv[uid] = []
+        
+        # Zkontroluj, jestli už rámeček nemá
+        if any(f.get("id") == frame_id for f in frames_inv[uid]):
+            await interaction.response.send_message(
+                f"{user.mention} již má rámeček `{frame.get('name')}`.", 
+                ephemeral=True
+            )
+            return
+        
+        # Přidej rámeček
+        frames_inv[uid].append({
+            "id": frame_id,
+            "name": frame.get("name")
+        })
+        
+        save_json(FRAMES_INVENTORY, frames_inv)
+        
+        embed = discord.Embed(
+            title="✅ Rámeček přidán",
+            description=f"{user.mention} nyní vlastní **{frame.get('name')}**",
+            color=0x00FF00
+        )
+        
+        await interaction.response.send_message(embed=embed)
+
 async def setup(bot):
     """Registruje cog do bota."""
     ensure_cards_data()  # Zajistí, že databáze karet existuje
