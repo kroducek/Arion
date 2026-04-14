@@ -51,6 +51,22 @@ def ensure_cards_data():
         ]
         save_json(CARDS_DATA, default_cards)
 
+def ensure_frames_data():
+    """Zajistí, aby soubor cards_frames.json existoval a obsahoval alespoň Riddler."""
+    frames = load_json(CARDS_FRAMES)
+    if not frames:
+        # Vytvoř defaultní rámeček
+        default_frames = [
+            {
+                "id": "riddler_frame",
+                "name": "Riddler Rámeček",
+                "image": "riddler-frame.png",
+                "color": "#FF6B9D",
+                "rarity_exclusive": None
+            }
+        ]
+        save_json(CARDS_FRAMES, default_frames)
+
 def save_json(filepath, data):
     """Uloží JSON soubor."""
     with open(filepath, "w", encoding="utf-8") as f:
@@ -370,5 +386,6 @@ class Cards(commands.Cog):
 
 async def setup(bot):
     """Registruje cog do bota."""
-    ensure_cards_data()  # Zajistí, že databáze karet existuje
+    ensure_cards_data()   # Zajistí, že databáze karet existuje
+    ensure_frames_data()  # Zajistí, že databáze rámečků existuje
     await bot.add_cog(Cards(bot))
