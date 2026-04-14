@@ -389,6 +389,35 @@ class Cards(commands.Cog):
         
         await interaction.response.send_message(embed=embed)
 
+    @app_commands.command(name="remove_card", description="[ADMIN] Smazat kartu úplně")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(unique_id="Unikátní ID karty k odstranění")
+    async def remove_card(self, interaction: discord.Interaction, unique_id: str):
+        """Admin příkaz pro úplné smazání karty z inventáře."""
+        inventory = load_json(CARDS_INVENTORY)
+        
+        if unique_id not in inventory:
+            await interaction.response.send_message(
+                f"Karta `{unique_id}` neexistuje.", 
+                ephemeral=True
+            )
+            return
+        
+        card = inventory[unique_id]
+        card_name = card.get("name")
+        
+        # Smaž kartu z inventáře
+        del inventory[unique_id]
+        save_json(CARDS_INVENTORY, inventory)
+        
+        embed = discord.Embed(
+            title="🗑️ Karta smazána",
+            description=f"**{card_name}** (ID: `{unique_id}`) byla úplně odstraněna.",
+            color=0xFF0000
+        )
+        
+        await interaction.response.send_message(embed=embed)
+
 async def setup(bot):
     """Registruje cog do bota."""
     ensure_cards_data()   # Zajistí, že databáze karet existuje
