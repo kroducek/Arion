@@ -69,6 +69,15 @@ def get_card_by_id(card_id):
             return card
     return None
 
+def get_card_image_path(image_filename: str):
+    """Vrátí cestu k obrázku karty podle jména souboru."""
+    if not image_filename:
+        return None
+    path = os.path.join(CARDS_DIR, image_filename)
+    if os.path.exists(path):
+        return path
+    return None
+
 def get_frame_by_id(frame_id):
     """Vrátí data rámečku podle ID."""
     frames = load_json(CARDS_FRAMES)
@@ -210,7 +219,7 @@ class Cards(commands.Cog):
         await interaction.response.defer()
 
         try:
-            image_path = get_card_image_path(card.get("card_id", 1))
+            image_path = get_card_image_path(card.get("image"))
             if image_path:
                 loop = asyncio.get_event_loop()
                 image_bytes = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
