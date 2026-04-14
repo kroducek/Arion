@@ -14,6 +14,149 @@ FRAMES_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "frames")
 CARDS_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "cards")
 
 def load_json(filepath):
+    """Čte JSON soubor a automaticky inicializuje prázdné frames."""
+    if not os.path.exists(filepath):
+        if filepath.endswith("cards_frames.json"):
+            ensure_frames_data(filepath)
+            return load_json(filepath)
+        return []
+    
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            # Pokud je soubor prázdný ale existuje
+            if not data and filepath.endswith("cards_frames.json"):
+                ensure_frames_data(filepath)
+                with open(filepath, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            return data
+    except Exception:
+        if filepath.endswith("cards_frames.json"):
+            ensure_frames_data(filepath)
+            return load_json(filepath)
+        return []
+
+def ensure_frames_data(filepath):
+    """Zajistí, aby cards_frames.json obsahoval alespoň Riddler."""
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            default_frames = [
+                {
+                    "id": "riddler_frame",
+                    "name": "Riddler Rámeček",
+                    "image": "riddler-frame.png",
+                    "color": "#FF6B9D",
+                    "rarity_exclusive": None
+                }
+            ]
+            json.dump(default_frames, f, indent=4, ensure_ascii=False)
+    except Exception:
+        pass
+
+def get_frame_by_id(frame_id):
+    """Vrátí data rámečku podle ID."""
+    frames = load_json(FRAMES_FILE)
+    for frame in frames:
+        if frame.get("id") == frame_id:
+            return frame
+    return None
+
+def apply_frame_to_card(card_image_path: str, frame_id: str = None):
+    """
+    Aplikuje rámeček na kartu kombinací card image + frame image.
+    
+    Args:
+        card_image_path: Cesta k PNG obrázku karty
+        frame_id: ID rámečku (pokud None, vrátí jen kartu)
+    
+    Returns:
+        BytesIO objekt s PNG obrázkem
+    """
+    
+    # Zkontroluj existenci karty
+    if not os.path.exists(card_image_path):
+        raise FileNotFoundError(f"Obrázek karty nenalezen: {card_image_path}")
+    
+    # Pokud není frame_id, vrátí jen kartu
+    if not frame_id or frame_id == "default":
+        img = Image.open(card_image_path).convert("RGB")
+        byte_io = io.BytesIO()
+        img.save(byte_io, format="PNG")
+        byte_io.seek(0)
+        return byte_io
+    
+    # Načti frame info
+    frame = get_frame_by_id(frame_id)
+    if not frame or "image" not in frame:
+        # Fallback: vrátí jen kartu
+        img = Image.open(card_image_path).convert("RGB")
+        byte_io = io.BytesIO()
+        img.save(byte_io, format="PNG")
+        byte_io.seek(0)
+        return byte_io
+    
+    # Pojď aplikovat frame image
+    frame_image_path = os.path.join(FRAMES_DIR, frame.get("image"))
+    if not os.path.exists(frame_image_path):
+        # Fallback: vrátí jen kartu
+        img = Image.open(card_image_path).convert("RGB")
+        byte_io = io.BytesIO()
+        img.save(byte_io, format="PNG")
+        byte_io.seek(0)
+        return byte_io
+    
+    try:
+        card_img = Image.open(card_image_path).convert("RGBA")
+        frame_img = Image.open(frame_image_path).convert("RGBA")
+        
+        # Zmenšuj/zvětšuj frame aby odpovídal kartě
+        frame_img = frame_img.resize(card_img.size, Image.Resampling.LANCZOS)
+        
+        # Vytvořuj nový obrázek s frame jako overlay
+        result = Image.new("RGBA", card_img.size, (0, 0, 0, 0))
+        result.paste(card_img, (0, 0), card_img)
+        result.paste(frame_img, (0, 0), frame_img)
+        
+        # Převeď na RGB pro Discord
+        rgb_result = Image.new("RGB", result.size, (255, 255, 255))
+        rgb_result.paste(result, mask=result.split()[3])
+        
+        byte_io = io.BytesIO()
+        rgb_result.save(byte_io, format="PNG")
+        byte_io.seek(0)
+        return byte_io
+    except Exception:
+        # Fallback na jen kartu
+        img = Image.open(card_image_path).convert("RGB")
+        byte_io = io.BytesIO()
+        img.save(byte_io, format="PNG")
+        byte_io.seek(0)
+        return byte_io
+
+def get_card_image_path(image_filename: str):
+    """Vrátí cestu k obrázku karty podle jména souboru."""
+    if not image_filename:
+        return None
+    path = os.path.join(CARDS_DIR, image_filename)
+    if os.path.exists(path):
+        return path
+    return None
+"""
+Utility pro aplikování rámečku na obrázky karet.
+Vezme PNG obrázek karty a PNG obrázek rámečku a spojí je.
+"""
+
+from PIL import Image
+import io
+import os
+import json
+
+# Cesty k datům
+FRAMES_FILE = os.path.join(os.path.dirname(__file__), "..", "database", "data", "cards_frames.json")
+FRAMES_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "frames")
+CARDS_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "cards")
+
+def load_json(filepath):
     if not os.path.exists(filepath):
         return []
     try:
