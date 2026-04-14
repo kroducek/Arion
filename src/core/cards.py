@@ -45,6 +45,7 @@ def generate_unique_id():
 def get_card_by_id(card_id):
     """Vrátí data karty podle card_id."""
     cards = load_json(CARDS_DATA)
+    print(f"DEBUG get_card_by_id: card_id={card_id}, CARDS_DATA={CARDS_DATA}, cards={cards}")
     for card in cards:
         if card.get("id") == card_id:
             return card
@@ -84,7 +85,7 @@ class Cards(commands.Cog):
         """Admin příkaz pro tisk nové karty."""
         if rarity not in RARITIES:
             await interaction.response.send_message(
-                "Neplatná rarita. Dostupné: {', '.join(RARITIES.keys())}", 
+                f"Neplatná rarita. Dostupné: {', '.join(RARITIES.keys())}", 
                 ephemeral=True
             )
             return
