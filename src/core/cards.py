@@ -1,12 +1,13 @@
 """
 Sběratelský systém karet pro ArionBot
-Hráči sbírají karty postav s různými raritami a mohou je modifikovat rámečky a pozadími.
+Hráči sbírají karty postav s různými raritami a mohou je modifikovat rámečky.
 
 Příkazy:
   /cards collect       — Získat náhodnou kartu (poplatek 10 zlatých)
   /cards inventory     — Zobrazit své karty
-  /cards show <id>     — Zobrazit konkrétní kartu
-  /cards customize <id> frame:<frame> bg:<bg> — Modifikovat kartu
+  /cards show <id> frame:<frame>   — Zobrazit kartu s rámečkem
+  /cards frames        — Zobrazit dostupné rámečky
+  /cards customize <id> <frame>    — Změnit rámeček karty
 """
 
 import discord
@@ -15,8 +16,10 @@ import random
 import json
 from discord.ext import commands
 from discord import app_commands
+import asyncio
 
 from src.utils.paths import ECONOMY as ECONOMY_PATH, CARDS_DIR, CARDS_DATA, CARDS_INVENTORY
+from src.utils.card_image import apply_frame_to_card, get_card_image_path
 
 COLLECT_COST = 10
 GOLD_EMOJI = "<:goldcoin:1490171741237018795>"
@@ -154,9 +157,9 @@ class Cards(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
-    @cards_group.command(name="show", description="Zobrazit konkrétní kartu")
-    @app_commands.describe(card_id="ID karty z inventory (číslo)")
-    async def show(self, interaction: discord.Interaction, card_id: int):
+    @cards_group.command(name="show", description="Zobrazit konkrétní kartu s rámečkem")
+    @app_commands.describe(card_id="ID karty z inventory (číslo)", frame="ID rámečku (default: aktuální)")
+    async def show(self, interaction: discord.Interaction, card_id: int, frame: str = None):
         uid = str(interaction.user.id)
         inventory = load_inventory()
         user_cards = inventory.get(uid, [])
@@ -167,31 +170,87 @@ class Cards(commands.Cog):
             await interaction.response.send_message("Neplatné ID karty.", ephemeral=True)
             return
 
+        # Určí který rámeček použít
+        selected_frame = frame if frame else card.get("frame", "gold_frame")
+
+        # Defer odpověď, generování obrázku může trvat
+        await interaction.response.defer()
+
+        try:
+            # Pokud existuje obrázek, aplikuj rámeček
+            image_path = get_card_image_path(card.get('id', 1))
+            if image_path:
+                # Spusť generování v threadu aby neblokoval bot
+                loop = asyncio.get_event_loop()
+                image_bytes = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
+                file = discord.File(image_bytes, filename="card.png")
+                
+                embed = discord.Embed(
+                    title=f"🎴 {card['name']}",
+                    description=f"Rarita: {card.get('rarity', 'unworthy')} {RARITIES.get(card.get('rarity', 'unworthy'), {}).get('emoji', '⚪')}\nRámeček: `{selected_frame}`\n{card.get('description', '')}",
+                    color=RARITIES.get(card.get("rarity", "unworthy"), {}).get("color", 0x808080)
+                )
+                embed.set_image(url="attachment://card.png")
+                await interaction.followup.send(embed=embed, file=file)
+            else:
+                # Fallback bez obrázku
+                embed = discord.Embed(
+                    title=f"🎴 {card['name']}",
+                    description=f"Rarita: {card.get('rarity', 'unworthy')} {RARITIES.get(card.get('rarity', 'unworthy'), {}).get('emoji', '⚪')}\n{card.get('description', '')}",
+                    color=RARITIES.get(card.get("rarity", "unworthy"), {}).get("color", 0x808080)
+                )
+                await interaction.followup.send(embed=embed)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Chyba při generování karty: {str(e)}", ephemeral=True)
+
+    @cards_group.command(name="customize", description="Změnit rámeček tvé karty")
+    @app_commands.describe(card_id="ID karty z inventory", frame="ID nového rámečku")
+    async def customize(self, interaction: discord.Interaction, card_id: int, frame: str):
+        uid = str(interaction.user.id)
+        inventory = load_inventory()
+        user_cards = inventory.get(uid, [])
+
+        try:
+            card = user_cards[card_id - 1]
+        except IndexError:
+            await interaction.response.send_message("Neplatné ID karty.", ephemeral=True)
+            return
+
+        # Ulož nový rámeček
+        if "frame" not in card:
+            card["frame"] = "gold_frame"
+        card["frame"] = frame
+        
+        user_cards[card_id - 1] = card
+        inventory[uid] = user_cards
+        save_inventory(inventory)
+
+        await interaction.response.send_message(f"✅ Rámeček karty '{card['name']}' změněn na `{frame}`", ephemeral=True)
+
+    @cards_group.command(name="frames", description="Zobrazit dostupné rámečky")
+    async def frames(self, interaction: discord.Interaction):
+        from src.utils.card_image import load_json, FRAMES_FILE
+        frames_list = load_json(FRAMES_FILE)
+        
+        if not frames_list:
+            await interaction.response.send_message("Žádné rámečky nejsou k dispozici.", ephemeral=True)
+            return
+        
         embed = discord.Embed(
-            title=f"🎴 {card['name']}",
-            description=f"Rarita: {card.get('rarity', 'unworthy')} {RARITIES.get(card.get('rarity', 'unworthy'), {}).get('emoji', '⚪')}\n{card.get('description', '')}",
-            color=RARITIES.get(card.get("rarity", "unworthy"), {}).get("color", 0x808080)
+            title="🎴 Dostupné rámečky",
+            description="Použij: `/cards show <id> frame:<frame_id>`",
+            color=0xFFD700
         )
-        if "image" in card:
-            embed.set_image(url=card["image"])
-
+        
+        for frame in frames_list:
+            rarity_text = f" (Vyžaduje: {frame['rarity_exclusive']})" if frame['rarity_exclusive'] else ""
+            embed.add_field(
+                name=f"{frame['name']}",
+                value=f"ID: `{frame['id']}`{rarity_text}",
+                inline=False
+            )
+        
         await interaction.response.send_message(embed=embed)
-
-    @cards_group.command(name="customize", description="Modifikovat kartu rámečkem a pozadím")
-    @app_commands.describe(card_id="ID karty z inventory", frame="Rámeček (zatím placeholder)", bg="Pozadí (zatím placeholder)")
-    async def customize(self, interaction: discord.Interaction, card_id: int, frame: str, bg: str):
-        uid = str(interaction.user.id)
-        inventory = load_inventory()
-        user_cards = inventory.get(uid, [])
-
-        try:
-            card = user_cards[card_id - 1]
-        except IndexError:
-            await interaction.response.send_message("Neplatné ID karty.", ephemeral=True)
-            return
-
-        # Placeholder - implement image generation
-        await interaction.response.send_message(f"Customization karty '{card['name']}' s frame '{frame}' a bg '{bg}' - zatím neimplementováno.", ephemeral=True)
 
 async def setup(bot):
     await bot.add_cog(Cards(bot))

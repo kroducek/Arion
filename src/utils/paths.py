@@ -53,6 +53,7 @@ STORY_LIB   = data("story_library.json")
 CARDS_DIR   = os.path.join(ROOT, "src", "assets", "cards")
 CARDS_DATA  = data("cards_data.json")
 CARDS_INVENTORY = data("cards_inventory.json")
+CARDS_FRAMES = data("cards_frames.json")
 STORY_SAVE  = data("story_save.json")
 
 # ── Assets ───────────────────────────────────────────────────
