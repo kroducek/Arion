@@ -17,3 +17,4 @@ ENV/
 # --- DATA SOUBORY (runtime, obsahují uživatelská data) ---
 # Tyto soubory žijí na Railway Volume (/data), ne v repozitáři
 src/database/data/*.json
+!src/database/data/cards_data.json

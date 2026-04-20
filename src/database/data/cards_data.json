@@ -1,0 +1,16 @@
+[
+    {
+        "id": 1,
+        "name": "Alice Aurelion",
+        "description": "Mystická postava z Aurionisu s aurou tajemství.",
+        "image": "unworthy_alice_aurelion.png",
+        "collection": "unworthy"
+    },
+    {
+        "id": 2,
+        "name": "Enel",
+        "description": "Kdo ví co za tajemství v sobě skrývá.",
+        "image": "unworthy_enel.png",
+        "collection": "unworthy"
+    }
+]

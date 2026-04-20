@@ -58,7 +58,7 @@ def ensure_cards_data():
             {
                 "id": 2,
                 "name": "Enel",
-                "description": "Bůh hromu, jehož pýcha ho přivedla do záhuby.",
+                "description": "Kdo ví co za tajemství v sobě skrývá.",
                 "image": "unworthy_enel.png",
                 "collection": "unworthy"
             }
