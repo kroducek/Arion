@@ -834,13 +834,14 @@ class SlotsCog(commands.Cog):
             await channel.send(embed=e)
             await self._death_spin(channel, game, declarer_uid)
         else:
+            pts = CLAIM_POINTS.get(claim, 1)
             caller["points"]   = max(0, caller["points"] - 1)
-            declarer["points"] += 1
+            declarer["points"] += pts
             e.add_field(
                 name="❌ Špatné obvinění!",
                 value=(
                     f"**{caller['name']}** se mýlil/a → −1 bod (**{caller['points']}**)\n"
-                    f"**{declarer['name']}** měl/a pravdu → +1 bod (**{declarer['points']}**)"
+                    f"**{declarer['name']}** měl/a pravdu → +{pts} bod(ů) (**{declarer['points']}**)"
                 ),
                 inline=False,
             )
