@@ -43,27 +43,34 @@ def load_json(filepath):
     except Exception:
         return {} if filepath.endswith("inventory.json") else []
 
+SEED_CARDS = [
+    {
+        "id": 1,
+        "name": "Alice Aurelion",
+        "description": "Mystická postava z Aurionisu s aurou tajemství.",
+        "image": "unworthy_alice_aurelion.png",
+        "collection": "unworthy"
+    },
+    {
+        "id": 2,
+        "name": "Enel",
+        "description": "Kdo ví co za tajemství v sobě skrývá.",
+        "image": "unworthy_enel.png",
+        "collection": "unworthy"
+    }
+]
+
 def ensure_cards_data():
-    """Zajistí, aby soubor cards_data.json existoval a obsahoval alespoň defaultní karty."""
+    """Při startu doplní chybějící seed karty (upsert podle ID)."""
     cards = load_json(CARDS_DATA)
-    if not cards:
-        default_cards = [
-            {
-                "id": 1,
-                "name": "Alice Aurelion",
-                "description": "Mystická postava z Aurionisu s aurou tajemství.",
-                "image": "unworthy_alice_aurelion.png",
-                "collection": "unworthy"
-            },
-            {
-                "id": 2,
-                "name": "Enel",
-                "description": "Kdo ví co za tajemství v sobě skrývá.",
-                "image": "unworthy_enel.png",
-                "collection": "unworthy"
-            }
-        ]
-        save_json(CARDS_DATA, default_cards)
+    existing_ids = {c.get("id") for c in cards}
+    added = False
+    for seed in SEED_CARDS:
+        if seed["id"] not in existing_ids:
+            cards.append(seed)
+            added = True
+    if added:
+        save_json(CARDS_DATA, cards)
 
 def ensure_frames_data():
     """Zajistí, aby soubor cards_frames.json existoval a obsahoval alespoň Riddler."""
