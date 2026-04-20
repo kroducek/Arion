@@ -22,6 +22,13 @@ RARITIES = {
     "legendary": {"color": 0xFFD700, "emoji": "🟡"}
 }
 
+# Collections / Sady
+COLLECTIONS = {
+    "unworthy": {"color": 0x2C2F33, "emoji": "💀", "description": "Nevolaní — padlí a zapomenutí"},
+    "worthy":   {"color": 0x99AAB5, "emoji": "⚔️",  "description": "Hrdinové Aurionisu"},
+    "queen":    {"color": 0xFF69B4, "emoji": "👑",  "description": "Královna a její dvůr"},
+}
+
 def load_json(filepath):
     """Čte JSON soubor."""
     if not os.path.exists(filepath):
@@ -37,16 +44,23 @@ def load_json(filepath):
         return {} if filepath.endswith("inventory.json") else []
 
 def ensure_cards_data():
-    """Zajistí, aby soubor cards_data.json existoval a obsahoval alespoň Alice."""
+    """Zajistí, aby soubor cards_data.json existoval a obsahoval alespoň defaultní karty."""
     cards = load_json(CARDS_DATA)
     if not cards:
-        # Vytvoř defaultní kartu
         default_cards = [
             {
                 "id": 1,
                 "name": "Alice Aurelion",
                 "description": "Mystická postava z Aurionisu s aurou tajemství.",
-                "image": "unworthy_alice_aurelion.png"
+                "image": "unworthy_alice_aurelion.png",
+                "collection": "unworthy"
+            },
+            {
+                "id": 2,
+                "name": "Enel",
+                "description": "Bůh hromu, jehož pýcha ho přivedla do záhuby.",
+                "image": "unworthy_enel.png",
+                "collection": "unworthy"
             }
         ]
         save_json(CARDS_DATA, default_cards)
@@ -60,7 +74,7 @@ def ensure_frames_data():
             {
                 "id": "riddler_frame",
                 "name": "Riddler Rámeček",
-                "image": "riddler-frame.png",
+                "image": "riddler_frame.png",
                 "color": "#FF6B9D",
                 "rarity_exclusive": None
             }
@@ -155,6 +169,7 @@ class Cards(commands.Cog):
                 "name": card_template.get("name"),
                 "description": card_template.get("description"),
                 "image": card_template.get("image"),
+                "collection": card_template.get("collection"),
                 "rarity": rarity,
                 "owner_id": owner_id,
                 "frame": None,
@@ -236,23 +251,60 @@ class Cards(commands.Cog):
 
         try:
             image_path = get_card_image_path(card.get("image"))
-            if image_path:
-                loop = asyncio.get_event_loop()
-                image_bytes = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
-                file = discord.File(image_bytes, filename="card.png")
-                
-                rarity = card.get("rarity", "unworthy")
-                embed = discord.Embed(
-                    title=f"🎴 {card.get('name')}",
-                    description=f"Rarita: {rarity} {RARITIES.get(rarity, {}).get('emoji', '⚪')}\nID: {unique_id}\n{card.get('description', '')}",
-                    color=RARITIES.get(rarity, {}).get("color", 0x808080)
-                )
-                if selected_frame:
-                    embed.add_field(name="Rámeček", value=f"{selected_frame}", inline=True)
-                embed.set_image(url="attachment://card.png")
-                await interaction.followup.send(embed=embed, file=file)
-            else:
+            if not image_path:
                 await interaction.followup.send("Obrázek karty nenalezen.", ephemeral=True)
+                return
+
+            loop = asyncio.get_event_loop()
+            image_bytes = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
+            file = discord.File(image_bytes, filename="card.png")
+
+            rarity = card.get("rarity", "unworthy")
+            rarity_data = RARITIES.get(rarity, {})
+            collection = card.get("collection")
+            coll_data = COLLECTIONS.get(collection, {}) if collection else {}
+
+            owner_id = card.get("owner_id")
+            owner_text = f"<@{owner_id}>" if owner_id else "—"
+
+            created_at = card.get("created_at", "")
+            try:
+                date_text = datetime.fromisoformat(created_at).strftime("%d. %m. %Y") if created_at else "—"
+            except Exception:
+                date_text = "—"
+
+            embed = discord.Embed(
+                title=f"{rarity_data.get('emoji', '⚪')}  {card.get('name')}",
+                description=f"*{card.get('description', '')}*",
+                color=rarity_data.get("color", 0x808080)
+            )
+
+            if collection and coll_data:
+                embed.add_field(
+                    name="📚 Kolekce",
+                    value=f"{coll_data.get('emoji', '')} {collection.capitalize()}",
+                    inline=True
+                )
+            embed.add_field(
+                name="✨ Rarita",
+                value=f"{rarity_data.get('emoji', '⚪')} {rarity.capitalize()}",
+                inline=True
+            )
+            embed.add_field(name="\u200b", value="\u200b", inline=True)
+
+            embed.add_field(name="👤 Vlastník", value=owner_text, inline=True)
+            embed.add_field(name="🖼️ Rámeček", value=selected_frame or "Žádný", inline=True)
+            embed.add_field(name="📅 Vytisknuto", value=date_text, inline=True)
+
+            embed.add_field(name="🆔 Unikátní ID", value=f"`{unique_id}`", inline=False)
+
+            footer = "⚜️ Aurionis"
+            if coll_data.get("description"):
+                footer += f"  •  {coll_data['description']}"
+            embed.set_footer(text=footer)
+            embed.set_image(url="attachment://card.png")
+
+            await interaction.followup.send(embed=embed, file=file)
         except Exception as e:
             await interaction.followup.send(f"❌ Chyba: {str(e)}", ephemeral=True)
 
@@ -317,6 +369,52 @@ class Cards(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
+    @cards_group.command(name="info", description="Vítej v Aurionisu — statistiky karet")
+    async def cards_info(self, interaction: discord.Interaction):
+        """Uvítací embed se statistikami kartového systému."""
+        cards = load_json(CARDS_DATA)
+        inventory = load_json(CARDS_INVENTORY)
+
+        total_printed = len(inventory)
+        unique_designs = len(cards)
+
+        rarity_counts = {}
+        collection_counts = {}
+        for c in inventory.values():
+            r = c.get("rarity", "unworthy")
+            rarity_counts[r] = rarity_counts.get(r, 0) + 1
+            col = c.get("collection", "—")
+            collection_counts[col] = collection_counts.get(col, 0) + 1
+
+        embed = discord.Embed(
+            title="⚜️  Vítej v Aurionisu!",
+            description=(
+                "*Sbírej, vyměňuj a obdivuj karty z říše Aurionisu.*\n"
+                "*Každá karta je unikátní a nese příběh svého světa.*"
+            ),
+            color=0xFFD700
+        )
+
+        embed.add_field(name="🖨️ Celkem vytisknuto", value=f"**{total_printed}** karet", inline=True)
+        embed.add_field(name="🎴 Unikátních vzorů", value=f"**{unique_designs}** karet", inline=True)
+        embed.add_field(name="\u200b", value="\u200b", inline=True)
+
+        coll_lines = []
+        for cid, cdata in COLLECTIONS.items():
+            count = collection_counts.get(cid, 0)
+            coll_lines.append(f"{cdata['emoji']} **{cid.capitalize()}** — {count} ks")
+        if coll_lines:
+            embed.add_field(name="📚 Sady", value="\n".join(coll_lines), inline=True)
+
+        rarity_lines = []
+        for rid, rdata in RARITIES.items():
+            count = rarity_counts.get(rid, 0)
+            rarity_lines.append(f"{rdata['emoji']} **{rid.capitalize()}** — {count} ks")
+        embed.add_field(name="✨ Rarity", value="\n".join(rarity_lines), inline=True)
+
+        embed.set_footer(text="⚜️ Aurionis Sběratelský Systém")
+        await interaction.response.send_message(embed=embed)
+
     @cards_group.command(name="list", description="Dostupné karty v databázi")
     async def list_cards(self, interaction: discord.Interaction):
         """Zobrazí seznam všech dostupných karet."""
@@ -343,6 +441,90 @@ class Cards(commands.Cog):
             )
 
         await interaction.response.send_message(embed=embed)
+
+    @cards_group.command(name="gallery", description="Alba kolekcí — přehled sad a karet")
+    @app_commands.describe(collection="Název sady (volitelné) — zobrazí detail kolekce")
+    async def gallery(self, interaction: discord.Interaction, collection: str = None):
+        """Přehled kolekcí nebo detail jedné sady."""
+        cards_db = load_json(CARDS_DATA)
+        inventory = load_json(CARDS_INVENTORY)
+
+        if collection:
+            collection = collection.lower()
+            coll_data = COLLECTIONS.get(collection)
+            if not coll_data:
+                known = ", ".join(COLLECTIONS.keys())
+                await interaction.response.send_message(
+                    f"Neznámá kolekce `{collection}`. Dostupné: {known}", ephemeral=True
+                )
+                return
+
+            # Karty v této kolekci z databáze vzorů
+            coll_templates = [c for c in cards_db if c.get("collection") == collection]
+            # Vytisknuti instancei v inventory
+            coll_instances = [c for c in inventory.values() if c.get("collection") == collection]
+
+            rarity_counts = {}
+            for inst in coll_instances:
+                r = inst.get("rarity", "unworthy")
+                rarity_counts[r] = rarity_counts.get(r, 0) + 1
+
+            embed = discord.Embed(
+                title=f"{coll_data['emoji']}  Kolekce: {collection.capitalize()}",
+                description=f"*{coll_data['description']}*",
+                color=coll_data["color"]
+            )
+
+            embed.add_field(name="🎴 Vzorů v sadě", value=f"**{len(coll_templates)}**", inline=True)
+            embed.add_field(name="🖨️ Celkem vytisknuto", value=f"**{len(coll_instances)}**", inline=True)
+            embed.add_field(name="\u200b", value="\u200b", inline=True)
+
+            if rarity_counts:
+                rarity_lines = []
+                for rid, rdata in RARITIES.items():
+                    count = rarity_counts.get(rid, 0)
+                    if count:
+                        rarity_lines.append(f"{rdata['emoji']} {rid.capitalize()} — {count} ks")
+                embed.add_field(name="✨ Rarity v oběhu", value="\n".join(rarity_lines), inline=False)
+
+            if coll_templates:
+                for tmpl in coll_templates:
+                    tid = tmpl.get("id")
+                    copies = sum(1 for inst in coll_instances if inst.get("card_id") == tid)
+                    embed.add_field(
+                        name=f"#{tid} — {tmpl.get('name')}",
+                        value=f"{tmpl.get('description', '—')}\n*{copies} ks v oběhu*",
+                        inline=False
+                    )
+            else:
+                embed.add_field(name="Karty", value="Žádné vzory v této kolekci.", inline=False)
+
+            embed.set_footer(text=f"⚜️ Aurionis  •  /cards gallery pro přehled všech sad")
+            await interaction.response.send_message(embed=embed)
+
+        else:
+            # Přehled všech kolekcí
+            embed = discord.Embed(
+                title="📚  Galerie Aurionisu",
+                description="*Přehled všech kolekcí — jejich obsah a stav v oběhu.*",
+                color=0xFFD700
+            )
+
+            for cid, cdata in COLLECTIONS.items():
+                templates_count = sum(1 for c in cards_db if c.get("collection") == cid)
+                printed_count = sum(1 for c in inventory.values() if c.get("collection") == cid)
+                embed.add_field(
+                    name=f"{cdata['emoji']}  {cid.capitalize()}",
+                    value=(
+                        f"*{cdata['description']}*\n"
+                        f"🎴 Vzorů: **{templates_count}**  ·  🖨️ Vytisknuto: **{printed_count}**\n"
+                        f"`/cards gallery {cid}`"
+                    ),
+                    inline=False
+                )
+
+            embed.set_footer(text="⚜️ Aurionis Sběratelský Systém")
+            await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="give_frame", description="[ADMIN] Dát rámeček hráči")
     @app_commands.checks.has_permissions(administrator=True)
