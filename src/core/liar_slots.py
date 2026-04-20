@@ -62,7 +62,8 @@ def _claim_label(claim) -> str:
 
 def _can_execute(game: dict, uid: str) -> bool:
     p = game["players"].get(uid)
-    if not p or not p["alive"] or p["points"] < EXECUTE_THRESHOLD:
+    threshold = game.get("execute_threshold", EXECUTE_THRESHOLD)
+    if not p or not p["alive"] or p["points"] < threshold:
         return False
     alive_pts = [(u, pd["points"]) for u, pd in game["players"].items() if pd["alive"]]
     max_pts = max(pts for _, pts in alive_pts)
@@ -99,12 +100,38 @@ def _record_win(uid: str):
 # LOBBY
 # ══════════════════════════════════════════════════════════════════════════════
 
+class ExecuteLimitModal(discord.ui.Modal, title="Nastavit Execute limit"):
+    limit_input: discord.ui.TextInput = discord.ui.TextInput(
+        label="Execute limit (3–20 bodů)",
+        placeholder="8",
+        required=True,
+        max_length=2,
+    )
+
+    def __init__(self, lobby: "SlotsLobbyView"):
+        super().__init__()
+        self.lobby = lobby
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            val = int(self.limit_input.value.strip())
+        except ValueError:
+            await interaction.response.send_message("❌ Zadej platné číslo.", ephemeral=True)
+            return
+        if not (3 <= val <= 20):
+            await interaction.response.send_message("❌ Limit musí být mezi 3 a 20.", ephemeral=True)
+            return
+        self.lobby.execute_threshold = val
+        await interaction.response.edit_message(embed=self.lobby._embed())
+
+
 class SlotsLobbyView(discord.ui.View):
     def __init__(self, cog: "SlotsCog", author: discord.Member, bet: int = 0):
         super().__init__(timeout=120)
-        self.cog    = cog
-        self.author = author
-        self.bet    = bet
+        self.cog               = cog
+        self.author            = author
+        self.bet               = bet
+        self.execute_threshold = EXECUTE_THRESHOLD
         self.players: list[discord.Member] = [author]
         self.paid: set[str] = set()
 
@@ -125,12 +152,13 @@ class SlotsLobbyView(discord.ui.View):
             "Prohlásíš kolik ❤️ máš, ostatní ti buď věří nebo křičí **LIAR!**\n\n"
             f"**Hráči ({len(self.players)}/{MAX_PLAYERS}):**\n{names}"
         )
+        e.add_field(name="⚡ Execute limit", value=f"**{self.execute_threshold}** bodů", inline=True)
         if self.bet > 0:
             e.add_field(name="Sázka", value=f"{self.bet} {COIN} každý", inline=True)
             e.add_field(name="Pot",   value=f"{pot} {COIN}", inline=True)
         return e
 
-    @discord.ui.button(label="🎰 Připojit se", style=discord.ButtonStyle.success, custom_id="ls_join")
+    @discord.ui.button(label="🎰 Připojit se", style=discord.ButtonStyle.success, custom_id="ls_join", row=0)
     async def join_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user in self.players:
             await interaction.response.send_message("Už jsi ve hře!", ephemeral=True)
@@ -152,7 +180,7 @@ class SlotsLobbyView(discord.ui.View):
         self.players.append(interaction.user)
         await interaction.response.edit_message(embed=self._embed())
 
-    @discord.ui.button(label="🚪 Odejít", style=discord.ButtonStyle.secondary, custom_id="ls_leave")
+    @discord.ui.button(label="🚪 Odejít", style=discord.ButtonStyle.secondary, custom_id="ls_leave", row=0)
     async def leave_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id == self.author.id:
             await interaction.response.send_message(
@@ -171,7 +199,14 @@ class SlotsLobbyView(discord.ui.View):
         self.players = [p for p in self.players if p.id != interaction.user.id]
         await interaction.response.edit_message(embed=self._embed())
 
-    @discord.ui.button(label="▶️ Spustit", style=discord.ButtonStyle.primary, custom_id="ls_start")
+    @discord.ui.button(label="⚙️ Limit", style=discord.ButtonStyle.secondary, custom_id="ls_set_limit", row=1)
+    async def limit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message("Pouze zakladatel může měnit nastavení.", ephemeral=True)
+            return
+        await interaction.response.send_modal(ExecuteLimitModal(self))
+
+    @discord.ui.button(label="▶️ Spustit", style=discord.ButtonStyle.primary, custom_id="ls_start", row=1)
     async def start_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user != self.author:
             await interaction.response.send_message("Hru může spustit jen zakladatel.", ephemeral=True)
@@ -184,9 +219,9 @@ class SlotsLobbyView(discord.ui.View):
         pot = self.bet * len(self.paid)
         self.stop()
         await interaction.response.edit_message(content="🎰 **Liar Slots** se spouští…", embed=None, view=None)
-        await self.cog._start_game(interaction.channel, self.players, self.bet, pot)
+        await self.cog._start_game(interaction.channel, self.players, self.bet, pot, self.execute_threshold)
 
-    @discord.ui.button(label="🚫 Zrušit", style=discord.ButtonStyle.danger, custom_id="ls_cancel_lobby")
+    @discord.ui.button(label="🚫 Zrušit", style=discord.ButtonStyle.danger, custom_id="ls_cancel_lobby", row=0)
     async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if (interaction.user.id != self.author.id
                 and not interaction.user.guild_permissions.administrator):
@@ -638,6 +673,7 @@ class SlotsCog(commands.Cog):
         players: list[discord.Member],
         bet: int = 0,
         pot: int = 0,
+        execute_threshold: int = EXECUTE_THRESHOLD,
     ):
         random.shuffle(players)
         game: dict = {
@@ -654,8 +690,9 @@ class SlotsCog(commands.Cog):
             },
             "turn_order": [str(m.id) for m in players],
             "turn_idx":   0,
-            "liar_called":   False,
-            "current_claim": None,
+            "liar_called":      False,
+            "current_claim":    None,
+            "execute_threshold": execute_threshold,
             "bet": bet,
             "pot": pot,
         }
@@ -673,7 +710,7 @@ class SlotsCog(commands.Cog):
             "• Přežije → přijde o body posledního claimu\n"
             "• Správné LIAR → volající +1 bod, lhář jde na Death Spin\n"
             "• Špatné LIAR → volající −1 bod, deklarující +1 bod\n"
-            f"• **{EXECUTE_THRESHOLD} bodů** + jediný lídr → odemkneš **⚡ EXECUTE**\n"
+            f"• **{execute_threshold} bodů** + jediný lídr → odemkneš **⚡ EXECUTE**\n"
             "• **🎰🎰 Double Spin** — 1× za hru, točíš dvakrát a vybereš výsledek"
         )
         if pot > 0:
