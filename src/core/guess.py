@@ -498,8 +498,6 @@ class GuessCog(commands.Cog):
 
     guess = app_commands.Group(name="guess", description="Minihra: Hádej kdo")
 
-    @guess.command(name="start", description="Vytvoří lobby pro hru Hádej kdo")
-    @app_commands.describe(sazka="Vstupní sázka každého hráče v zlaťácích (výchozí: 50)")
     async def guess_start(self, interaction: discord.Interaction, sazka: int = 50):
         if interaction.channel.id in self.active_games:
             await interaction.response.send_message("V tomto kanálu už hra běží!", ephemeral=True)

@@ -387,7 +387,6 @@ class GallowsCog(commands.Cog):
 
     # ── Příkazy ───────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="sibenice", description="Spustí hru Šibenice")
     async def sibenice_cmd(self, interaction: discord.Interaction):
         if interaction.channel_id in self.active_games:
             await interaction.response.send_message("Ve tomto kanálu již běží hra!", ephemeral=True)

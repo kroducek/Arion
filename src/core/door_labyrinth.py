@@ -3298,10 +3298,6 @@ class LabyrinthCog(commands.Cog):
     # SLASH PŘÍKAZY
     # ══════════════════════════════════════════════════════════════════════════
 
-    @app_commands.command(
-        name="labyrinth_start",
-        description="Vytvoří lobby pro Door Labyrinth (sociálně-dedukční hra)"
-    )
     async def labyrinth_start(self, interaction: discord.Interaction):
         if interaction.channel.id in self.active_games:
             await interaction.response.send_message(

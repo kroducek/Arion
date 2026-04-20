@@ -107,8 +107,16 @@ class BetModal(discord.ui.Modal):
         if not cog:
             await interaction.response.send_message("❌ Minihra není dostupná.", ephemeral=True)
             return
-        handler = getattr(cog, self.game["handler"])
-        await handler(interaction, sazka=sazka)
+        await _invoke(cog, self.game["handler"], interaction, sazka=sazka)
+
+
+async def _invoke(cog, handler_name: str, interaction: discord.Interaction, **kwargs):
+    """Volá cog handler — zvládne app_commands.Command i plain metodu."""
+    handler = getattr(cog, handler_name)
+    if hasattr(handler, "callback"):
+        await handler.callback(cog, interaction, **kwargs)
+    else:
+        await handler(interaction, **kwargs)
 
 
 class MinigamesHubView(discord.ui.View):
@@ -134,8 +142,7 @@ def _make_callback(game: dict):
             if not cog:
                 await interaction.response.send_message("❌ Minihra není dostupná.", ephemeral=True)
                 return
-            handler = getattr(cog, game["handler"])
-            await handler(interaction)
+            await _invoke(cog, game["handler"], interaction)
     return callback
 
 

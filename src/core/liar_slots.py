@@ -586,8 +586,6 @@ class SlotsCog(commands.Cog):
 
     # ── Slash commandy ────────────────────────────────────────────────────────
 
-    @app_commands.command(name="liar_slots", description="Spustí hru Liar Slots")
-    @app_commands.describe(sazka="Vstupní sázka v zlaťácích (0 = bez sázky)")
     async def liar_slots_cmd(self, interaction: discord.Interaction, sazka: int = 0):
         cid = interaction.channel_id
         if cid in self.active_games:

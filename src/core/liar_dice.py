@@ -656,8 +656,6 @@ class LiarDiceCog(commands.Cog):
     # SLASH PŘÍKAZY
     # ══════════════════════════════════════════════════════════════════════════
 
-    @app_commands.command(name="liar_dice", description="Zahájí Kostku lháře (Liar's Dice)")
-    @app_commands.describe(sazka="Sázka v zlaťácích (0 = bez sázky)")
     async def cmd_start(self, interaction: discord.Interaction, sazka: int = 0):
         if interaction.channel.id in self.active_games:
             await interaction.response.send_message("Tady už jedna hra běží!", ephemeral=True)
