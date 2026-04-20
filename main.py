@@ -98,6 +98,17 @@ class ArionBot(commands.Bot):
                     except Exception:
                         logging.exception(f'[main] {filename} selhal')
                         print(f'   ❌ {filename} selhal — viz log výše.')
+                elif (
+                    not filename.startswith('_')
+                    and os.path.isdir(os.path.join(folder, filename))
+                    and os.path.exists(os.path.join(folder, filename, '__init__.py'))
+                ):
+                    try:
+                        await self.load_extension(f'{pkg}.{filename}')
+                        print(f'   ✅ {filename}/ načten.')
+                    except Exception:
+                        logging.exception(f'[main] {filename}/ selhal')
+                        print(f'   ❌ {filename}/ selhal — viz log výše.')
 
         print("🔄 Synchronizuji slash commandy...")
         synced = await self.tree.sync()
