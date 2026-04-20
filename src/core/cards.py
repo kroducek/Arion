@@ -57,6 +57,13 @@ SEED_CARDS = [
         "description": "Kdo ví co za tajemství v sobě skrývá.",
         "image": "unworthy_enel.png",
         "collection": "unworthy"
+    },
+    {
+        "id": 3,
+        "name": "Kaiser Vexx",
+        "description": "Kdo ví co za tajemství v sobě skrývá.",
+        "image": "unworthy_kaiser_vexx.png",
+        "collection": "unworthy"
     }
 ]
 
