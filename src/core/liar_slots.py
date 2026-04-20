@@ -477,12 +477,12 @@ class BetOrPassView(discord.ui.View):
         self._done = True
         self.stop()
         pdata = self.game["players"][self.uid]
-        await interaction.response.edit_message(
-            content=f"⏭️ **{pdata['name']}** přeskočil/a tah.", embed=None, view=None
-        )
+        await interaction.response.edit_message(content="⏭️ Přeskočuješ tah.", embed=None, view=None)
+        channel = self.cog.bot.get_channel(self.game["channel_id"])
+        if channel:
+            await channel.send(f"⏭️ **{pdata['name']}** přeskočil/a tah.")
         order = self.game["turn_order"]
         self.game["turn_idx"] = (self.game["turn_idx"] + 1) % len(order)
-        channel = self.cog.bot.get_channel(self.game["channel_id"])
         if channel:
             await self.cog._start_turn(channel, self.game)
 
@@ -721,14 +721,36 @@ class SlotsCog(commands.Cog):
 
     async def _after_spin(self, interaction: discord.Interaction, game: dict, uid: str, slots: list[str]):
         pdata = game["players"][uid]
-        e = discord.Embed(
+        h = _hearts(slots)
+
+        pub_e = discord.Embed(
             title=f"🎰 {pdata['name']} zatočil/a",
             description=f"**Veřejný slot:** {slots[0]}",
             color=0xFFD700,
         )
-        e.set_footer(text="📢 Vsadit = prohlásíš kolik ❤️ máš  ·  ⏭️ Pass = přeskočit tah")
+        pub_e.set_footer(text="Hráč vyhodnocuje svůj výsledek…")
+
+        jackpot_hint = " 🎰 **JACKPOT možný!**" if h == 4 else ""
+        priv_e = discord.Embed(
+            title="🔒 Tvoje sloty (jen ty vidíš)",
+            description=f"{_slots_str(slots)}\n❤️ × **{h}**{jackpot_hint}",
+            color=0x5865F2,
+        )
+        priv_e.set_footer(text="📢 Vsadit = prohlásíš kolik ❤️ máš  ·  ⏭️ Pass = přeskočit tah")
         view = BetOrPassView(self, game, uid, slots)
-        await interaction.response.send_message(embed=e, view=view)
+
+        msg = interaction.message
+        if msg and msg.flags.ephemeral:
+            # Double spin: ephemeral interakce → pošli public do kanálu + nová ephemeral BetOrPassView
+            await interaction.response.edit_message(content="✅ Výsledek zvolen.", embed=None, view=None)
+            channel = interaction.client.get_channel(game["channel_id"])
+            if channel:
+                await channel.send(embed=pub_e)
+            await interaction.followup.send(embed=priv_e, view=view, ephemeral=True)
+        else:
+            # Normální spin: uprav veřejnou SpinView zprávu, pošli ephemeral BetOrPassView
+            await interaction.response.edit_message(embed=pub_e, view=None)
+            await interaction.followup.send(embed=priv_e, view=view, ephemeral=True)
 
     # ── Deklarace ─────────────────────────────────────────────────────────────
 
