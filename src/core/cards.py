@@ -4,14 +4,15 @@ import discord
 import os
 import random
 import string
-import json
 from datetime import datetime
 from discord.ext import commands
 from discord import app_commands
 import asyncio
 
 from src.utils.paths import CARDS_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES, FRAMES_INVENTORY, FRAMES_DIR
-from src.utils.card_image import apply_frame_to_card, get_card_image_path
+from src.utils.card_image import apply_frame_to_card
+from src.utils.json_utils import load_json, save_json
+from src.utils.embeds import create_error_embed
 
 # Rarities
 RARITIES = {
@@ -28,20 +29,6 @@ COLLECTIONS = {
     "worthy":   {"color": 0x99AAB5, "emoji": "⚔️",  "description": "Hrdinové Aurionisu"},
     "queen":    {"color": 0xFF69B4, "emoji": "👑",  "description": "Královna a její dvůr"},
 }
-
-def load_json(filepath):
-    """Čte JSON soubor."""
-    if not os.path.exists(filepath):
-        return {} if filepath.endswith("inventory.json") else []
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            # Pokud soubor existuje ale je prázdný, vrátí defaultní hodnotu
-            if not data:
-                return {} if filepath.endswith("inventory.json") else []
-            return data
-    except Exception:
-        return {} if filepath.endswith("inventory.json") else []
 
 SEED_CARDS = [
     {
@@ -69,7 +56,7 @@ SEED_CARDS = [
 
 def ensure_cards_data():
     """Při startu doplní chybějící seed karty (upsert podle ID)."""
-    cards = load_json(CARDS_DATA)
+    cards = load_json(CARDS_DATA, default=[])
     existing_ids = {c.get("id") for c in cards}
     added = False
     for seed in SEED_CARDS:
@@ -81,7 +68,7 @@ def ensure_cards_data():
 
 def ensure_frames_data():
     """Zajistí, aby soubor cards_frames.json existoval a obsahoval alespoň Riddler."""
-    frames = load_json(CARDS_FRAMES)
+    frames = load_json(CARDS_FRAMES, default=[])
     if not frames:
         # Vytvoř defaultní rámeček
         default_frames = [
@@ -95,11 +82,6 @@ def ensure_frames_data():
         ]
         save_json(CARDS_FRAMES, default_frames)
 
-def save_json(filepath, data):
-    """Uloží JSON soubor."""
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
-
 def generate_unique_id():
     """Generuje unikátní ID (8 znaků)."""
     chars = string.ascii_lowercase + string.digits
@@ -107,7 +89,7 @@ def generate_unique_id():
 
 def get_card_by_id(card_id):
     """Vrátí data karty podle card_id."""
-    cards = load_json(CARDS_DATA)
+    cards = load_json(CARDS_DATA, default=[])
     for card in cards:
         if card.get("id") == card_id:
             return card
@@ -124,7 +106,7 @@ def get_card_image_path(image_filename: str):
 
 def get_frame_by_id(frame_id):
     """Vrátí data rámečku podle ID."""
-    frames = load_json(CARDS_FRAMES)
+    frames = load_json(CARDS_FRAMES, default=[])
     for frame in frames:
         if frame.get("id") == frame_id:
             return frame
@@ -257,7 +239,7 @@ class Cards(commands.Cog):
         owner_id = card.get("owner_id")
         
         if owner_id and owner_id != str(interaction.user.id) and not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("Nemáš přístup k této kartě.", ephemeral=True)
+            await interaction.response.send_message(embed=create_error_embed("❌ Přístup odepřen", "Tato karta ti nepatří."), ephemeral=True)
             return
 
         selected_frame = frame if frame else card.get("frame")
@@ -331,16 +313,16 @@ class Cards(commands.Cog):
         frames_inv = load_json(FRAMES_INVENTORY)
 
         if unique_id not in inventory:
-            await interaction.response.send_message(f"Karta {unique_id} neexistuje.", ephemeral=True)
+            await interaction.response.send_message(embed=create_error_embed("❌ Karta nenalezena", f"ID `{unique_id}` neexistuje."), ephemeral=True)
             return
 
         card = inventory[unique_id]
         if card.get("owner_id") != uid:
-            await interaction.response.send_message("Není to tvá karta.", ephemeral=True)
+            await interaction.response.send_message(embed=create_error_embed("❌ Přístup odepřen", "Tato karta ti nepatří."), ephemeral=True)
             return
 
         if frame not in [f.get("id") for f in frames_inv.get(uid, [])]:
-            await interaction.response.send_message(f"Rámeček {frame} nemáš.", ephemeral=True)
+            await interaction.response.send_message(embed=create_error_embed("❌ Rámeček nenalezen", f"Rámeček `{frame}` nemáš v inventáři."), ephemeral=True)
             return
 
         # Nasaď rámeček na kartu
@@ -362,7 +344,7 @@ class Cards(commands.Cog):
     @cards_group.command(name="frames", description="Dostupné rámečky")
     async def show_frames(self, interaction: discord.Interaction):
         """Zobrazí seznam dostupných rámečků."""
-        frames = load_json(CARDS_FRAMES)
+        frames = load_json(CARDS_FRAMES, default=[])
         
         if not frames:
             await interaction.response.send_message(
@@ -386,7 +368,7 @@ class Cards(commands.Cog):
     @cards_group.command(name="info", description="Vítej v Aurionisu — statistiky karet")
     async def cards_info(self, interaction: discord.Interaction):
         """Uvítací embed se statistikami kartového systému."""
-        cards = load_json(CARDS_DATA)
+        cards = load_json(CARDS_DATA, default=[])
         inventory = load_json(CARDS_INVENTORY)
 
         total_printed = len(inventory)
@@ -432,7 +414,7 @@ class Cards(commands.Cog):
     @cards_group.command(name="list", description="Dostupné karty v databázi")
     async def list_cards(self, interaction: discord.Interaction):
         """Zobrazí seznam všech dostupných karet."""
-        cards = load_json(CARDS_DATA)
+        cards = load_json(CARDS_DATA, default=[])
         
         if not cards:
             await interaction.response.send_message(
@@ -460,7 +442,7 @@ class Cards(commands.Cog):
     @app_commands.describe(collection="Název sady (volitelné) — zobrazí detail kolekce")
     async def gallery(self, interaction: discord.Interaction, collection: str = None):
         """Přehled kolekcí nebo detail jedné sady."""
-        cards_db = load_json(CARDS_DATA)
+        cards_db = load_json(CARDS_DATA, default=[])
         inventory = load_json(CARDS_INVENTORY)
 
         if collection:

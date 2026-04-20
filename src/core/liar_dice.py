@@ -207,6 +207,21 @@ class TurnView(discord.ui.View):
         show.callback = self._show_cb
         self.add_item(show)
 
+    async def on_timeout(self):
+        game = self.cog.active_games.get(self.channel_id)
+        if not game:
+            return
+        channel = self.cog.bot.get_channel(self.channel_id)
+        if not channel:
+            return
+        current_uid = game["players"][game["turn_index"]]
+        member = channel.guild.get_member(int(current_uid))
+        name = member.display_name if member else current_uid
+        await channel.send(
+            f"⏰ **{name}** neodpověděl/a v čase — ztrácí kostku za nečinnost."
+        )
+        await self.cog._process_loss(channel, game, [current_uid])
+
     def _get_game_if_my_turn(self, interaction: discord.Interaction):
         """Synchronní check — vrátí game dict nebo None."""
         game = self.cog.active_games.get(self.channel_id)
