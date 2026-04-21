@@ -251,30 +251,41 @@ def check_win(game: dict) -> str | None:
 
 
 def render_map(game: dict, current_room: str, hide_exit: bool = False) -> str:
-    """Vykreslí ASCII mapu s hráčem označeným hvězdičkou."""
-    rows = game.get("rows", 3)
-    cols = game.get("cols", 3)
-    row_labels = [chr(ord("A") + r) for r in range(rows)]
+    """Vykreslí mapu labyrintu ve stylu ASCII dungeonu."""
+    rows_n = game.get("rows", 3)
+    cols_n = game.get("cols", 3)
+    row_labels = [chr(ord("A") + r) for r in range(rows_n)]
+    row_width = 5 * cols_n + 2 * (cols_n - 1)
+
+    def cell_inner(rid: str) -> str:
+        room = game["map"].get(rid, {})
+        if rid == current_room:
+            return " ★ "
+        if room.get("is_exit") and not hide_exit:
+            return " E "
+        if room.get("dark") and not room.get("candle_lit"):
+            return "▓▓▓"
+        if room.get("vote_room"):
+            return " V "
+        n = sum(
+            1 for u in room.get("players", [])
+            if game["players"].get(u, {}).get("alive")
+        )
+        return f" {n} " if n > 0 else "   "
+
     lines = []
-    for row_label in row_labels:
-        row_cells = []
-        for c in range(1, cols + 1):
-            rid = f"{row_label}{c}"
-            room = game["map"].get(rid, {})
-            if rid == current_room:
-                cell = "🔸"
-            elif room.get("is_exit") and not hide_exit:
-                cell = "🚪"
-            elif room.get("dark") and not room.get("candle_lit"):
-                cell = "🌑"
-            elif room.get("vote_room"):
-                cell = "🔴"
-            else:
-                n = len([u for u in room.get("players", []) if game["players"].get(u, {}).get("alive")])
-                cell = f"[{n}]" if n > 0 else "[ ]"
-            row_cells.append(cell)
-        lines.append(" ".join(row_cells))
-    return "\n".join(lines)
+    for ri, row_label in enumerate(row_labels):
+        cells = [f"[{cell_inner(f'{row_label}{c}')}]" for c in range(1, cols_n + 1)]
+        lines.append("──".join(cells))
+        if ri < rows_n - 1:
+            vert = [' '] * row_width
+            for ci in range(cols_n):
+                vert[ci * 7 + 2] = '│'
+            lines.append(''.join(vert))
+
+    lines.append("")
+    lines.append("★=ty  ▓=tma  E=exit  V=hlasování  n=hráčů")
+    return "```\n" + "\n".join(lines) + "\n```"
 
 
 async def delete_after(msg: discord.Message, delay: float = 10.0) -> None:

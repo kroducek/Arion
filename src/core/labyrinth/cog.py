@@ -34,12 +34,17 @@ class LabyrinthCog(commands.Cog):
 
     async def _init_game(self, channel: discord.TextChannel,
                          players: list[discord.Member],
-                         map_size: tuple[int, int]):
+                         map_size: tuple[int, int],
+                         *,
+                         test_admin_uid: str | None = None):
         rows, cols = map_size
-        random.shuffle(players)
-
-        murderer = players[0]
         murderer_role = random.choice(MURDERER_ROLES)
+
+        if test_admin_uid:
+            murderer = next(m for m in players if str(m.id) != test_admin_uid)
+        else:
+            random.shuffle(players)
+            murderer = players[0]
 
         roles_pool = INNOCENT_ROLES[:]
         random.shuffle(roles_pool)
@@ -49,6 +54,8 @@ class LabyrinthCog(commands.Cog):
             uid = str(m.id)
             if m.id == murderer.id:
                 role = murderer_role
+            elif test_admin_uid and uid == test_admin_uid:
+                role = "detektiv"
             else:
                 role = roles_pool[(i - 1) % len(roles_pool)]
             player_data[uid] = {
@@ -109,6 +116,12 @@ class LabyrinthCog(commands.Cog):
             "generator_fuel": 0,
             "generator_started": False,
         }
+
+        if test_admin_uid:
+            npc_uid = str(murderer.id)
+            game["test_mode"] = True
+            game["test_end_round"] = 3
+            game["npc_uids"] = {npc_uid}
 
         scatter_items_and_codes(game)
         apply_custom_rooms(game, n_custom=2)
@@ -218,8 +231,11 @@ class LabyrinthCog(commands.Cog):
             except discord.Forbidden:
                 pass
 
+        npc_uids = game.get("npc_uids", set())
         for m in players:
             uid = str(m.id)
+            if uid in npc_uids:
+                continue
             thread_id = game["map"][player_data[uid]["room"]]["thread_id"]
             if thread_id:
                 thread = channel.guild.get_channel_or_thread(thread_id)
@@ -229,9 +245,16 @@ class LabyrinthCog(commands.Cog):
                     except Exception:
                         pass
 
-        await ready_view.wait_ready()
-        await channel.send("⚔️ **Všichni jsou připraveni — hra začíná!**")
-        await self._start_round(channel.id)
+        if game.get("test_mode"):
+            await channel.send(
+                "🔧 **Testovací hra** — hraješ za Detektiva. "
+                "NPC vrah se hýbe sám. Hra se automaticky ukončí po 3 kolech."
+            )
+            await self._start_round(channel.id)
+        else:
+            await ready_view.wait_ready()
+            await channel.send("⚔️ **Všichni jsou připraveni — hra začíná!**")
+            await self._start_round(channel.id)
 
     # ── Vlákno místnosti ─────────────────────────────────────────────────────
 
@@ -268,6 +291,14 @@ class LabyrinthCog(commands.Cog):
 
         game["round"] += 1
         current_round = game["round"]
+
+        if game.get("test_mode") and current_round > game.get("test_end_round", 999):
+            await channel.send(
+                f"🔧 **Test dokončen** — odehráno {game.get('test_end_round', 3)} kola. "
+                "Vrah by dohral hru. (simulace: vrah vítězí)"
+            )
+            await self._end_game(channel_id, "murderer")
+            return
 
         # Auto-odhalení exitu po N kolech
         n_rooms_total = len(game["map"])
@@ -516,6 +547,22 @@ class LabyrinthCog(commands.Cog):
                         except discord.Forbidden:
                             pass
 
+        # NPC hráči: automatická volba dveří
+        npc_uids = game.get("npc_uids", set())
+        for npc_uid in npc_uids:
+            if npc_uid not in alive:
+                continue
+            npc_pdata = game["players"][npc_uid]
+            if npc_pdata.get("trapped") or npc_pdata.get("door_assignment"):
+                continue
+            conns = game["map"][npc_pdata["room"]]["connections"]
+            npc_pdata["door_assignment"] = random.choice(conns) if conns else npc_pdata["room"]
+            game["pending_choices"] = max(0, game["pending_choices"] - 1)
+
+        if game["pending_choices"] <= 0 and not game.get("movement_triggered"):
+            game["movement_triggered"] = True
+            asyncio.create_task(self._execute_movement(channel_id))
+
         # Souhrn kola v hlavním kanálu
         found_codes = game.get("found_codes", [])
         total_codes = game.get("total_codes", 6)
@@ -723,6 +770,15 @@ class LabyrinthCog(commands.Cog):
                 f"⏱️ Máte **60 sekund** na akce, nebo klikněte ✅ Zakončit tah.",
                 view=action_view,
             )
+
+        # NPC hráči: automaticky ukončí fázi akcí
+        npc_uids = game.get("npc_uids", set())
+        alive_set = set(alive)
+        for npc_uid in npc_uids:
+            if npc_uid in alive_set:
+                game["actions_done"].add(npc_uid)
+        if len(game["actions_done"]) >= len(alive):
+            round_event.set()
 
         try:
             await asyncio.wait_for(round_event.wait(), timeout=60)

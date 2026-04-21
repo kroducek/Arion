@@ -199,11 +199,17 @@ class LabyrinthLobby(discord.ui.View):
         if not interaction.user.guild_permissions.administrator:
             await interaction.response.send_message("Pouze admin.", ephemeral=True)
             return
+        bot_member = interaction.guild.me
+        test_players = [interaction.user, bot_member]
         self.stop()
         await interaction.response.edit_message(
-            content="🔧 **Door Labyrinth** — Testovací spuštění…", embed=None, view=None
+            content="🔧 **Door Labyrinth** — Testovací spuštění (ty=Detektiv, bot=Vrah)…",
+            embed=None, view=None,
         )
-        await self.cog._init_game(interaction.channel, self.players, self.map_size)
+        await self.cog._init_game(
+            interaction.channel, test_players, (3, 3),
+            test_admin_uid=str(interaction.user.id),
+        )
 
     @discord.ui.button(label="🚫 Zrušit", style=discord.ButtonStyle.danger,
                        custom_id="lab_cancel_lobby", row=2)
