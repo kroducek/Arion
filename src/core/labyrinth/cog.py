@@ -413,8 +413,19 @@ class LabyrinthCog(commands.Cog):
                 description=room["description"],
                 color=0x4B0082,
             )
-            embed.add_field(name="Hráči v místnosti",
-                            value=", ".join(players_here) or "nikdo", inline=False)
+            is_dark_unlit = room.get("dark") and not room.get("candle_lit")
+            if is_dark_unlit:
+                n_here = len(players_here)
+                if n_here == 1:
+                    pres = "přítomnost"
+                elif n_here < 5:
+                    pres = "přítomnosti"
+                else:
+                    pres = "přítomností"
+                players_val = f"*Tma pohltí vše — slyšíš {n_here} {pres}…*"
+            else:
+                players_val = ", ".join(players_here) or "nikdo"
+            embed.add_field(name="Hráči v místnosti", value=players_val, inline=False)
             if bodies_here:
                 embed.add_field(name="Těla", value="\n".join(bodies_here), inline=False)
 
@@ -439,9 +450,18 @@ class LabyrinthCog(commands.Cog):
                 embed.add_field(name="📦 Truhla", value=chest_status, inline=False)
 
             if room.get("ghost_arion") and not game.get("ghost_arion_used"):
-                embed.add_field(name="🐱 Duch Temné Arion",
-                                value="*Přízračná kočka zahalená temnou aurou se na tebe dívá. Něco nabízí…*",
-                                inline=False)
+                if not room.get("dark") or room.get("candle_lit"):
+                    embed.add_field(
+                        name="🐱 Duch Temné Arion",
+                        value="*Přízračná kočka zahalená temnou aurou se na tebe dívá. Něco nabízí…*",
+                        inline=False,
+                    )
+                else:
+                    embed.add_field(
+                        name="🌑 Temná přítomnost",
+                        value="*Cítíš přítomnost čehosi živého. Tma pohltí vše. Rozsvíť svíčku.*",
+                        inline=False,
+                    )
 
             if room["is_exit"] and game.get("exit_announced"):
                 gen_fuel = game.get("generator_fuel", 0)
@@ -817,6 +837,17 @@ class LabyrinthCog(commands.Cog):
             return False, "❌ Nemáš svíčku."
         if "zapalovač" not in pdata["items"]:
             return False, "❌ Nemáš zapalovač."
+        uses = pdata.get("zapalovač_uses", 3)
+        if uses <= 0:
+            return False, "❌ Zapalovač je vybitý (0 použití zbývá)."
+        pdata["zapalovač_uses"] = uses - 1
+        lighter_note = ""
+        if pdata["zapalovač_uses"] <= 0:
+            pdata["items"].remove("zapalovač")
+            pdata.pop("zapalovač_uses", None)
+            lighter_note = " Zapalovač se vybil a zničil se."
+        else:
+            lighter_note = f" Zapalovač má ještě **{pdata['zapalovač_uses']}** použití."
         pdata["items"].remove("svíčka")
         room["candle_lit"] = True
         if channel:
@@ -828,7 +859,7 @@ class LabyrinthCog(commands.Cog):
                         await rt.send(f"🕯️ **{pdata['name']}** zapálil/a svíčku! Místnost **{room_id}** je nyní osvětlena.")
                     except Exception:
                         pass
-        return True, "✅ Svíčka zapálena! Místnost je nyní trvale osvětlena."
+        return True, f"✅ Svíčka zapálena! Místnost je nyní trvale osvětlena.{lighter_note}"
 
     # ── Hlasování ────────────────────────────────────────────────────────────
 

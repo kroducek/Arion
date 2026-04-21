@@ -62,6 +62,17 @@ ROOM_DESCRIPTIONS = [
     "Skleněná vitrina je rozbitá. Co v ní bylo, teď chybí.",
 ]
 
+DARK_ROOM_DESCRIPTIONS = [
+    "Absolutní tma. Vzduch je tísnivý a studený jako v hrobě.",
+    "Tma pohltí vše. Neslyšíš nic — nebo snad ano?",
+    "Žádné světlo sem neproniklo. Orientuješ se hmatem a dechem.",
+    "V naprosté tmě se zdá, že stěny se přibližují.",
+    "Záblesk za víčky. Pak zase tma. Byl to odraz, nebo pohyb?",
+    "Tma jako smůla — taková, která skrývá záměrně.",
+    "Krůček za krůčkem, tápáš vpřed. Cítíš, že tu není sám/sama.",
+    "Nepřátelská tma. Dýcháš mělce, abys neslyšel/a vlastní srdce.",
+]
+
 CODE_LORE = [
     "Na omítce je vyryto číslo. Kdo to tu zanechal?",
     "Pod kobercem nacházíš útržek papíru s napsaným číslem.",

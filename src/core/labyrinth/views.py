@@ -284,7 +284,7 @@ class DoorChoiceView(discord.ui.View):
         if not pdata:
             await interaction.response.send_message("Nejsi hráčem.", ephemeral=True)
             return
-        items_str = item_list_str(pdata["items"])
+        items_str = item_list_str(pdata["items"], pdata)
         found = sorted(self.game.get("found_codes", []))
         total_codes = self.game.get("total_codes", 6)
         nums_str = ", ".join(str(n) for n in found) or "žádná"
@@ -470,7 +470,7 @@ class RoomActionView(discord.ui.View):
             await interaction.response.send_message("Nejsi v této místnosti.", ephemeral=True)
             return
         panel = PersonalActionView(self.cog, self.game, self.room_id, uid)
-        inv_str = item_list_str(pdata["items"]) or "žádné"
+        inv_str = item_list_str(pdata["items"], pdata) or "žádné"
         found = sorted(self.game.get("found_codes", []))
         total = self.game.get("total_codes", 6)
         gen_fuel = self.game.get("generator_fuel", 0)
@@ -692,7 +692,8 @@ class PersonalActionView(discord.ui.View):
             self.add_item(free_btn)
 
         # ── Řádek 4: speciální ────────────────────────────────────────────────
-        if room.get("dark") and not room.get("candle_lit") and "svíčka" in pdata["items"] and "zapalovač" in pdata["items"]:
+        has_lighter = "zapalovač" in pdata["items"] and pdata.get("zapalovač_uses", 3) > 0
+        if room.get("dark") and not room.get("candle_lit") and "svíčka" in pdata["items"] and has_lighter:
             candle_btn = discord.ui.Button(
                 label="🕯️ Zapálit svíčku",
                 style=discord.ButtonStyle.secondary,
@@ -723,8 +724,7 @@ class PersonalActionView(discord.ui.View):
             self.add_item(trap_btn)
 
         if room.get("ghost_arion") and not game.get("ghost_arion_used"):
-            can_see = not room.get("dark") or room.get("candle_lit") or "baterka" in pdata["items"]
-            if can_see:
+            if not room.get("dark") or room.get("candle_lit"):
                 arion_btn = discord.ui.Button(
                     label="🐱 Teleportovat s Arion",
                     style=discord.ButtonStyle.secondary,
@@ -746,15 +746,27 @@ class PersonalActionView(discord.ui.View):
 
         room = self.game["map"][self.room_id]
 
-        if room.get("dark") and not room.get("candle_lit") and "baterka" not in pdata["items"]:
-            await interaction.followup.send(
-                "🌑 **Naprostá tma!** Potřebuješ 🔦 baterku nebo zapálenou 🕯️ svíčku.",
-                ephemeral=True,
-            )
-            return
+        if room.get("dark") and not room.get("candle_lit"):
+            if "baterka" not in pdata["items"]:
+                await interaction.followup.send(
+                    "🌑 **Naprostá tma!** Potřebuješ 🔦 baterku nebo zapálenou 🕯️ svíčku.",
+                    ephemeral=True,
+                )
+                return
+            pdata["items"].remove("baterka")
+            results_dark = ["🔦 *Zapnul/a jsi baterku — záblesk světla, pak opět tma. Baterka se zničila.*"]
+            if room["last_round_players"]:
+                names = [self.game["players"][u]["name"]
+                         for u in room["last_round_players"] if u in self.game["players"]]
+                if names:
+                    results_dark.append(
+                        f"🔦 *Ve světle baterky vidíš stopy:* Minulé kolo tu bylo: **{', '.join(names)}**"
+                    )
+            results = results_dark
+        else:
+            results = []
 
         pdata["searched_this_round"] = True
-        results = []
         is_technik = pdata["role"] == "technik"
         base_chance = 0.60 if is_technik else 0.40
 
@@ -783,16 +795,10 @@ class PersonalActionView(discord.ui.View):
         elif room["code_number"] is not None and not room.get("code_found") and is_murderer:
             results.append("🔍 *Nalezl/a jsi nápis, ale nedává ti smysl.*")
 
-        if "baterka" in pdata["items"] and room["last_round_players"]:
-            names = [self.game["players"][u]["name"]
-                     for u in room["last_round_players"] if u in self.game["players"]]
-            if names:
-                results.append(f"🔦 *Baterka odhalí stopy:* V tomto kole tu bylo: **{', '.join(names)}**")
-
         if not results:
             results.append("*Prohledal/a jsi místnost. Nic zajímavého.*")
 
-        items_str = item_list_str(pdata["items"])
+        items_str = item_list_str(pdata["items"], pdata)
         found_codes = sorted(self.game.get("found_codes", []))
         total_codes = self.game.get("total_codes", 6)
         results.append(f"\n**🎒 Inventář:** {items_str}")

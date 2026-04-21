@@ -5,7 +5,7 @@ import random
 import discord
 
 from .constants import (
-    ROOM_DESCRIPTIONS, CODE_LORE, DARK_ROOM_CHANCE,
+    ROOM_DESCRIPTIONS, DARK_ROOM_DESCRIPTIONS, CODE_LORE, DARK_ROOM_CHANCE,
     WEAPON_ITEMS, ALL_ITEMS, ITEM_EMOJI,
 )
 
@@ -103,6 +103,7 @@ def scatter_items_and_codes(game: dict) -> None:
     for room_id in dark_candidates:
         if random.random() < DARK_ROOM_CHANCE:
             game["map"][room_id]["dark"] = True
+            game["map"][room_id]["description"] = random.choice(DARK_ROOM_DESCRIPTIONS)
 
     # ── Běžné předměty (1-2 per místnost, bez kanystru) ──────────────────────
     common_items_all = ["baterka", "zapalovač", "svíčka"]
@@ -205,10 +206,18 @@ def players_in_room(game: dict, room_id: str) -> list[str]:
     return game["map"][room_id]["players"]
 
 
-def item_list_str(items: list[str]) -> str:
+def item_list_str(items: list[str], pdata: dict | None = None) -> str:
     if not items:
         return "žádné"
-    return ", ".join(f"{ITEM_EMOJI.get(i, '?')} {i}" for i in items)
+    parts = []
+    for i in items:
+        extra = ""
+        if i == "zapalovač" and pdata:
+            u = pdata.get("zapalovač_uses")
+            if u is not None:
+                extra = f" ({u}×)"
+        parts.append(f"{ITEM_EMOJI.get(i, '?')} {i}{extra}")
+    return ", ".join(parts)
 
 
 def room_direction(from_id: str, to_id: str) -> str:
@@ -264,7 +273,7 @@ def render_map(game: dict, current_room: str, hide_exit: bool = False) -> str:
         if room.get("is_exit") and not hide_exit:
             return " E "
         if room.get("dark") and not room.get("candle_lit"):
-            return "▓▓▓"
+            return "   "
         if room.get("vote_room"):
             return " V "
         n = sum(
@@ -284,7 +293,7 @@ def render_map(game: dict, current_room: str, hide_exit: bool = False) -> str:
             lines.append(''.join(vert))
 
     lines.append("")
-    lines.append("★=ty  ▓=tma  E=exit  V=hlasování  n=hráčů")
+    lines.append("★=ty  E=exit  V=hlasování  n=hráčů")
     return "```\n" + "\n".join(lines) + "\n```"
 
 
