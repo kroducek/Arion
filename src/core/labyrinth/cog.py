@@ -1,10 +1,24 @@
 """Hlavní herní logika — LabyrinthCog."""
 
 import asyncio
+import pathlib
 import random
 import discord
 from discord import app_commands
 from discord.ext import commands
+
+ASSETS_DIR = pathlib.Path(__file__).parent / "assets" / "classes"
+
+ROLE_IMAGE: dict[str, str] = {
+    "detektiv":     "detektiv.png",
+    "doktor":       "doktor.png",
+    "skaut":        "skaut.png",
+    "technik":      "technik.png",
+    "blázen":       "blazen.png",
+    "manipulátor":  "manipulator.png",
+    "pastičkář":    "pastickar.png",
+    "sériový vrah": "seriovy-vrah.png",
+}
 
 from .constants import (
     MIN_PLAYERS, MAX_PLAYERS, INNOCENT_ROLES, MURDERER_ROLES,
@@ -210,6 +224,10 @@ class LabyrinthCog(commands.Cog):
             else:
                 role_text = role_data.get("description", "Nevinný")
 
+            display_role = role if role != "blázen" else (player_data[uid].get("fake_role") or role)
+            img_filename = ROLE_IMAGE.get(display_role)
+            img_path = ASSETS_DIR / img_filename if img_filename else None
+
             dm_embed = discord.Embed(
                 title="🚪 Door Labyrinth — Tvoje role",
                 description=f"{role_text}\n\nHra začala v {channel.mention}!",
@@ -227,7 +245,14 @@ class LabyrinthCog(commands.Cog):
                 dm_embed.add_field(name="🎯 Skaut je:", value=f"**{skaut_name}**", inline=False)
 
             try:
-                await m.send(embed=dm_embed)
+                if img_path and img_path.exists():
+                    dm_embed.set_image(url=f"attachment://{img_filename}")
+                    await m.send(
+                        embed=dm_embed,
+                        file=discord.File(img_path, filename=img_filename),
+                    )
+                else:
+                    await m.send(embed=dm_embed)
             except discord.Forbidden:
                 pass
 
@@ -1595,3 +1620,67 @@ class LabyrinthCog(commands.Cog):
         )
         embed.set_footer(text="Top 10 | počet výher")
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(
+        name="labyrinth_classes",
+        description="Přehled všech tříd Door Labyrinth s obrázky"
+    )
+    async def labyrinth_classes(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
+        innocent_embeds: list[discord.Embed] = []
+        innocent_files: list[discord.File] = []
+        murderer_embeds: list[discord.Embed] = []
+        murderer_files: list[discord.File] = []
+
+        for role_name, info in ROLE_INFO.items():
+            color = 0x8B0000 if info["team"] == "murderer" else 0x1E90FF
+            embed = discord.Embed(
+                title=f"{info['icon']} {role_name.capitalize()}",
+                description=info["description"],
+                color=color,
+            )
+            start = info.get("start_item")
+            if start:
+                embed.add_field(
+                    name="Startovní předmět",
+                    value=f"{ITEM_EMOJI.get(start, '?')} {start}",
+                    inline=True,
+                )
+
+            img_filename = ROLE_IMAGE.get(role_name)
+            img_path = ASSETS_DIR / img_filename if img_filename else None
+            if img_path and img_path.exists():
+                embed.set_thumbnail(url=f"attachment://{img_filename}")
+                f = discord.File(img_path, filename=img_filename)
+                if info["team"] == "murderer":
+                    murderer_embeds.append(embed)
+                    murderer_files.append(f)
+                else:
+                    innocent_embeds.append(embed)
+                    innocent_files.append(f)
+            else:
+                if info["team"] == "murderer":
+                    murderer_embeds.append(embed)
+                else:
+                    innocent_embeds.append(embed)
+
+        header_inn = discord.Embed(
+            title="🔵 Nevinní — přehled tříd",
+            description="Tvým cílem je přežít, uprchnout nebo odhalit vraha.",
+            color=0x1E90FF,
+        )
+        header_mrd = discord.Embed(
+            title="🔪 Vrahové — přehled tříd",
+            description="Tvým cílem je eliminovat všechny nevinné.",
+            color=0x8B0000,
+        )
+
+        await interaction.followup.send(
+            embeds=[header_inn] + innocent_embeds,
+            files=innocent_files,
+        )
+        await interaction.followup.send(
+            embeds=[header_mrd] + murderer_embeds,
+            files=murderer_files,
+        )
