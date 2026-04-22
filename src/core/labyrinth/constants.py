@@ -1,6 +1,6 @@
 """Konstanty pro Door Labyrinth."""
 
-MIN_PLAYERS = 4
+MIN_PLAYERS = 3
 MAX_PLAYERS = 10
 
 DARK_ROOM_CHANCE = 0.30
