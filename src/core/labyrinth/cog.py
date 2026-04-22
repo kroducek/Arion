@@ -944,7 +944,7 @@ class LabyrinthCog(commands.Cog):
         triggerer_name = game["players"][triggerer_uid]["name"]
 
         alive = alive_players(game)
-        innocents_in_vote = [u for u in alive if u != game["murderer_uid"]]
+        voters_in_vote = list(alive)
         suspect_options = [
             discord.SelectOption(label=game["players"][u]["name"], value=u, emoji="👤")
             for u in alive
@@ -956,7 +956,7 @@ class LabyrinthCog(commands.Cog):
 
         await channel.send(
             f"🔴 **{triggerer_name}** stiskl/a červené tlačítko v místnosti {room_id}!\n"
-            f"**Globální hlasování!** Nevinní mají **60 sekund** na poradní vlákno — pak proběhne tajné DM hlasování.\n"
+            f"**Globální hlasování!** Všichni mají **60 sekund** na poradní vlákno — pak proběhne tajné DM hlasování.\n"
             f"⏸️ *Pohyb v labyrintu je dočasně pozastaven do výsledku hlasování.*"
         )
 
@@ -973,7 +973,7 @@ class LabyrinthCog(commands.Cog):
                     type=discord.ChannelType.private_thread,
                     invitable=False,
                 )
-                for inn_uid in innocents_in_vote:
+                for inn_uid in voters_in_vote:
                     member = channel.guild.get_member(int(inn_uid))
                     if member:
                         try:
@@ -982,7 +982,7 @@ class LabyrinthCog(commands.Cog):
                             pass
                 await conf_thread.send(
                     "🗳️ **Poradní vlákno** — máte **60 sekund** na diskuzi.\n"
-                    "Vrah zde není přítomen. Po uplynutí času dostanete DM s hlasovacím lístkem."
+                    "Po uplynutí času dostanete DM s hlasovacím lístkem."
                 )
             except Exception as e:
                 print(f"[Labyrinth] Konferenční vlákno: {e}")
@@ -997,7 +997,7 @@ class LabyrinthCog(commands.Cog):
                     pass
 
             async def send_vote_dms(options: list, v_counts: dict, v_voted: set, v_lock, suffix: str):
-                for u in innocents_in_vote:
+                for u in voters_in_vote:
                     member = channel.guild.get_member(int(u))
                     if not member:
                         continue
