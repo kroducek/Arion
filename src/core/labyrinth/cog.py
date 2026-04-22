@@ -186,15 +186,19 @@ class LabyrinthCog(commands.Cog):
             ),
             color=0x8B0000,
         )
-        ready_view = TutorialReadyView(players, self, channel.id)
-        await channel.send(
-            embed=tutorial_embed,
-            view=ready_view,
-            content=(
-                "📖 Přečtěte si pravidla a klikněte **✅ Připraven/a**. "
-                "Hra začne, jakmile jsou všichni připraveni (nebo za 90 s automaticky)."
-            ),
-        )
+        if not test_admin_uid:
+            ready_view = TutorialReadyView(players, self, channel.id)
+            await channel.send(
+                embed=tutorial_embed,
+                view=ready_view,
+                content=(
+                    "📖 Přečtěte si pravidla a klikněte **✅ Připraven/a**. "
+                    "Hra začne, jakmile jsou všichni připraveni (nebo za 90 s automaticky)."
+                ),
+            )
+        else:
+            ready_view = None
+            await channel.send(embed=tutorial_embed)
         await channel.send(f"🚪 **Door Labyrinth** — Vytvářejí se místnosti ({rows}×{cols})…")
 
         for room_id in room_ids:
@@ -276,7 +280,8 @@ class LabyrinthCog(commands.Cog):
             )
             await self._start_round(channel.id)
         else:
-            await ready_view.wait_ready()
+            if ready_view:
+                await ready_view.wait_ready()
             await channel.send("⚔️ **Všichni jsou připraveni — hra začíná!**")
             await self._start_round(channel.id)
 
