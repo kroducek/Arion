@@ -659,7 +659,7 @@ class PersonalActionView(discord.ui.View):
             loot_btn.callback = self._loot_bodies_cb
             self.add_item(loot_btn)
 
-        if pdata["items"] and room["bodies"]:
+        if pdata["items"]:
             drop_btn = discord.ui.Button(
                 label="📤 Nechat věc",
                 style=discord.ButtonStyle.secondary,
@@ -971,7 +971,7 @@ class PersonalActionView(discord.ui.View):
                 results.append(f"📡 Skener zachytil signál!\nNalezeno: **{ITEM_EMOJI.get(found, '?')} {found}**")
             else:
                 results.append("📡 *Skener nezachytil nic zajímavého.*")
-        results.append(f"\n**🎒 Inventář:** {item_list_str(pdata['items'])}")
+        results.append(f"\n**🎒 Inventář:** {item_list_str(pdata['items'], pdata)}")
         await interaction.followup.send("\n".join(results), ephemeral=True)
 
     # ── Zapálit svíčku ────────────────────────────────────────────────────────
@@ -1189,8 +1189,15 @@ class PersonalActionView(discord.ui.View):
         if self.game.get("ghost_arion_used"):
             await interaction.response.send_message("Arion již zmizela.", ephemeral=True)
             return
-        room_ids = [rid for rid in self.game["map"] if rid != self.room_id]
-        options = [discord.SelectOption(label=f"Místnost {rid}", value=rid) for rid in sorted(room_ids)]
+        exit_room = self.game.get("exit_room", "")
+        room_ids = [rid for rid in self.game["map"] if rid != self.room_id and rid != exit_room]
+        options = [
+            discord.SelectOption(
+                label=self.game["map"][rid].get("custom_name") or f"Místnost {rid}",
+                value=rid,
+            )
+            for rid in sorted(room_ids)
+        ]
         select = discord.ui.Select(
             placeholder="Vyber místnost…",
             options=options[:25],
@@ -1218,6 +1225,14 @@ class PersonalActionView(discord.ui.View):
                 or sel_interaction.client.get_channel(self.channel_id)
             )
             if ch:
+                old_thread_id = self.game["map"][old_room].get("thread_id")
+                if old_thread_id:
+                    old_thread = ch.guild.get_channel_or_thread(old_thread_id)
+                    if old_thread:
+                        try:
+                            await old_thread.remove_user(sel_interaction.user)
+                        except Exception:
+                            pass
                 dest_thread_id = self.game["map"][dest].get("thread_id")
                 if dest_thread_id:
                     dest_thread = ch.guild.get_channel_or_thread(dest_thread_id)
@@ -1226,8 +1241,9 @@ class PersonalActionView(discord.ui.View):
                             await dest_thread.add_user(sel_interaction.user)
                         except Exception:
                             pass
+            dest_name = self.game["map"][dest].get("custom_name") or f"místnost {dest}"
             await sel_interaction.response.send_message(
-                f"🐱 **Arion tě teleportovala do místnosti {dest}!** Přesunul/a ses okamžitě.",
+                f"🐱 **Arion tě teleportovala do {dest_name}!** Přesunul/a ses okamžitě.",
                 ephemeral=True,
             )
 
@@ -1269,6 +1285,19 @@ class MurderView(discord.ui.View):
         )
         await self.cog._handle_murder(self.channel_id, self.murderer_uid, self.victim_uid, ch)
         await interaction.followup.send("Hotovo.", ephemeral=True)
+
+    @discord.ui.button(label="🚫 Přeskočit", style=discord.ButtonStyle.secondary,
+                       custom_id="lab_murder_skip")
+    async def skip_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if str(interaction.user.id) != self.murderer_uid:
+            await interaction.response.send_message("Toto tlačítko není pro tebe.", ephemeral=True)
+            return
+        if self.used:
+            await interaction.response.send_message("Akce již proběhla.", ephemeral=True)
+            return
+        self.used = True
+        self.stop()
+        await interaction.response.send_message("🚫 Přeskočil/a jsi příležitost.", ephemeral=True)
 
     async def on_timeout(self):
         self.used = True

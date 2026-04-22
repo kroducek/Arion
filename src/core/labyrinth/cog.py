@@ -80,7 +80,6 @@ class LabyrinthCog(commands.Cog):
                 "escaped": False,
                 "items": [],
                 "code_numbers": [],
-                "has_key": False,
                 "searched_this_round": False,
                 "scanned_this_round": False,
                 "shot_this_round": False,
@@ -542,8 +541,9 @@ class LabyrinthCog(commands.Cog):
                     continue
                 if manipulator_in_room:
                     alive_uids = alive_players(game)
+                    sample_pool = [u for u in alive_uids if u != game["murderer_uid"]]
                     fake_names = [game["players"][u]["name"]
-                                  for u in random.sample(alive_uids, min(2, len(alive_uids)))]
+                                  for u in random.sample(sample_pool, min(2, len(sample_pool)))]
                     scout_name = game["players"][scout_uid]["name"]
                     try:
                         await scout_member.send(
@@ -730,6 +730,7 @@ class LabyrinthCog(commands.Cog):
         murderer_pdata = game["players"].get(murderer_uid, {})
 
         # Pasti
+        trap_murder_victims: set[str] = set()
         for room_id, trap_info in list(game.get("traps", {}).items()):
             room = game["map"].get(room_id)
             if not room:
@@ -759,11 +760,12 @@ class LabyrinthCog(commands.Cog):
                 trapped_victims = [u for u in players_here
                                    if game["players"][u].get("trapped") and u != murderer_uid]
                 if trapped_victims:
-                    victim_uid = trapped_victims[0]
+                    victim_uid_t = trapped_victims[0]
+                    trap_murder_victims.add(victim_uid_t)
                     murderer_member = channel.guild.get_member(int(murderer_uid))
                     if murderer_member:
-                        view = MurderView(self, game, murderer_uid, victim_uid)
-                        victim_name = game["players"][victim_uid]["name"]
+                        view = MurderView(self, game, murderer_uid, victim_uid_t)
+                        victim_name = game["players"][victim_uid_t]["name"]
                         try:
                             await murderer_member.send(
                                 f"🪤 **{victim_name}** je chycen/a v pasti v místnosti {room_id}!\n"
@@ -784,18 +786,19 @@ class LabyrinthCog(commands.Cog):
             ]
             if len(players_with_murderer) == 2:
                 victim_uid = next(u for u in players_with_murderer if u != murderer_uid)
-                murderer_member = channel.guild.get_member(int(murderer_uid))
-                if murderer_member:
-                    view = MurderView(self, game, murderer_uid, victim_uid)
-                    victim_name = game["players"][victim_uid]["name"]
-                    try:
-                        await murderer_member.send(
-                            f"🔪 Jsi sám/sama s **{victim_name}** v místnosti {m_room}!\n"
-                            f"Máš 60 sekund na rozhodnutí.",
-                            view=view,
-                        )
-                    except discord.Forbidden:
-                        pass
+                if victim_uid not in trap_murder_victims:
+                    murderer_member = channel.guild.get_member(int(murderer_uid))
+                    if murderer_member:
+                        view = MurderView(self, game, murderer_uid, victim_uid)
+                        victim_name = game["players"][victim_uid]["name"]
+                        try:
+                            await murderer_member.send(
+                                f"🔪 Jsi sám/sama s **{victim_name}** v místnosti {m_room}!\n"
+                                f"Máš 60 sekund na rozhodnutí.",
+                                view=view,
+                            )
+                        except discord.Forbidden:
+                            pass
 
         # Action views
         await asyncio.sleep(1)
@@ -852,7 +855,16 @@ class LabyrinthCog(commands.Cog):
         try:
             await asyncio.wait_for(round_event.wait(), timeout=60)
         except asyncio.TimeoutError:
-            pass
+            alive_now = alive_players(game)
+            for occ_rid in set(game["players"][u]["room"] for u in alive_now):
+                occ_tid = game["map"][occ_rid].get("thread_id")
+                if occ_tid:
+                    occ_t = channel.guild.get_channel_or_thread(occ_tid)
+                    if occ_t:
+                        try:
+                            await occ_t.send("⏱️ Čas na akce vypršel — kolo pokračuje…")
+                        except Exception:
+                            pass
 
         if channel_id not in self.active_games:
             return
@@ -1196,6 +1208,7 @@ class LabyrinthCog(commands.Cog):
 
         if killed_names:
             m_room = murderer_pdata["room"]
+            await channel.send(f"💀💀 **Masová vražda!** **{', '.join(killed_names)}** byli zabiti jedním úderem!")
             thread_id = game["map"][m_room]["thread_id"]
             if thread_id:
                 rt = channel.guild.get_channel_or_thread(thread_id)
@@ -1331,6 +1344,7 @@ class LabyrinthCog(commands.Cog):
             game["map"][room_id]["players"].remove(victim_uid)
 
         victim_member = channel.guild.get_member(int(victim_uid))
+        await channel.send(f"💀 **{victim['name']}** byl/a nalezen/a mrtvý/á v místnosti **{room_id}**.")
         rt_id = game["map"][room_id]["thread_id"]
         if rt_id:
             rt = channel.guild.get_channel_or_thread(rt_id)
