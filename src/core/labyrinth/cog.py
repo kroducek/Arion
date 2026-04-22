@@ -212,8 +212,11 @@ class LabyrinthCog(commands.Cog):
             None
         )
 
+        npc_uids_dm = game.get("npc_uids", set())
         for m in players:
             uid = str(m.id)
+            if uid in npc_uids_dm:
+                continue
             pdata = player_data[uid]
             role = pdata["role"]
             role_data = ROLE_INFO.get(role, {})
