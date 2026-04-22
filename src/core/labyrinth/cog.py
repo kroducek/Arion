@@ -405,6 +405,18 @@ class LabyrinthCog(commands.Cog):
                 game["pending_choices"] = max(0, game["pending_choices"] - 1)
 
         self._door_views[channel_id] = {}
+
+        # Smazat historii VŠECH místností před novým kolem
+        for r_data in game["map"].values():
+            tid = r_data.get("thread_id")
+            if tid:
+                t = channel.guild.get_channel_or_thread(tid)
+                if t:
+                    try:
+                        await t.purge(limit=300)
+                    except Exception:
+                        pass
+
         occupied_rooms = set(game["players"][uid]["room"] for uid in alive)
 
         for room_id in occupied_rooms:
@@ -789,6 +801,18 @@ class LabyrinthCog(commands.Cog):
         await asyncio.sleep(1)
         alive = alive_players(game)
         occupied_rooms = set(game["players"][uid]["room"] for uid in alive)
+
+        # Smazat historii místností po pohybu — nový hráči vidí čistý stav
+        for room_id in occupied_rooms:
+            r_data = game["map"][room_id]
+            tid = r_data.get("thread_id")
+            if tid:
+                t = channel.guild.get_channel_or_thread(tid)
+                if t:
+                    try:
+                        await t.purge(limit=300)
+                    except Exception:
+                        pass
 
         round_event = asyncio.Event()
         game["round_done_event"] = round_event
