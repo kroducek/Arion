@@ -13,10 +13,9 @@ FFMPEG_OPTS = {
 
 YDL_FLAT = {
     'format': 'bestaudio/best',
-    'quiet': True,
-    'no_warnings': True,
+    'quiet': False,
+    'no_warnings': False,
     'extract_flat': 'in_playlist',
-    'ignoreerrors': True,
 }
 
 YDL_STREAM = {
@@ -55,7 +54,7 @@ class RadioCog(commands.Cog):
         loop = asyncio.get_event_loop()
         data = await loop.run_in_executor(None, _sync_extract_flat, url)
         if not data:
-            return []
+            raise ValueError("yt-dlp nepřinesl žádná data — zkus jiný odkaz nebo zkontroluj URL.")
 
         if 'entries' in data:
             tracks = []
