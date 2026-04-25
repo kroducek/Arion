@@ -24,6 +24,7 @@ YDL_FLAT = {
 
 YDL_STREAM = {
     'format': 'bestaudio/best',
+    'check_formats': False,
     'quiet': True,
     'no_warnings': True,
 }
