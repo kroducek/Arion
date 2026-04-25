@@ -62,3 +62,6 @@ STORY_SAVE  = data("story_save.json")
 ASSETS_DIR  = os.path.join(ROOT, "src", "assets")
 TAROT_DIR   = os.path.join(ASSETS_DIR, "tarot")
 DICE_DIR    = os.path.join(ASSETS_DIR, "dice")
+
+# ── Bot state ────────────────────────────────────────────────
+TUTORIAL_MSG = data("tutorial_msg.json")

@@ -12,7 +12,9 @@ from src.core.roll_stats import record_roll
 # ── Konfigurace ───────────────────────────────────────────────────────────────
 
 ROLE_DOBRODRUH_F3_ID = 1476056192643104768
-from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE
+from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, TUTORIAL_MSG as TUTORIAL_MSG_FILE
+
+TUTORIAL_CHANNEL_ID = 1476045697496252607
 COIN                 = "<:goldcoin:1490171741237018795>"
 
 # Obrázky
@@ -1583,20 +1585,50 @@ class Onboarding(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_tutorial(self, interaction: discord.Interaction):
         embed = discord.Embed(
-            title="⚠️  Úvodní tutorial",
+            title="✨  Vítej v Aurionisu",
             description=(
-                "**Pozor** — pokud budeš pokračovat, spustíš úvodní tutorial "
-                "a tvorbu postavy.\n\n"
-                "⏱️ *Délka: přibližně 15 minut*\n\n"
-                "Pokud už máš postavu z jiného Aurionis projektu, "
-                "klikni na **Už mám postavu**."
+                "***Svět se mění. Mocní se pohybují ve stínech.\n"
+                "Turnaj Hvězdy byl vyhlášen — a jeho vítěz si může přát cokoliv.***\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Stojíš na prahu příběhu, který je jen tvůj.\n"
+                "Každé rozhodnutí zanechá stopu. Každá volba má cenu.\n\n"
+                "**Jsi připraven/a vstoupit?**\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "-# ⏱️ Délka tutoriálu: přibližně 15 minut\n"
+                "-# 📜 Pokud máš postavu z jiného Aurionis projektu, klikni na **Už mám postavu**"
             ),
-            color=0xe67e22,
+            color=0xFFD700,
         )
-        embed.set_footer(text="⭐ Aurionis  ·  Vyber možnost níže.")
+        embed.set_image(url=URL_PLAKAT_HVEZDA)
+        embed.set_footer(text="⭐ Aurionis  ·  Act II  ·  Tvůj příběh začíná zde.")
 
         await interaction.response.send_message("✅ Brána do Actu II byla vztyčena.", ephemeral=True)
-        await interaction.channel.send(embed=embed, view=TutorialWarningView())
+
+        tutorial_channel = interaction.guild.get_channel(TUTORIAL_CHANNEL_ID)
+        if tutorial_channel is None:
+            tutorial_channel = await interaction.guild.fetch_channel(TUTORIAL_CHANNEL_ID)
+
+        # Pokud existuje stará zpráva, edituj ji — jinak pošli novou
+        msg_id = None
+        try:
+            stored = load_json(TUTORIAL_MSG_FILE, default={})
+            msg_id = stored.get("message_id")
+        except Exception:
+            pass
+
+        if msg_id:
+            try:
+                old_msg = await tutorial_channel.fetch_message(msg_id)
+                await old_msg.edit(embed=embed, view=TutorialWarningView())
+                return
+            except Exception:
+                pass
+
+        new_msg = await tutorial_channel.send(embed=embed, view=TutorialWarningView())
+        try:
+            save_json(TUTORIAL_MSG_FILE, {"message_id": new_msg.id})
+        except Exception:
+            pass
 
 
 async def setup(bot):
