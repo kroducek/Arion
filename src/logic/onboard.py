@@ -109,7 +109,7 @@ class TutorialPartOneView(discord.ui.View):
             name="❓ Než vstoupíš dál...",
             value="Byl jsi s námi od začátku, nebo přicházíš jako nová tvář?",
         )
-        await interaction.response.send_message(embed=embed, view=ActSelectionView(), ephemeral=True)
+        await interaction.response.edit_message(embed=embed, view=ActSelectionView())
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1534,7 +1534,7 @@ class FirstStepView(discord.ui.View):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TutorialWarningView(discord.ui.View):
-    """Úvodní varování se třemi možnostmi před spuštěním tutoriálu."""
+    """Statický embed v tutoriálovém kanálu — flow pokračuje jako ephemeral."""
 
     def __init__(self):
         super().__init__(timeout=None)
@@ -1551,7 +1551,7 @@ class TutorialWarningView(discord.ui.View):
             color=0xFFD700,
         )
         embed.set_image(url=URL_PLAKAT_HVEZDA)
-        await interaction.response.edit_message(embed=embed, view=TutorialPartOneView())
+        await interaction.response.send_message(embed=embed, view=TutorialPartOneView(), ephemeral=True)
 
     @discord.ui.button(label="Už mám postavu", style=discord.ButtonStyle.secondary, emoji="📜", row=0, custom_id="onboard:has_char")
     async def has_character(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1565,12 +1565,7 @@ class TutorialWarningView(discord.ui.View):
             color=0x95a5a6,
         )
         embed.set_footer(text="⭐ Aurionis  ·  Kontaktuj administrátora.")
-        await interaction.response.edit_message(embed=embed, view=None)
-
-    @discord.ui.button(label="Zavřít tutorial", style=discord.ButtonStyle.danger, emoji="✖️", row=0, custom_id="onboard:close")
-    async def close_tutorial(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        await interaction.message.delete()
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
