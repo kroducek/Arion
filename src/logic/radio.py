@@ -29,8 +29,23 @@ YDL_STREAM = {
 }
 
 
+def _ensure_cookies_from_env():
+    """Zapíše cookies z YOUTUBE_COOKIES_B64 env var do souboru při startu."""
+    import base64
+    b64 = os.getenv("YOUTUBE_COOKIES_B64", "")
+    if not b64:
+        return
+    try:
+        content = base64.b64decode(b64)
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(COOKIES_PATH, "wb") as f:
+            f.write(content)
+        print(f"[Radio] Cookies nastaveny z env var → {COOKIES_PATH}")
+    except Exception as e:
+        print(f"[Radio] Nepodařilo se nastavit cookies z env: {e}")
+
+
 def _cookies_opt() -> dict:
-    # Preferuj env var, fallback na data dir
     path = os.getenv("YOUTUBE_COOKIES_FILE", "") or COOKIES_PATH
     if path and os.path.isfile(path):
         return {'cookiefile': path}
@@ -213,4 +228,5 @@ class RadioCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
+    _ensure_cookies_from_env()
     await bot.add_cog(RadioCog(bot))
