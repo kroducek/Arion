@@ -23,7 +23,7 @@ YDL_FLAT = {
 }
 
 YDL_STREAM = {
-    'format': 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best',
+    'format': 'bestaudio/best',
     'quiet': True,
     'no_warnings': True,
 }
