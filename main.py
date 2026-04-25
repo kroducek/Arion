@@ -59,6 +59,7 @@ if _data_dir_override:
     _paths.CARDS_INVENTORY  = _paths.data("cards_inventory.json")
     _paths.CARDS_FRAMES     = _paths.data("cards_frames.json")
     _paths.FRAMES_INVENTORY = _paths.data("frames_inventory.json")
+    _paths.TUTORIAL_MSG     = _paths.data("tutorial_msg.json")
 
 os.makedirs(_paths.DATA_DIR, exist_ok=True)
 
@@ -109,6 +110,9 @@ class ArionBot(commands.Bot):
                     except Exception:
                         logging.exception(f'[main] {filename}/ selhal')
                         print(f'   ❌ {filename}/ selhal — viz log výše.')
+
+        from src.logic.onboard import TutorialWarningView
+        self.add_view(TutorialWarningView())
 
         print("🔄 Synchronizuji slash commandy...")
         synced = await self.tree.sync()

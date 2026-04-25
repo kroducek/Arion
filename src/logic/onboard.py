@@ -1539,7 +1539,7 @@ class TutorialWarningView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Spustit tutoriál", style=discord.ButtonStyle.success, emoji="✨", row=0)
+    @discord.ui.button(label="Spustit tutoriál", style=discord.ButtonStyle.success, emoji="✨", row=0, custom_id="onboard:start")
     async def start_tutorial(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
             title="✨ Volání Hvězdy",
@@ -1553,7 +1553,7 @@ class TutorialWarningView(discord.ui.View):
         embed.set_image(url=URL_PLAKAT_HVEZDA)
         await interaction.response.edit_message(embed=embed, view=TutorialPartOneView())
 
-    @discord.ui.button(label="Už mám postavu", style=discord.ButtonStyle.secondary, emoji="📜", row=0)
+    @discord.ui.button(label="Už mám postavu", style=discord.ButtonStyle.secondary, emoji="📜", row=0, custom_id="onboard:has_char")
     async def has_character(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = discord.Embed(
             title="📜  Existující postava",
@@ -1567,7 +1567,7 @@ class TutorialWarningView(discord.ui.View):
         embed.set_footer(text="⭐ Aurionis  ·  Kontaktuj administrátora.")
         await interaction.response.edit_message(embed=embed, view=None)
 
-    @discord.ui.button(label="Zavřít tutorial", style=discord.ButtonStyle.danger, emoji="✖️", row=0)
+    @discord.ui.button(label="Zavřít tutorial", style=discord.ButtonStyle.danger, emoji="✖️", row=0, custom_id="onboard:close")
     async def close_tutorial(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         await interaction.message.delete()
