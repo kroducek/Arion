@@ -1,6 +1,7 @@
 """Radio cog — YouTube přehrávač pro voice kanály."""
 
 import asyncio
+import os
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -25,13 +26,20 @@ YDL_STREAM = {
 }
 
 
+def _cookies_opt() -> dict:
+    path = os.getenv("YOUTUBE_COOKIES_FILE", "")
+    if path and os.path.isfile(path):
+        return {'cookiefile': path}
+    return {}
+
+
 def _sync_extract_flat(url: str) -> dict:
-    with yt_dlp.YoutubeDL(YDL_FLAT) as ydl:
+    with yt_dlp.YoutubeDL({**YDL_FLAT, **_cookies_opt()}) as ydl:
         return ydl.extract_info(url, download=False)
 
 
 def _sync_get_stream(url: str) -> str:
-    with yt_dlp.YoutubeDL(YDL_STREAM) as ydl:
+    with yt_dlp.YoutubeDL({**YDL_STREAM, **_cookies_opt()}) as ydl:
         info = ydl.extract_info(url, download=False)
         return info['url']
 
