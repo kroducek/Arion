@@ -2,10 +2,15 @@
 
 import asyncio
 import os
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
 import yt_dlp
+
+from src.utils.paths import DATA_DIR
+
+COOKIES_PATH = os.path.join(DATA_DIR, "youtube_cookies.txt")
 
 FFMPEG_OPTS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
@@ -27,7 +32,8 @@ YDL_STREAM = {
 
 
 def _cookies_opt() -> dict:
-    path = os.getenv("YOUTUBE_COOKIES_FILE", "")
+    # Preferuj env var, fallback na data dir
+    path = os.getenv("YOUTUBE_COOKIES_FILE", "") or COOKIES_PATH
     if path and os.path.isfile(path):
         return {'cookiefile': path}
     return {}
@@ -178,6 +184,25 @@ class RadioCog(commands.Cog):
         vc.stop()
         await vc.disconnect()
         await interaction.response.send_message("⏹️ Zastaveno, fronta vymazána.")
+
+    @radio.command(name="cookies", description="[Admin] Nahraje YouTube cookies soubor pro obejití bot detekce")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def set_cookies(self, interaction: discord.Interaction, soubor: discord.Attachment):
+        if not soubor.filename.endswith(".txt"):
+            return await interaction.response.send_message(
+                "❌ Soubor musí být `.txt` (Netscape cookies formát).", ephemeral=True
+            )
+        await interaction.response.defer(ephemeral=True)
+        try:
+            content = await soubor.read()
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(COOKIES_PATH, "wb") as f:
+                f.write(content)
+            await interaction.followup.send(
+                f"✅ Cookies uloženy (`{COOKIES_PATH}`). Zkus `/radio play` znovu.", ephemeral=True
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ Nepodařilo se uložit: {e}", ephemeral=True)
 
     @radio.command(name="queue", description="Zobrazí aktuální frontu")
     async def queue_cmd(self, interaction: discord.Interaction):
