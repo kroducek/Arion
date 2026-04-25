@@ -1576,7 +1576,7 @@ class Onboarding(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="setup_tutorial", description="Spusť úvodní tutorial Aurionisu")
+    @app_commands.command(name="setup-tutorial", description="Spusť úvodní tutorial Aurionisu")
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_tutorial(self, interaction: discord.Interaction):
         embed = discord.Embed(
