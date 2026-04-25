@@ -843,6 +843,9 @@ class InvPageView(discord.ui.View):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class Inventory(commands.Cog):
+    inv_db    = app_commands.Group(name="inv-db",    description="[DM] Správa databáze itemů")
+    inv_admin = app_commands.Group(name="inv-admin", description="[DM] Admin operace s inventářem")
+
     def __init__(self, bot):
         self.bot = bot
 
@@ -1250,7 +1253,7 @@ class Inventory(commands.Cog):
     # DATABASE COMMANDY (DM only)
     # ══════════════════════════════════════════════════════════════════════════
 
-    @app_commands.command(name="inv-db-add", description="[DM] Přidá item do databáze.")
+    @inv_db.command(name="add", description="[DM] Přidá item do databáze.")
     @app_commands.describe(
         item_id="Konzolové ID (snake_case, např. mec_ocisty).",
         name="Zobrazované jméno.",
@@ -1312,7 +1315,7 @@ class Inventory(commands.Cog):
         items_db = _load_items()
         if item_id in items_db:
             await interaction.followup.send(
-                f"❌ Item `{item_id}` již existuje. Použij `/inv-db-edit`.")
+                f"❌ Item `{item_id}` již existuje. Použij `/inv-db edit`.")
             return
         # "weapon" je display alias pro "hand_l" — normalizuj před uložením
         resolved_slot = None if slot == "none" else ("hand_l" if slot == "weapon" else slot)
@@ -1348,8 +1351,7 @@ class Inventory(commands.Cog):
         await interaction.followup.send(
             f"✅ Item **{name}** (`{item_id}`) přidán do databáze.")
 
-    @app_commands.command(name="inv-db-edit",
-                          description="[DM] Upraví existující item v databázi.")
+    @inv_db.command(name="edit", description="[DM] Upraví existující item v databázi.")
     @app_commands.describe(
         item_id="ID itemu k úpravě.",
         name="Nové jméno (prázdné = beze změny).",
@@ -1443,7 +1445,7 @@ class Inventory(commands.Cog):
         await interaction.followup.send(
             f"✅ Item **{item['name']}** (`{item_id}`) upraven.")
 
-    @app_commands.command(name="inv-db-remove", description="[DM] Odebere item z databáze.")
+    @inv_db.command(name="remove", description="[DM] Odebere item z databáze.")
     @app_commands.describe(item_id="ID itemu k odebrání.")
     @app_commands.autocomplete(item_id=_ac_database_item)
     async def inv_db_remove(self, interaction: discord.Interaction, item_id: str):
@@ -1459,7 +1461,7 @@ class Inventory(commands.Cog):
         _save_items(items_db)
         await interaction.followup.send(f"🗑️ Item **{item['name']}** (`{item_id}`) odebrán z databáze.")
 
-    @app_commands.command(name="inv-db-find", description="Prohledá databázi itemů.")
+    @inv_db.command(name="find", description="Prohledá databázi itemů.")
     @app_commands.describe(query="Název nebo ID itemu.")
     @app_commands.autocomplete(query=_ac_database_item)
     async def inv_db_find(self, interaction: discord.Interaction, query: str):
@@ -1472,8 +1474,7 @@ class Inventory(commands.Cog):
             return
         await interaction.followup.send(embed=embed)
 
-    @app_commands.command(name="inv-db-list",
-                          description="Vypíše všechny itemy v databázi.")
+    @inv_db.command(name="list", description="Vypíše všechny itemy v databázi.")
     @app_commands.describe(category="Filtr dle kategorie (volitelné).")
     @app_commands.choices(category=[
         app_commands.Choice(name=c, value=c) for c in CATEGORIES
@@ -1511,7 +1512,7 @@ class Inventory(commands.Cog):
     # ADMIN COMMANDY (DM only)
     # ══════════════════════════════════════════════════════════════════════════
 
-    @app_commands.command(name="inv-admin-add", description="[DM] Přidá item hráči.")
+    @inv_admin.command(name="add", description="[DM] Přidá item hráči.")
     @app_commands.describe(
         member="Hráč.",
         item="ID registrovaného itemu nebo volný text (půjde do Ostatní).",
@@ -1547,8 +1548,7 @@ class Inventory(commands.Cog):
         await interaction.followup.send(
             f"✅ Přidáno **{name}**{qty_str} → **{member.display_name}**.")
 
-    @app_commands.command(name="inv-admin-remove",
-                          description="[DM] Odebere registrovaný item hráči.")
+    @inv_admin.command(name="remove", description="[DM] Odebere registrovaný item hráči.")
     @app_commands.describe(member="Hráč.", item="Název nebo ID.", qty="Množství.")
     async def inv_admin_remove(self, interaction: discord.Interaction,
                                member: discord.Member, item: str, qty: int = 1):
@@ -1572,8 +1572,7 @@ class Inventory(commands.Cog):
         await interaction.followup.send(
             f"✅ Odebráno **{item}** ×{qty} od **{member.display_name}**.")
 
-    @app_commands.command(name="inv-admin-slots",
-                          description="[DM] Nastaví počet ring/amulet slotů hráči.")
+    @inv_admin.command(name="slots", description="[DM] Nastaví počet ring/amulet slotů hráči.")
     @app_commands.describe(
         member="Hráč.",
         slot_type="ring nebo amulet.",
