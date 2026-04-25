@@ -38,6 +38,8 @@ def _sync_get_stream(url: str) -> str:
 
 
 class RadioCog(commands.Cog):
+    radio = app_commands.Group(name="radio", description="🎵 YouTube radio přehrávač")
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._queues: dict[int, list[dict]] = {}
@@ -110,7 +112,7 @@ class RadioCog(commands.Cog):
 
         vc.play(source, after=after)
 
-    @app_commands.command(name="play", description="Přehraje YouTube URL nebo playlist do voice kanálu")
+    @radio.command(name="play", description="Přehraje YouTube URL nebo playlist do voice kanálu")
     @app_commands.describe(url="YouTube odkaz nebo playlist URL")
     async def play(self, interaction: discord.Interaction, url: str):
         if not interaction.user.voice:
@@ -149,7 +151,7 @@ class RadioCog(commands.Cog):
         if not vc.is_playing() and not vc.is_paused():
             await self._play_next(guild_id)
 
-    @app_commands.command(name="skip", description="Přeskočí aktuální track")
+    @radio.command(name="skip", description="Přeskočí aktuální track")
     async def skip(self, interaction: discord.Interaction):
         vc = self._vc(interaction.guild.id)
         if not vc or not vc.is_playing():
@@ -157,7 +159,7 @@ class RadioCog(commands.Cog):
         vc.stop()
         await interaction.response.send_message("⏭️ Přeskočeno.")
 
-    @app_commands.command(name="stop", description="Zastaví přehrávání a odpojí bota")
+    @radio.command(name="stop", description="Zastaví přehrávání a odpojí bota")
     async def stop(self, interaction: discord.Interaction):
         guild_id = interaction.guild.id
         vc = self._vc(guild_id)
@@ -170,7 +172,7 @@ class RadioCog(commands.Cog):
         await vc.disconnect()
         await interaction.response.send_message("⏹️ Zastaveno, fronta vymazána.")
 
-    @app_commands.command(name="queue", description="Zobrazí aktuální frontu")
+    @radio.command(name="queue", description="Zobrazí aktuální frontu")
     async def queue_cmd(self, interaction: discord.Interaction):
         guild_id = interaction.guild.id
         queue = self._queue(guild_id)
