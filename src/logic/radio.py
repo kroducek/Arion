@@ -17,7 +17,6 @@ FFMPEG_OPTS = {
 }
 
 YDL_FLAT = {
-    'format': 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio/best',
     'quiet': True,
     'no_warnings': True,
     'extract_flat': 'in_playlist',
