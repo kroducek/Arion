@@ -88,6 +88,9 @@ class ArionBot(commands.Bot):
     async def setup_hook(self):
         print("--- 🐾 Načítám Cogs ---")
 
+        # dnd/ a bot/ jsou podadresáře pro ArionDND/ArionBOT — main.py je nenačítá
+        SKIP_DIRS = {'dnd', 'bot'}
+
         for folder, pkg in [('src/core', 'src.core'), ('src/logic', 'src.logic')]:
             if not os.path.isdir(folder):
                 continue
@@ -101,6 +104,7 @@ class ArionBot(commands.Bot):
                         print(f'   ❌ {filename} selhal — viz log výše.')
                 elif (
                     not filename.startswith('_')
+                    and filename not in SKIP_DIRS
                     and os.path.isdir(os.path.join(folder, filename))
                     and os.path.exists(os.path.join(folder, filename, '__init__.py'))
                 ):
