@@ -147,6 +147,9 @@ class RPManage(commands.Cog):
             await interaction.followup.send("❌ Kanál místnosti nebyl nalezen — pravděpodobně smazán.", ephemeral=True)
             return
 
+        # Pokud byl uživatel divák, upgraduj ho na plného člena
+        was_spectator = uid in room.get("spectators", [])
+
         try:
             await channel.set_permissions(
                 interaction.user,
@@ -158,16 +161,19 @@ class RPManage(commands.Cog):
             return
 
         room["members"].append(uid)
+        if was_spectator:
+            room["spectators"].remove(uid)
         _save(data)
 
-        await interaction.followup.send(
-            f"✅ Vstoupil/a jsi do místnosti {channel.mention}.", ephemeral=True
-        )
+        msg = f"✅ Vstoupil/a jsi do místnosti {channel.mention}."
+        if was_spectator:
+            msg += " (upgraded z diváka na člena)"
+        await interaction.followup.send(msg, ephemeral=True)
 
     # ── /rp kick ──────────────────────────────────────────────────────────────
 
-    @rp.command(name="kick", description="[Tvůrce/DM] Vyhodí hráče z RP místnosti.")
-    @app_commands.describe(member="Hráč k vyhození")
+    @rp.command(name="kick", description="[Tvůrce/DM] Vyhodí hráče nebo diváka z RP místnosti.")
+    @app_commands.describe(member="Hráč nebo divák k vyhození")
     async def rp_kick(self, interaction: discord.Interaction, member: discord.Member):
         await interaction.response.defer(ephemeral=True)
 
@@ -186,7 +192,10 @@ class RPManage(commands.Cog):
             await interaction.followup.send("❌ Nelze vyhostit tvůrce místnosti.", ephemeral=True)
             return
 
-        if member.id not in room["members"]:
+        is_member    = member.id in room["members"]
+        is_spectator = member.id in room.get("spectators", [])
+
+        if not is_member and not is_spectator:
             await interaction.followup.send(f"❌ **{member.display_name}** není v této místnosti.", ephemeral=True)
             return
 
@@ -196,11 +205,103 @@ class RPManage(commands.Cog):
             await interaction.followup.send("❌ Bot nemá oprávnění upravit kanál.", ephemeral=True)
             return
 
-        room["members"].remove(member.id)
+        if is_member:
+            room["members"].remove(member.id)
+        if is_spectator:
+            room["spectators"].remove(member.id)
         _save(data)
 
         await interaction.followup.send(
             f"✅ **{member.display_name}** byl/a odstraněn/a z místnosti.", ephemeral=True
+        )
+
+    # ── /rp spectate ──────────────────────────────────────────────────────────
+
+    @rp.command(name="spectate", description="Pozve hráče jako diváka — může sledovat a reagovat, ale ne psát.")
+    @app_commands.describe(member="Hráč, který bude sledovat jako divák")
+    async def rp_spectate(self, interaction: discord.Interaction, member: discord.Member):
+        await interaction.response.defer(ephemeral=True)
+
+        data        = _load()
+        heslo, room = _room_by_channel(data, interaction.channel_id)
+
+        if not room:
+            await interaction.followup.send("❌ Tento kanál není RP místností.", ephemeral=True)
+            return
+
+        if interaction.user.id not in room["members"]:
+            await interaction.followup.send("❌ Jen členové místnosti mohou zvát diváky.", ephemeral=True)
+            return
+
+        uid = member.id
+
+        if uid in room["members"]:
+            await interaction.followup.send(
+                f"❌ **{member.display_name}** je již plnohodnotným členem místnosti.", ephemeral=True
+            )
+            return
+
+        spectators = room.setdefault("spectators", [])
+
+        if uid in spectators:
+            await interaction.followup.send(f"❌ **{member.display_name}** je již divák.", ephemeral=True)
+            return
+
+        try:
+            await interaction.channel.set_permissions(
+                member,
+                view_channel=True,
+                send_messages=False,
+                add_reactions=True,
+            )
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Bot nemá oprávnění upravit kanál.", ephemeral=True)
+            return
+
+        spectators.append(uid)
+        _save(data)
+
+        await interaction.followup.send(
+            f"👁️ **{member.display_name}** byl/a přidán/a jako divák — může sledovat a reagovat, ale ne psát.",
+            ephemeral=True,
+        )
+        await interaction.channel.send(
+            f"👁️ {member.mention} byl/a přizván/a jako divák kampaně."
+        )
+
+    # ── /rp unspectate ────────────────────────────────────────────────────────
+
+    @rp.command(name="unspectate", description="[Tvůrce/DM] Odebere diváka z místnosti.")
+    @app_commands.describe(member="Divák k odebrání")
+    async def rp_unspectate(self, interaction: discord.Interaction, member: discord.Member):
+        await interaction.response.defer(ephemeral=True)
+
+        data        = _load()
+        heslo, room = _room_by_channel(data, interaction.channel_id)
+
+        if not room:
+            await interaction.followup.send("❌ Tento kanál není RP místností.", ephemeral=True)
+            return
+
+        if not _is_creator_or_dm(interaction, room):
+            await interaction.followup.send("❌ Jen tvůrce místnosti nebo DM může odebírat diváky.", ephemeral=True)
+            return
+
+        if member.id not in room.get("spectators", []):
+            await interaction.followup.send(f"❌ **{member.display_name}** není divák.", ephemeral=True)
+            return
+
+        try:
+            await interaction.channel.set_permissions(member, overwrite=None)
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Bot nemá oprávnění upravit kanál.", ephemeral=True)
+            return
+
+        room["spectators"].remove(member.id)
+        _save(data)
+
+        await interaction.followup.send(
+            f"✅ **{member.display_name}** byl/a odebrán/a z diváků.", ephemeral=True
         )
 
     # ── /rp mute ──────────────────────────────────────────────────────────────
@@ -267,11 +368,17 @@ class RPManage(commands.Cog):
             for uid in room.get("members", []):
                 m = guild.get_member(uid)
                 tag = " 👑" if uid == room["creator_id"] else ""
-                names.append((m.display_name if m else f"<#{uid}>") + tag)
+                names.append((m.display_name if m else f"<@{uid}>") + tag)
 
+            spectator_names = []
+            for uid in room.get("spectators", []):
+                m = guild.get_member(uid)
+                spectator_names.append(f"👁️ {m.display_name if m else f'<@{uid}>'}")
+
+            all_names = names + spectator_names
             embed.add_field(
                 name=f"{ch_str}{mute_tag}  ·  `{heslo}`",
-                value=f"{'  '.join(names) if names else '—'}",
+                value=f"{'  '.join(all_names) if all_names else '—'}",
                 inline=False,
             )
 
