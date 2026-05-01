@@ -66,7 +66,6 @@ BOT_COGS = [
     "src.core.bot.story",
     # Sdílená logika
     "src.logic.economy",
-    "src.logic.radio",
 ]
 
 class ArionBOT(commands.Bot):
