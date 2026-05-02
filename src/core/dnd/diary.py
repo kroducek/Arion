@@ -9,7 +9,7 @@ from datetime import datetime
 # Tlačítko QUESTY se importuje za běhu, aby se předešlo cyklickým importům.
 def _get_quest_view(user_id: int):
     try:
-        from src.core.quests import DiaryQuestView
+        from src.core.dnd.quests import DiaryQuestView
         return DiaryQuestView(user_id)
     except Exception:
         return None

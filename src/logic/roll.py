@@ -6,7 +6,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.core.roll_stats import record_roll
+from src.core.dnd.roll_stats import record_roll
 from src.utils.paths import PROFILES as DATA_FILE
 from src.logic.stats import STAT_LABELS  # single source of truth
 

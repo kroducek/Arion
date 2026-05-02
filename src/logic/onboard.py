@@ -7,7 +7,7 @@ import os
 import json
 from src.logic.stats import init_stats, STAT_LABELS
 from src.utils.json_utils import load_json, save_json
-from src.core.roll_stats import record_roll
+from src.core.dnd.roll_stats import record_roll
 
 # ── Konfigurace ───────────────────────────────────────────────────────────────
 
