@@ -150,6 +150,93 @@ class MinigamesHubCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+
+    @app_commands.command(name="kronika", description="ArionBOT kronika — minihry, karty a utility")
+    async def kronika_cmd(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="🎮 ArionBOT — Kronika",
+            description="*Arion otevře barevnou knihu miniher a začne listovat...*",
+            color=0x5865F2
+        )
+        embed.add_field(
+            name="🎮 MINIHRY",
+            value=(
+                "`/minigames` — Rozcestník všech miniher\n"
+                "`/kostky` — Farkle (sázky, magické kostky, boss mode)\n"
+                "`/guess` — Hádej kdo (ano/ne otázky)\n"
+                "`/liardice` — Kostka lháře (bluffování)\n"
+                "`/liarslots` — Liar Slots (sloty + bluff)\n"
+                "`/sibenice` — Šibenice (hádej větu)\n"
+                "`/labyrinth` — Door Labyrinth (sociální dedukce, 4–10 hráčů)"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="🃏 KARTY",
+            value=(
+                "`/karty` — Zobraz svou kolekci karet\n"
+                "`/karty otevrit` — Otevři balíček\n"
+                "`/karty darovat` — Daruj kartu hráči\n"
+                "`/frame` — Správa rámečků karet"
+            ),
+            inline=True
+        )
+        embed.add_field(
+            name="🔮 TAROT",
+            value=(
+                "`/tarot den` — Karta dne (zdarma)\n"
+                "`/tarot solo` — Soukromý výklad (50 🪙)\n"
+                "`/tarot session` — Veřejná session"
+            ),
+            inline=True
+        )
+        embed.add_field(
+            name="💰 GOLD & SHOP",
+            value=(
+                "`/g` — Tvůj aktuální zůstatek\n"
+                "`/gsend` — Pošli zlato hráči\n"
+                "`/gleaderboard` — Žebříček bohatství\n"
+                "`/gshop open` — Otevři shop"
+            ),
+            inline=True
+        )
+        embed.add_field(
+            name="📰 NEWS & STORY",
+            value=(
+                "`/news show` — Nástěnka zpráv\n"
+                "`/story create` — Začni komunitní příběh\n"
+                "`/story add` — Přidej větu do příběhu\n"
+                "`/story show` — Zobraz aktuální příběh"
+            ),
+            inline=True
+        )
+        embed.add_field(
+            name="🛠️ UTILITY",
+            value=(
+                "`/poll` — Vytvoř hlasování\n"
+                "`/countdown` — Odpočet\n"
+                "`/voice lock/unlock` — Zamkni/odemkni hlasový kanál\n"
+                "`/voice hide/show` — Skryj/zobraz hlasový kanál"
+            ),
+            inline=True
+        )
+        embed.add_field(
+            name="⚙️ ADMIN",
+            value=(
+                "`/news add/delete` — Správa nástěnky\n"
+                "`/gshop create/edit/close` — Správa shopu\n"
+                "`/gadd` `/gremove` — Zlato hráčům"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="⚔️ D&D příkazy",
+            value="Viz `/kronika` v **ArionDND**",
+            inline=False
+        )
+        embed.set_footer(text="ArionBOT · /kronika pro ArionDND D&D příkazy")
+        await interaction.response.send_message(embed=embed)
+
     @app_commands.command(name="minigames", description="Zobraz všechny minihry a otevři lobby jedním klikem")
     async def minigames_cmd(self, interaction: discord.Interaction):
         await interaction.response.send_message(embed=_hub_embed(), view=MinigamesHubView())

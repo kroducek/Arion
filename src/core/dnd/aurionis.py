@@ -117,11 +117,11 @@ class Aurionis(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Chyba při mazání: {str(e)}", ephemeral=True)
 
-    @app_commands.command(name="kronika", description="Arion kronika (Nápověda)")
+    @app_commands.command(name="kronika", description="ArionDND kronika — D&D příkazy")
     async def help(self, interaction: discord.Interaction):
         embed = discord.Embed(
-            title="📚 Arion osobní kronika",
-            description="*Arion otevře tlustou živoucí knihu a začne listovat...*\nVšechno co umím, najdeš tady:",
+            title="⚔️ ArionDND — Kronika",
+            description="*Arion otevře tlustou živoucí knihu a začne listovat...*",
             color=0xFFA500
         )
         embed.add_field(
@@ -197,39 +197,22 @@ class Aurionis(commands.Cog):
             inline=True
         )
         embed.add_field(
-            name="🃏 TAROT",
-            value=(
-                "`/tarot den` — Karta dne (zdarma)\n"
-                "`/tarot solo` — Soukromý výklad (50 🪙)\n"
-                "`/tarot session` — Veřejná session"
-            ),
-            inline=True
-        )
-        embed.add_field(
             name="🎭 RP MÍSTNOSTI",
             value=(
                 "`/rp create` — Vytvoř soukromou RP místnost\n"
                 "`/rp join` — Vstup pomocí hesla\n"
-                "`/rp kick` — Vyhoď hráče\n"
+                "`/rp spectate` — Pozvi diváka (vidí + reaguje, nepíše)\n"
+                "`/rp unspectate` — Odeber diváka\n"
+                "`/rp kick` — Vyhoď hráče nebo diváka\n"
                 "`/rp mute` — Ztichni místnost"
             ),
-            inline=True
+            inline=False
         )
         embed.add_field(
             name="🏆 TURNAJ & VYVOLENÍ",
             value=(
                 "`/tournament list` — Postupující do 2. kola\n"
                 "`/vyvoleni list` — Všichni zapsaní dobrodruzi"
-            ),
-            inline=True
-        )
-        embed.add_field(
-            name="🎮 MINIHRY",
-            value=(
-                "`/kostky` — Dice minihra\n"
-                "`/story create` — Psaná minihra\n"
-                "`/poll` — Hlasování\n"
-                "`/countdown` — Odpočet"
             ),
             inline=True
         )
@@ -256,14 +239,11 @@ class Aurionis(commands.Cog):
             inline=False
         )
         embed.add_field(
-            name="🔗 Kód & Spolupráce",
-            value=(
-                "ArionBot je open source!\n"
-                "[github.com/kroducek/Arion](https://github.com/kroducek/Arion)"
-            ),
+            name="🎮 Minihry & karty",
+            value="Viz `/kronika` v **ArionBOT**",
             inline=False
         )
-        embed.set_footer(text="Arion tě provází světem Aurionis | Act II")
+        embed.set_footer(text="ArionDND · Aurionis Act II · /kronika pro ArionBOT minihry")
         await interaction.response.send_message(embed=embed)
 
     # --- VYVOLENÍ (Seznam postav) ---
