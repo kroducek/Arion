@@ -74,88 +74,87 @@ def _radar_chart(stats: dict, roll_val: int, check_stats: list, dice_max: int = 
     angles = np.linspace(0, 2 * np.pi, n, endpoint=False).tolist()
     ac     = angles + [angles[0]]
 
-    eff      = {s: float(stats.get(s, 0)) for s in STAT_LABELS}
-    # Průměrná hodnota všech checkovaných statů
-    avg_stat = sum(eff.get(cs, 0) for cs in check_stats) / len(check_stats)
-    stat_ref = float(max(1, math.ceil(avg_stat * dice_max / MAX_STAT)))
-    all_vals = list(eff.values()) + [float(roll_val), stat_ref]
-    scale    = max(max(all_vals), 1.0) * 1.1
+    eff = {s: float(stats.get(s, 0)) for s in STAT_LABELS}
+
+    # Pevný scale = MAX_STAT (20) — hexagon i hod jsou vždy na stejné škále
+    # Stat 15/20 = 75 % osy, hod 12/20 = 60 % osy — vizuálně srovnatelné
+    scale = float(MAX_STAT)
 
     def n_(v: float) -> float:
-        return v / scale
+        return min(v / scale, 1.0)
 
-    fig = plt.figure(figsize=(5, 5), dpi=140)
+    # Průměrný threshold checkovaných statů
+    check_stat_vals = [eff.get(cs, 0) for cs in check_stats if cs in STAT_LABELS]
+    avg_stat  = sum(check_stat_vals) / max(len(check_stat_vals), 1)
+    stat_ref  = float(max(1, math.ceil(avg_stat * dice_max / MAX_STAT)))
+    # Threshold normalizovaný na stejnou škálu
+    threshold_r = n_(avg_stat)   # = stat/MAX_STAT — odpovídá hexagonu
+
+    # Úspěch = hod ≤ threshold
+    is_success = roll_val <= stat_ref
+    C_ROLL = C_OK if is_success else C_FAIL
+
+    # ── Menší canvas — Discord řeší preview max ~400 px ───────────────────────
+    fig = plt.figure(figsize=(4, 4), dpi=100)
     ax  = fig.add_subplot(111, polar=True)
     fig.patch.set_facecolor(BG_FIGURE)
     ax.set_facecolor(BG_POLAR)
     ax.set_ylim(0, 1.0)
     ax.set_yticks([])
     ax.yaxis.grid(False)
-    ax.xaxis.grid(True, color=C_GRID, linewidth=0.5, alpha=0.6)
+    ax.xaxis.grid(True, color=C_GRID, linewidth=0.6, alpha=0.5)
     ax.spines['polar'].set_color(C_GRID)
-    ax.spines['polar'].set_linewidth(0.5)
+    ax.spines['polar'].set_linewidth(0.6)
 
-    # Hexagonální mřížka
-    for r in [0.33, 0.66, 1.0]:
+    # Mřížka — 4 prsteny (25 / 50 / 75 / 100 %)
+    for r in [0.25, 0.5, 0.75, 1.0]:
         pts = [r] * n + [r]
         ax.plot(ac, pts, color=C_GRID,
-                linewidth=0.9 if r == 1.0 else 0.6,
-                alpha=0.8 if r == 1.0 else 0.5, zorder=1)
+                linewidth=1.0 if r == 1.0 else 0.5,
+                alpha=0.9 if r == 1.0 else 0.35, zorder=1)
 
-    # Stat ref marker — na každé ose checkovaného statu
-    for cs in check_stats:
-        if cs not in STAT_LABELS:
-            continue
-        idx   = STAT_LABELS.index(cs)
-        theta = angles[idx]
-        cs_ref = float(max(1, math.ceil(eff.get(cs, 0) * dice_max / MAX_STAT)))
-        ax.plot([theta, theta], [0, n_(cs_ref)],
-                color=C_GRID, linewidth=1.0, linestyle='--', alpha=0.5, zorder=2)
-        ax.scatter([theta], [n_(cs_ref)],
-                   color=C_LABEL, s=14, alpha=0.5, zorder=2, marker='_')
+    # Threshold ring — plný kruh ve výšce průměrného statu checkovaných os
+    if check_stat_vals:
+        thresh_pts = [threshold_r] * n + [threshold_r]
+        ax.plot(ac, thresh_pts, color='#aa77ff',
+                linewidth=1.4, linestyle='--', alpha=0.75, zorder=2)
 
-    # Hráčův šestiúhelník
+    # Hráčův hexagon
     hv = [n_(eff[s]) for s in STAT_LABELS] + [n_(eff[STAT_LABELS[0]])]
-    ax.fill(ac, hv, color=C_HERO, alpha=0.12, zorder=3)
-    ax.plot(ac, hv, color=C_HERO, linewidth=6.0, alpha=0.06, zorder=3)
-    ax.plot(ac, hv, color=C_HERO, linewidth=1.8, alpha=0.9,  zorder=4)
+    ax.fill(ac, hv, color=C_HERO, alpha=0.15, zorder=3)
+    ax.plot(ac, hv, color=C_HERO, linewidth=1.8, alpha=0.9, zorder=4)
     ax.scatter(angles, [n_(eff[s]) for s in STAT_LABELS],
-               color=C_HERO, s=28, zorder=5, alpha=0.9, edgecolors='none')
+               color=C_HERO, s=22, zorder=5, alpha=0.9, edgecolors='none')
 
-    # Bod hodu — na první ose checku, vždy neutrální bílá
+    # Bod hodu — na ose první checkované statistiky, barva = výsledek
     first_cs = next((cs for cs in check_stats if cs in STAT_LABELS), None)
-    if first_cs:
-        theta_roll = angles[STAT_LABELS.index(first_cs)]
-    else:
-        theta_roll = angles[0]
-    C_ROLL = '#e0e0e0'
-    rv     = n_(roll_val)
+    theta_roll = angles[STAT_LABELS.index(first_cs)] if first_cs else angles[0]
+    rv = n_(roll_val)
     ax.plot([theta_roll, theta_roll], [0, rv],
-            color=C_ROLL, linewidth=2.2, alpha=0.7, zorder=6)
-    for gs, ga in [(140, 0.06), (80, 0.12), (45, 0.25)]:
-        ax.scatter([theta_roll], [rv], color=C_ROLL, s=gs, zorder=7, alpha=ga, edgecolors='none')
-    ax.scatter([theta_roll], [rv], color=C_ROLL, s=45, zorder=9,
-               edgecolors=BG_FIGURE, linewidths=1.2)
+            color=C_ROLL, linewidth=2.0, alpha=0.85, zorder=6)
+    # Záře
+    ax.scatter([theta_roll], [rv], color=C_ROLL, s=160, zorder=7, alpha=0.10, edgecolors='none')
+    ax.scatter([theta_roll], [rv], color=C_ROLL, s=70,  zorder=8, alpha=0.20, edgecolors='none')
+    # Hlavní bod
+    ax.scatter([theta_roll], [rv], color=C_ROLL, s=55, zorder=9,
+               edgecolors=BG_FIGURE, linewidths=1.0)
 
-    # Popisky os — checkované staty zvýrazněny v závorkách
+    # Popisky — checkované staty v závorkách, ostatní normálně
     labels = []
     for s in STAT_LABELS:
         name = STAT_NAMES.get(s, s)
         val  = int(round(eff[s]))
-        if s in check_stats:
-            labels.append(f"[ {name} ]\n{val}")
-        else:
-            labels.append(f"{name}\n{val}")
+        labels.append(f"[ {name} ]\n{val}" if s in check_stats else f"{name}\n{val}")
 
     ax.set_xticks(angles)
-    ax.set_xticklabels(labels, color=C_LABEL, size=7.0, weight='bold')
+    ax.set_xticklabels(labels, color=C_LABEL, size=7.5, weight='bold')
     ax.set_yticklabels([])
-    ax.tick_params(axis='x', pad=8)
+    ax.tick_params(axis='x', pad=7)
 
-    plt.tight_layout(pad=0.2)
+    plt.tight_layout(pad=0.3)
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight',
-                facecolor=fig.get_facecolor(), dpi=140)
+                facecolor=fig.get_facecolor(), dpi=100)
     buf.seek(0)
     plt.close(fig)
     return buf
