@@ -215,8 +215,16 @@ class DiaryQuestView(discord.ui.View):
 # ── Migrace — seed nových questů při startu ────────────────────────────────────
 
 _SEED_QUESTS = {
+    "Volání hvězdy": {
+        "info":         "Velký turnaj se blíží a brzy přiletí hvězda, která změní osud všech.",
+        "xp":           "160 000",
+        "category":     Category.MAIN,
+        "parent_quest": None,
+        "members":      [],
+        "added":        "06.05.",
+    },
     "Poslední Aurelion": {
-        "info":         "Příběh Aurelionů nekončí. Někdo drží nit — a ty musíš zjistit kdo.",
+        "info":         "Quest navazuje na knihu Act II.",
         "xp":           "200 000",
         "category":     Category.MAIN,
         "parent_quest": None,
@@ -224,7 +232,7 @@ _SEED_QUESTS = {
         "added":        "06.05.",
     },
     "Šampion podsvětí": {
-        "info":         "Aquion skrývá víc než kanály a obchod. Někdo tady ovládá stíny — a chce tě jako šampiona.",
+        "info":         "V baru pod Aquionem existuje podsvětí, kde si může vylhat cestu každý. Kontakty, závody žraloků, peníze a riziko.",
         "xp":           "150 000",
         "category":     Category.SIDE,
         "parent_quest": "Poslední Aurelion",
@@ -232,7 +240,7 @@ _SEED_QUESTS = {
         "added":        "06.05.",
     },
     "Stíny v srdci": {
-        "info":         "Lumenie se mění. Reinhard mlčí, katedrála zavřená — a ve městě světla je tma.",
+        "info":         "Zločinecká síť Vládce stínu rozložila Lumenii na kusy. Je na čase mu to vrátit. Odpor. Vzpoura. Obnova.",
         "xp":           "150 000",
         "category":     Category.SIDE,
         "parent_quest": "Poslední Aurelion",
@@ -240,7 +248,7 @@ _SEED_QUESTS = {
         "added":        "06.05.",
     },
     "Draci": {
-        "info":         "Alice Aurelion zmizela. Draci bez královny jsou nebezpečí — nebo příležitost.",
+        "info":         "Draci jsou naživu a Alice je chce všechny osvobodit. Alice má momentálně dva draky a dalších devět zbývá.",
         "xp":           "150 000",
         "category":     Category.SIDE,
         "parent_quest": "Poslední Aurelion",
@@ -248,9 +256,9 @@ _SEED_QUESTS = {
         "added":        "06.05.",
     },
     "Pomsta": {
-        "info":         "Noxarath dluhy nezapomíná.",
+        "info":         "Bohyně temnoty a čarodějka smrti Noxarath se zdá být velmi zainteresovaná v určité vyvolené. O co jí jde?",
         "xp":           "120 500",
-        "category":     Category.SIDE,
+        "category":     Category.MAIN,
         "parent_quest": None,
         "members":      [],
         "added":        "06.05.",
@@ -259,32 +267,37 @@ _SEED_QUESTS = {
         "info":         "",
         "xp":           "50 000",
         "category":     Category.SIDE,
-        "parent_quest": None,
+        "parent_quest": "Pomsta",
         "members":      [],
         "added":        "06.05.",
     },
 }
 
-_REMOVE_ON_SEED = {"Stíny v srdci"}   # starý záznam s jiným parent_quest
+_SYNC_FIELDS = {"info", "xp", "category", "parent_quest"}
 
 def _migrate_quests():
-    """Při startu přidá nové questy, pokud ještě nejsou v databázi."""
+    """Při startu přidá chybějící questy a synchronizuje metadata existujících."""
     quests  = load_quests()
     changed = False
 
-    # Odstraň starý "Stíny v srdci" který má špatný parent_quest
+    # Odstraň starý "Stíny v srdci" s špatným parent_quest
     if "Stíny v srdci" in quests and quests["Stíny v srdci"].get("parent_quest") != "Poslední Aurelion":
         del quests["Stíny v srdci"]
         changed = True
 
-    for name, data in _SEED_QUESTS.items():
+    for name, seed in _SEED_QUESTS.items():
         if name not in quests:
-            quests[name] = data
+            quests[name] = seed
             changed = True
+        else:
+            for field in _SYNC_FIELDS:
+                if quests[name].get(field) != seed.get(field):
+                    quests[name][field] = seed[field]
+                    changed = True
 
     if changed:
         save_quests(quests)
-        print("[quests] Migrace dokončena — nové questy přidány.")
+        print("[quests] Migrace dokončena.")
 
 
 # ── Quests Cog ────────────────────────────────────────────────────────────────
