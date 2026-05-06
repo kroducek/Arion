@@ -790,7 +790,6 @@ class PerksCog(commands.Cog):
     @perk_add.autocomplete("perk_id")
     @perk_edit.autocomplete("perk_id")
     @perk_delete.autocomplete("perk_id")
-    @perk_detail.autocomplete("perk_id")
     @perks_give.autocomplete("perk_id")
     async def perk_db_autocomplete(self, interaction: discord.Interaction, current: str):
         perks = load_perks()
