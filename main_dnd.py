@@ -57,6 +57,7 @@ DND_COGS = [
     "src.core.dnd.diary",
     "src.core.dnd.snajpycounter",
     "src.core.dnd.achievements",
+    "src.core.dnd.perks",
     # D&D logika / postavy
     "src.logic.profile",
     "src.logic.stats",

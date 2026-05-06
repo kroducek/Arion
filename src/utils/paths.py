@@ -67,5 +67,9 @@ DICE_DIR    = os.path.join(ASSETS_DIR, "dice")
 ACHIEVEMENTS      = data("achievements.json")
 ACHIEVEMENT_DATA  = data("achievement_data.json")
 
+# ── Perky ─────────────────────────────────────────────────────
+PERKS        = data("perks.json")
+PLAYER_PERKS = data("player_perks.json")
+
 # ── Bot state ────────────────────────────────────────────────
 TUTORIAL_MSG = data("tutorial_msg.json")
