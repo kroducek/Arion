@@ -492,12 +492,13 @@ class PerksCog(commands.Cog):
                     short_desc = p["desc"][:80] + ("…" if len(p["desc"]) > 80 else "")
                     lines.append(f"-# {short_desc}")
                 cd_str = _cooldown_status(player, pid, p)
-                if cd_str:
-                    lines.append(f"-# {cd_str}")
+                id_line = f"`{pid}`"
+                lines.append(f"-# {cd_str}  ·  {id_line}" if cd_str else f"-# {id_line}")
         if ungrouped:
             lines.append("\n✨ **Ostatní**")
             for pid, p in ungrouped:
                 lines.append(f"▸ **{p['name']}**")
+                lines.append(f"-# `{pid}`")
 
         is_self = target.id == interaction.user.id
         title = "Tvoje perky" if is_self else f"Perky — {target.display_name}"
