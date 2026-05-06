@@ -1388,16 +1388,69 @@ class FinalEnterView(discord.ui.View):
             view=ArrivalStreetView(dest_key=self.dest_key, portrait_url=self.portrait_url),
         )
 
+        # ── Auto-přiřazení questů (musí být před hub embedem) ─────────────
+        assigned: list[tuple[str, str]] = []
+        try:
+            from src.core.dnd.quests import (
+                load_quests, save_quests, load_diaries, save_diaries,
+                make_diary_entry, _migrate_entries, Category,
+            )
+            CITY_QUEST = {
+                "lumenie":     "Stíny v srdci",
+                "aquion":      "Šampion podsvětí",
+                "draci_skala": "Draci",
+            }
+            MAIN_QUEST = "Poslední Aurelion"
+            uid_int    = interaction.user.id
+            uid_str    = str(uid_int)
+            quests     = load_quests()
+            diaries    = load_diaries()
+            entries    = _migrate_entries(diaries.get(uid_str, []))
+
+            for qname in [MAIN_QUEST, CITY_QUEST.get(self.dest_key)]:
+                if qname and qname in quests:
+                    qdata = quests[qname]
+                    if uid_int not in qdata.get("members", []):
+                        qdata.setdefault("members", []).append(uid_int)
+                        entries.append(make_diary_entry(qname, qdata.get("info", ""), qdata.get("xp")))
+                        assigned.append((qname, qdata.get("xp", "")))
+
+            diaries[uid_str] = entries
+            save_diaries(diaries)
+            save_quests(quests)
+        except Exception as e:
+            print(f"[onboard] Auto-quest chyba: {e}")
+
         # ── Pošli uvítání do hub kanálu destinace ─────────────────────────
         hub_channel_id = DEST_HUB_CHANNEL_IDS.get(self.dest_key, 0)
         if hub_channel_id:
             hub_channel = interaction.guild.get_channel(hub_channel_id)
             if hub_channel:
                 try:
-                    await hub_channel.send(
-                        f"Nový dobrodruh F3: {interaction.user.mention}\n\n"
-                        + DEST_HUB_WELCOME[self.dest_key]
+                    dest        = DESTINATIONS[self.dest_key]
+                    city_name   = dest["name"]
+                    preposition = "na" if self.dest_key == "draci_skala" else "v"
+
+                    hub_embed = discord.Embed(
+                        title=f"{dest['emoji']}  Vítej {preposition} {city_name}!",
+                        description=(
+                            f"{interaction.user.mention} právě vstoupil/a do příběhu.\n\n"
+                            + DEST_HUB_WELCOME[self.dest_key]
+                        ),
+                        color=dest["color"],
                     )
+                    if assigned:
+                        quest_lines = [
+                            f"📜 **{qname}**" + (f"  ✨ {qxp}" if qxp else "")
+                            for qname, qxp in assigned
+                        ]
+                        hub_embed.add_field(
+                            name="📋 Questy přidány do deníku",
+                            value="\n".join(quest_lines),
+                            inline=False,
+                        )
+                    hub_embed.set_footer(text="⭐ Aurionis  ·  /diary show — zobraz svůj deník")
+                    await hub_channel.send(embed=hub_embed)
                 except Exception as e:
                     print(f"[onboard] Nepodařilo se poslat uvítání do hub kanálu: {e}")
 

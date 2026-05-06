@@ -212,11 +212,87 @@ class DiaryQuestView(discord.ui.View):
         await interaction.response.send_message(embeds=[header] + embeds[:9], ephemeral=True)
 
 
+# ── Migrace — seed nových questů při startu ────────────────────────────────────
+
+_SEED_QUESTS = {
+    "Poslední Aurelion": {
+        "info":         "Příběh Aurelionů nekončí. Někdo drží nit — a ty musíš zjistit kdo.",
+        "xp":           "200 000",
+        "category":     Category.MAIN,
+        "parent_quest": None,
+        "members":      [],
+        "added":        "06.05.",
+    },
+    "Šampion podsvětí": {
+        "info":         "Aquion skrývá víc než kanály a obchod. Někdo tady ovládá stíny — a chce tě jako šampiona.",
+        "xp":           "150 000",
+        "category":     Category.SIDE,
+        "parent_quest": "Poslední Aurelion",
+        "members":      [],
+        "added":        "06.05.",
+    },
+    "Stíny v srdci": {
+        "info":         "Lumenie se mění. Reinhard mlčí, katedrála zavřená — a ve městě světla je tma.",
+        "xp":           "150 000",
+        "category":     Category.SIDE,
+        "parent_quest": "Poslední Aurelion",
+        "members":      [],
+        "added":        "06.05.",
+    },
+    "Draci": {
+        "info":         "Alice Aurelion zmizela. Draci bez královny jsou nebezpečí — nebo příležitost.",
+        "xp":           "150 000",
+        "category":     Category.SIDE,
+        "parent_quest": "Poslední Aurelion",
+        "members":      [],
+        "added":        "06.05.",
+    },
+    "Pomsta": {
+        "info":         "Noxarath dluhy nezapomíná.",
+        "xp":           "120 500",
+        "category":     Category.SIDE,
+        "parent_quest": None,
+        "members":      [],
+        "added":        "06.05.",
+    },
+    "Kontrakt s čarodějnicí": {
+        "info":         "",
+        "xp":           "50 000",
+        "category":     Category.SIDE,
+        "parent_quest": None,
+        "members":      [],
+        "added":        "06.05.",
+    },
+}
+
+_REMOVE_ON_SEED = {"Stíny v srdci"}   # starý záznam s jiným parent_quest
+
+def _migrate_quests():
+    """Při startu přidá nové questy, pokud ještě nejsou v databázi."""
+    quests  = load_quests()
+    changed = False
+
+    # Odstraň starý "Stíny v srdci" který má špatný parent_quest
+    if "Stíny v srdci" in quests and quests["Stíny v srdci"].get("parent_quest") != "Poslední Aurelion":
+        del quests["Stíny v srdci"]
+        changed = True
+
+    for name, data in _SEED_QUESTS.items():
+        if name not in quests:
+            quests[name] = data
+            changed = True
+
+    if changed:
+        save_quests(quests)
+        print("[quests] Migrace dokončena — nové questy přidány.")
+
+
 # ── Quests Cog ────────────────────────────────────────────────────────────────
 
 class QuestsCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        _migrate_quests()
 
     quest_group = app_commands.Group(name="quest", description="Správa questů")
 
@@ -707,10 +783,82 @@ class QuestsCog(commands.Cog):
             ephemeral=True,
         )
 
-    # ── Autocomplete (sdílené pro remove + status) ────────────────────────────
+    # ── /quest give ───────────────────────────────────────────────────────────
+
+    @quest_group.command(name="give", description="Přiřaď existující quest hráčům")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(name="Název questu", members="Hráči oddělení mezerou (@zmínka)")
+    async def quest_give(self, interaction: discord.Interaction, name: str, members: str):
+        await interaction.response.defer(ephemeral=True)
+        quests = load_quests()
+        if name not in quests:
+            await interaction.followup.send(f"Quest **{name}** neexistuje.", ephemeral=True)
+            return
+        quest_data = quests[name]
+        guild      = interaction.guild
+
+        new_ids = []
+        for word in members.split():
+            uid_str = word.strip("<@!>")
+            if uid_str.isdigit():
+                m = guild.get_member(int(uid_str))
+                if m and m.id not in quest_data.get("members", []):
+                    new_ids.append(m.id)
+        if not new_ids:
+            await interaction.followup.send("Žádní noví hráči k přiřazení.", ephemeral=True)
+            return
+
+        quest_data.setdefault("members", []).extend(new_ids)
+        save_quests(quests)
+
+        diaries   = load_diaries()
+        entry     = make_diary_entry(name, quest_data.get("info", ""), quest_data.get("xp"))
+        dm_errors = []
+        for uid in new_ids:
+            uid_str = str(uid)
+            entries = _migrate_entries(diaries.get(uid_str, []))
+            entries.append(entry)
+            diaries[uid_str] = entries
+            member = guild.get_member(uid)
+            if member:
+                try:
+                    cat_meta = CATEGORY_META[quest_data.get("category", Category.SIDE)]
+                    dm = discord.Embed(
+                        title=f"{cat_meta['emoji']}  Nový quest v deníku",
+                        description=f"**{name}**\n{quest_data.get('info', '')}",
+                        color=STATUS_META[Status.ACTIVE]["color"],
+                    )
+                    if quest_data.get("xp"):
+                        dm.add_field(name="✨ Odměna", value=quest_data["xp"], inline=True)
+                    dm.set_footer(text=f"⭐ {ARION_NAME}  ·  Zapsáno do tvého deníku s tagem 📜")
+                    await member.send(embed=dm)
+                except discord.Forbidden:
+                    dm_errors.append(member.display_name)
+        save_diaries(diaries)
+
+        mentions = [guild.get_member(uid).mention if guild.get_member(uid) else f"<@{uid}>" for uid in new_ids]
+        cat_meta = CATEGORY_META[quest_data.get("category", Category.SIDE)]
+        announce = discord.Embed(
+            title="📜  Quest přiřazen",
+            description=f"### {cat_meta['emoji']} {name}\n*{quest_data.get('info', '')}*",
+            color=STATUS_META[Status.ACTIVE]["color"],
+        )
+        announce.add_field(name="👥 Přiřazeno", value="  ·  ".join(mentions), inline=False)
+        if quest_data.get("xp"):
+            announce.add_field(name="✨ Odměna", value=quest_data["xp"], inline=True)
+        announce.set_footer(text=f"⭐ {ARION_NAME}  ·  Quest byl zapsán do deníků hráčů")
+        await interaction.channel.send(embed=announce)
+
+        msg = f"✅ Quest **{name}** přiřazen {len(new_ids)} hráčům."
+        if dm_errors:
+            msg += f"\n⚠️ DM se nepodařilo odeslat: {', '.join(dm_errors)}."
+        await interaction.followup.send(msg, ephemeral=True)
+
+    # ── Autocomplete (sdílené pro remove + status + give) ─────────────────────
 
     @quest_remove.autocomplete("name")
     @quest_status.autocomplete("name")
+    @quest_give.autocomplete("name")
     async def quest_name_autocomplete(self, interaction: discord.Interaction, current: str):
         quests = load_quests()
         return [
