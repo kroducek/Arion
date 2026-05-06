@@ -448,11 +448,13 @@ class PerksCog(commands.Cog):
         self.bot = bot
         _migrate_perks()
 
-    # ── /perks ────────────────────────────────────────────────────────────────
+    # ── /perks skupina ───────────────────────────────────────────────────────
 
-    @app_commands.command(name="perks", description="Zobraz perky hráče")
+    perks_group = app_commands.Group(name="perks", description="Perky hráčů")
+
+    @perks_group.command(name="show", description="Zobraz perky hráče")
     @app_commands.describe(member="Hráč (výchozí: ty)")
-    async def perks_cmd(self, interaction: discord.Interaction, member: discord.Member | None = None):
+    async def perks_show(self, interaction: discord.Interaction, member: discord.Member | None = None):
         target      = member or interaction.user
         all_perks   = load_perks()
         player_data = load_player_perks()
@@ -465,7 +467,6 @@ class PerksCog(commands.Cog):
             await interaction.response.send_message(msg, ephemeral=True)
             return
 
-        # Seřadit owned perky do skupin
         groups: dict[str, list[tuple[str, dict]]] = {}
         ungrouped: list[tuple[str, dict]] = []
         for pid in owned:
@@ -505,6 +506,81 @@ class PerksCog(commands.Cog):
 
         embed = discord.Embed(description=desc, color=0x7B68EE)
         embed.set_footer(text=f"⭐ {ARION_NAME}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @perks_group.command(name="give", description="Přiřaď perk hráči (admin)")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(perk_id="ID perku", member="Hráč")
+    async def perks_give(self, interaction: discord.Interaction, perk_id: str, member: discord.Member):
+        all_perks = load_perks()
+        if perk_id not in all_perks:
+            await interaction.response.send_message(f"Perk `{perk_id}` neexistuje.", ephemeral=True)
+            return
+        player_data = load_player_perks()
+        player      = _get_player(str(member.id), player_data)
+        if perk_id in player["perks"]:
+            await interaction.response.send_message(
+                f"{member.mention} už má **{all_perks[perk_id]['name']}**.", ephemeral=True
+            )
+            return
+        player["perks"].append(perk_id)
+        save_player_perks(player_data)
+
+        perk   = all_perks[perk_id]
+        await _dm_perk(member, perk, perk_id)
+
+        group  = perk.get("group", "")
+        gemoji = GROUP_EMOJI.get(group, "✨")
+        color  = GROUP_COLOR.get(group, 0xFFD700)
+        desc   = f"### {gemoji} {perk['name']}\n{perk['desc']}"
+        if perk.get("subdesc"):
+            desc += f"\n-# {perk['subdesc']}"
+        embed = discord.Embed(title="📋  Perk přiřazen", description=desc, color=color)
+        embed.add_field(name="Hráč", value=member.mention, inline=True)
+        embed.set_footer(text=f"⭐ {ARION_NAME}  ·  ID: {perk_id}")
+        await interaction.channel.send(embed=embed)
+        await interaction.response.send_message(
+            f"✅ Perk **{perk['name']}** přiřazen {member.mention}.", ephemeral=True
+        )
+
+    @perks_group.command(name="list", description="Seznam všech perků v databázi (admin)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def perks_list(self, interaction: discord.Interaction):
+        perks = load_perks()
+        if not perks:
+            await interaction.response.send_message("Databáze perků je prázdná.", ephemeral=True)
+            return
+
+        groups: dict[str, list[tuple[str, dict]]] = {}
+        ungrouped: list[tuple[str, dict]] = []
+        for pid, p in perks.items():
+            g = p.get("group", "")
+            if g in GROUP_ORDER:
+                groups.setdefault(g, []).append((pid, p))
+            else:
+                ungrouped.append((pid, p))
+
+        lines: list[str] = []
+        for g in GROUP_ORDER:
+            if g not in groups:
+                continue
+            gemoji = GROUP_EMOJI.get(g, "▸")
+            lines.append(f"\n{gemoji} **{g}**")
+            for pid, p in groups[g]:
+                passive_tag = " *(pasivní)*" if p.get("passive") else ""
+                max_        = p.get("cooldown_uses", 0)
+                cd_tag      = f" · ⏳ {max_}×/den" if max_ > 0 else ""
+                lines.append(f"▸ **{p['name']}**{passive_tag}{cd_tag}")
+                lines.append(f"-# `{pid}`")
+        if ungrouped:
+            lines.append("\n✨ **Ostatní**")
+            for pid, p in ungrouped:
+                lines.append(f"▸ **{p['name']}**")
+                lines.append(f"-# `{pid}`")
+
+        desc = f"### 📋 Databáze perků — {len(perks)} celkem" + "\n".join(lines)
+        embed = discord.Embed(description=desc[:4000], color=0x7B68EE)
+        embed.set_footer(text=f"⭐ {ARION_NAME}  ·  /perks give <id> @hráč — přiřaď perk")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ── /give-random-perk ─────────────────────────────────────────────────────
@@ -644,6 +720,34 @@ class PerksCog(commands.Cog):
         save_perks(perks)
         await interaction.response.send_message(f"✅ Perk **{name}** smazán z databáze.", ephemeral=True)
 
+    @perk_group.command(name="detail", description="Zobraz detailní info o perku")
+    @app_commands.describe(perk_id="Perk k zobrazení")
+    async def perk_detail(self, interaction: discord.Interaction, perk_id: str):
+        perks = load_perks()
+        if perk_id not in perks:
+            await interaction.response.send_message(f"Perk `{perk_id}` neexistuje.", ephemeral=True)
+            return
+        p = perks[perk_id]
+
+        group  = p.get("group", "")
+        gemoji = GROUP_EMOJI.get(group, "✨")
+        color  = GROUP_COLOR.get(group, 0xFFD700)
+
+        passive_line = "🔒 Pasivní" if p.get("passive") else "⚡ Aktivní"
+        max_         = p.get("cooldown_uses", 0)
+        cd_line      = f"{max_}×/den" if max_ > 0 else "—"
+
+        desc = f"### {gemoji} {p['name']}\n{p['desc']}"
+        if p.get("subdesc"):
+            desc += f"\n-# {p['subdesc']}"
+
+        embed = discord.Embed(description=desc, color=color)
+        embed.add_field(name="Typ",      value=passive_line,    inline=True)
+        embed.add_field(name="Skupina",  value=group or "—",    inline=True)
+        embed.add_field(name="⏳ Cooldown", value=cd_line,       inline=True)
+        embed.set_footer(text=f"⭐ {ARION_NAME}  ·  ID: {perk_id}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @perk_group.command(name="use", description="Aktivuj perk")
     @app_commands.describe(perk_id="Název perku k aktivaci")
     async def perk_use(self, interaction: discord.Interaction, perk_id: str):
@@ -686,6 +790,8 @@ class PerksCog(commands.Cog):
     @perk_add.autocomplete("perk_id")
     @perk_edit.autocomplete("perk_id")
     @perk_delete.autocomplete("perk_id")
+    @perk_detail.autocomplete("perk_id")
+    @perks_give.autocomplete("perk_id")
     async def perk_db_autocomplete(self, interaction: discord.Interaction, current: str):
         perks = load_perks()
         return [
