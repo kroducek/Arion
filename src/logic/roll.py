@@ -207,6 +207,7 @@ class Dice(commands.Cog):
         all_rolls_detail = []
         is_nat_20        = False
         is_nat_1         = False
+        is_d20           = False
         dice_max         = 0   # největší kostka použitá v hodu (pro check scaling)
 
         try:
@@ -227,6 +228,7 @@ class Dice(commands.Cog):
                         raise ValueError("Příliš mnoho moci.")
                     current_rolls = [random.randint(1, sides) for _ in range(num_dice)]
                     if sides == 20 and num_dice == 1:
+                        is_d20 = True
                         if current_rolls[0] == 20: is_nat_20 = True
                         if current_rolls[0] == 1:  is_nat_1  = True
                     total_sum += sum(current_rolls) * multiplier
@@ -245,14 +247,20 @@ class Dice(commands.Cog):
             )
             return
 
-        record_roll(
+        roll_stats = record_roll(
             interaction.guild.id,
             interaction.user.id,
             nat20=is_nat_20,
             nat1=is_nat_1,
             hit24=(total_sum == 24),
             is_check=(check is not None),
+            is_d20=is_d20,
         )
+        try:
+            from src.core.dnd.achievements import check_roll_achievements
+            await check_roll_achievements(interaction.guild.id, interaction.user, interaction.channel, roll_stats)
+        except Exception as _e:
+            print(f"[roll] achievement check chyba: {_e}")
 
         details = "\n".join(all_rolls_detail)
         if len(details) > 1024:

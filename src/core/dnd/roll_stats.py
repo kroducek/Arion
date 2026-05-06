@@ -37,20 +37,33 @@ def save_stats(data: dict):
     except Exception as e:
         print(f"[roll_stats] Chyba při ukládání: {e}")
 
-def record_roll(guild_id: int, user_id: int, *, nat20: bool, nat1: bool, hit24: bool, is_check: bool = False):
-    """Zaznamená výsledek hodu pro daného hráče."""
+def record_roll(guild_id: int, user_id: int, *, nat20: bool, nat1: bool, hit24: bool, is_check: bool = False, is_d20: bool = False) -> dict:
+    """Zaznamená výsledek hodu. Vrátí aktualizovaný stats dict hráče."""
     data = load_stats()
     gid  = str(guild_id)
     uid  = str(user_id)
     data.setdefault(gid, {}).setdefault(uid, {"nat20": 0, "nat1": 0, "hits24": 0, "total": 0, "checks": 0})
     s = data[gid][uid]
     s.setdefault("checks", 0)
+    s.setdefault("streak_nat20", 0)
+    s.setdefault("streak_nat1", 0)
     s["total"]  += 1
     if is_check: s["checks"] += 1
     if nat20:    s["nat20"]  += 1
     if nat1:     s["nat1"]   += 1
     if hit24:    s["hits24"] += 1
+    if is_d20:
+        if nat20:
+            s["streak_nat20"] += 1
+            s["streak_nat1"]   = 0
+        elif nat1:
+            s["streak_nat1"]  += 1
+            s["streak_nat20"]  = 0
+        else:
+            s["streak_nat20"] = 0
+            s["streak_nat1"]  = 0
     save_stats(data)
+    return s
 
 def get_stats(guild_id: int, user_id: int) -> dict:
     data = load_stats()

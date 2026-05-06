@@ -63,5 +63,9 @@ ASSETS_DIR  = os.path.join(ROOT, "src", "assets")
 TAROT_DIR   = os.path.join(ASSETS_DIR, "tarot")
 DICE_DIR    = os.path.join(ASSETS_DIR, "dice")
 
+# ── Achievementy ─────────────────────────────────────────────
+ACHIEVEMENTS      = data("achievements.json")
+ACHIEVEMENT_DATA  = data("achievement_data.json")
+
 # ── Bot state ────────────────────────────────────────────────
 TUTORIAL_MSG = data("tutorial_msg.json")
