@@ -121,18 +121,22 @@ def format_main_block(name: str, data: dict, guild: discord.Guild | None,
 
     # Side questy
     for side_name, side_data, side_status in side_quests:
-        s_meta  = STATUS_META.get(side_status, STATUS_META[Status.ACTIVE])
-        s_xp    = side_data.get("xp")
-        s_info  = side_data.get("info", "")
-        s_added = side_data.get("added", "?")
+        s_meta   = STATUS_META.get(side_status, STATUS_META[Status.ACTIVE])
+        s_xp     = side_data.get("xp")
+        s_info   = side_data.get("info", "")
+        s_added  = side_data.get("added", "?")
         s_closed = side_data.get("closed")
         s_suffix = f"  {s_meta['emoji']}" if side_status != Status.ACTIVE else ""
 
         lines.append(f"╠ 📜 **(side)**{s_suffix}  **{side_name}**")
-        lines.append(f"╠ *{s_info}*")
+        if s_info:
+            lines.append(f"╠ *{s_info}*")
         if s_xp:
             lines.append(f"╠ ⭐ xp: {s_xp}")
-        lines.append(f"╚ {_status_line(side_status, s_added, s_closed)}")
+        if s_closed:
+            lines.append(f"-# ╚ 📌 Quest získán: **{s_added}**  📌 Quest dokončen: **{s_closed}**")
+        else:
+            lines.append(f"-# ╚ 📌 Quest získán: **{s_added}**")
 
     return "\n".join(lines)
 
@@ -146,7 +150,8 @@ def format_side_block(name: str, data: dict, status: str = Status.ACTIVE) -> str
 
     s_suffix = f"  {meta['emoji']}" if status != Status.ACTIVE else ""
     lines = [f"📜 **(side)**{s_suffix}  **{name}**"]
-    lines.append(f"*{info}*")
+    if info:
+        lines.append(f"*{info}*")
     if xp:
         lines.append(f"⭐ xp: {xp}")
     lines.append(_status_line(status, added, closed))
@@ -215,6 +220,7 @@ class DiaryQuestView(discord.ui.View):
 # ── Migrace — seed nových questů při startu ────────────────────────────────────
 
 _SEED_QUESTS = {
+    # ── Král hvězdy ───────────────────────────────────────────────────────────
     "Volání hvězdy": {
         "info":         "Velký turnaj se blíží a brzy přiletí hvězda, která změní osud všech.",
         "xp":           "160 000",
@@ -223,6 +229,31 @@ _SEED_QUESTS = {
         "members":      [],
         "added":        "06.05.",
     },
+    "Stíny v srdci": {
+        "info":         "Zločinecká síť Vládce stínu rozložila Lumenii na kusy. Je na čase mu to vrátit. Odpor. Vzpoura. Obnova.",
+        "xp":           "150 000",
+        "category":     Category.SIDE,
+        "parent_quest": "Volání hvězdy",
+        "members":      [],
+        "added":        "06.05.",
+    },
+    "Šampion podsvětí": {
+        "info":         "V baru pod Aquionem existuje podsvětí, kde si může vylhat cestu každý. Kontakty, závody žraloků, peníze a riziko.",
+        "xp":           "150 000",
+        "category":     Category.SIDE,
+        "parent_quest": "Volání hvězdy",
+        "members":      [],
+        "added":        "06.05.",
+    },
+    "Draci": {
+        "info":         "Draci jsou naživu a Alice je chce všechny osvobodit. Alice má momentálně dva draky a dalších devět zbývá.",
+        "xp":           "150 000",
+        "category":     Category.SIDE,
+        "parent_quest": "Volání hvězdy",
+        "members":      [],
+        "added":        "06.05.",
+    },
+    # ── Aurelionská hlavní linka ───────────────────────────────────────────────
     "Poslední Aurelion": {
         "info":         "Quest navazuje na knihu Act II.",
         "xp":           "200 000",
@@ -231,30 +262,23 @@ _SEED_QUESTS = {
         "members":      [],
         "added":        "06.05.",
     },
-    "Šampion podsvětí": {
-        "info":         "V baru pod Aquionem existuje podsvětí, kde si může vylhat cestu každý. Kontakty, závody žraloků, peníze a riziko.",
-        "xp":           "150 000",
+    "Zmrtvýchvstání": {
+        "info":         "Alice se probudila po útoku Kultu smrti, ale něco je s ní špatně.",
+        "xp":           "35 000",
         "category":     Category.SIDE,
         "parent_quest": "Poslední Aurelion",
         "members":      [],
         "added":        "06.05.",
     },
-    "Stíny v srdci": {
-        "info":         "Zločinecká síť Vládce stínu rozložila Lumenii na kusy. Je na čase mu to vrátit. Odpor. Vzpoura. Obnova.",
-        "xp":           "150 000",
+    "Cesta ke světlu": {
+        "info":         "Paladin Reinhard uzavřel katedrálu. Něco se chystá.",
+        "xp":           "35 000",
         "category":     Category.SIDE,
         "parent_quest": "Poslední Aurelion",
         "members":      [],
         "added":        "06.05.",
     },
-    "Draci": {
-        "info":         "Draci jsou naživu a Alice je chce všechny osvobodit. Alice má momentálně dva draky a dalších devět zbývá.",
-        "xp":           "150 000",
-        "category":     Category.SIDE,
-        "parent_quest": "Poslední Aurelion",
-        "members":      [],
-        "added":        "06.05.",
-    },
+    # ── Noxarath ──────────────────────────────────────────────────────────────
     "Pomsta": {
         "info":         "Bohyně temnoty a čarodějka smrti Noxarath se zdá být velmi zainteresovaná v určité vyvolené. O co jí jde?",
         "xp":           "120 500",
@@ -276,15 +300,16 @@ _SEED_QUESTS = {
 _SYNC_FIELDS = {"info", "xp", "category", "parent_quest"}
 
 def _migrate_quests():
-    """Při startu přidá chybějící questy a synchronizuje metadata existujících."""
+    """Při startu přidá chybějící questy, synchronizuje metadata a opraví pořadí."""
     quests  = load_quests()
     changed = False
 
-    # Odstraň starý "Stíny v srdci" s špatným parent_quest
-    if "Stíny v srdci" in quests and quests["Stíny v srdci"].get("parent_quest") != "Poslední Aurelion":
+    # Odstraň starý "Stíny v srdci" se špatným parent_quest
+    if "Stíny v srdci" in quests and quests["Stíny v srdci"].get("parent_quest") not in ("Volání hvězdy", None):
         del quests["Stíny v srdci"]
         changed = True
 
+    # Přidej chybějící + synchronizuj metadata
     for name, seed in _SEED_QUESTS.items():
         if name not in quests:
             quests[name] = seed
@@ -294,6 +319,14 @@ def _migrate_quests():
                 if quests[name].get(field) != seed.get(field):
                     quests[name][field] = seed[field]
                     changed = True
+
+    # Oprav pořadí: ne-seedované questy napřed (Chapter I atd.), pak seedované v seed pořadí
+    non_seed  = {n: d for n, d in quests.items() if n not in _SEED_QUESTS}
+    seeded    = {n: quests[n] for n in _SEED_QUESTS if n in quests}
+    new_order = {**non_seed, **seeded}
+    if list(quests.keys()) != list(new_order.keys()):
+        quests  = new_order
+        changed = True
 
     if changed:
         save_quests(quests)
