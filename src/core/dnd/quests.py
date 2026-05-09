@@ -7,6 +7,7 @@ from datetime import datetime
 
 from src.utils.paths import QUESTS as QUESTS_FILE, QUEST_LOG as QUEST_LOG_FILE, DIARIES as DIARY_FILE
 from src.utils.json_utils import load_json, save_json
+from src.utils.audit import log_action, get_recent
 
 ARION_NAME = "Aurionis"
 QUEST_TAG  = "📜"
@@ -831,6 +832,7 @@ class QuestsCog(commands.Cog):
                 removed_from += 1
 
         save_diaries(diaries)
+        log_action("quest_remove", interaction.user.display_name, name)
         await interaction.followup.send(
             f"🗑️ Quest **{name}** odebrán z databáze a smazán z {removed_from} deníků.",
             ephemeral=True,
@@ -878,6 +880,8 @@ class QuestsCog(commands.Cog):
         announce.set_footer(text=f"⭐ {ARION_NAME}  ·  Quest byl zapsán do deníků hráčů")
         await interaction.channel.send(embed=announce)
 
+        members_str = ", ".join(guild.get_member(uid).display_name if guild.get_member(uid) else str(uid) for uid in new_ids)
+        log_action("quest_give", interaction.user.display_name, name, members_str)
         msg = f"✅ Quest **{name}** přiřazen {len(new_ids)} hráčům."
         if dm_errors:
             msg += f"\n⚠️ DM se nepodařilo odeslat: {', '.join(dm_errors)}."
@@ -903,6 +907,27 @@ class QuestsCog(commands.Cog):
             for n, d in quests.items()
             if d.get("category") == Category.MAIN and current.lower() in n.lower()
         ][:25]
+
+    # ── Audit log ─────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="audit-log", description="Zobrazí posledních 20 admin akcí (jen DM)")
+    @app_commands.default_permissions(administrator=True)
+    async def audit_log_cmd(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        entries = get_recent(20)
+        if not entries:
+            await interaction.followup.send("Audit log je prázdný.", ephemeral=True)
+            return
+        lines = []
+        for e in reversed(entries):
+            detail = f" — `{e['detail']}`" if e.get("detail") else ""
+            lines.append(f"`{e['ts']}` **{e['action']}** · {e['actor']} → {e['target']}{detail}")
+        embed = discord.Embed(
+            title="📋 Audit log",
+            description="\n".join(lines),
+            color=0x95A5A6,
+        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 async def setup(bot):

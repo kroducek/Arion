@@ -7,6 +7,7 @@ import random
 from datetime import date
 
 from src.utils.paths import PERKS, PLAYER_PERKS
+from src.utils.audit import log_action
 
 ARION_NAME = "Aurionis"
 
@@ -532,6 +533,7 @@ class PerksCog(commands.Cog):
             return
         player["perks"].append(perk_id)
         save_player_perks(player_data)
+        log_action("perk_give", interaction.user.display_name, member.display_name, perk_id)
 
         perk   = all_perks[perk_id]
         await _dm_perk(member, perk, perk_id)
@@ -613,6 +615,7 @@ class PerksCog(commands.Cog):
         chosen    = all_perks[chosen_id]
         player["perks"].append(chosen_id)
         save_player_perks(player_data)
+        log_action("perk_random", interaction.user.display_name, member.display_name, chosen_id)
 
         await _dm_perk(member, chosen, chosen_id)
 
@@ -659,6 +662,7 @@ class PerksCog(commands.Cog):
             return
         player["perks"].append(perk_id)
         save_player_perks(player_data)
+        log_action("perk_give", interaction.user.display_name, member.display_name, perk_id)
 
         perk   = all_perks[perk_id]
         await _dm_perk(member, perk, perk_id)
@@ -693,6 +697,7 @@ class PerksCog(commands.Cog):
         save_player_perks(player_data)
         all_perks = load_perks()
         name = all_perks.get(perk_id, {}).get("name", perk_id)
+        log_action("perk_remove", interaction.user.display_name, member.display_name, perk_id)
         await interaction.response.send_message(
             f"✅ Perk **{name}** odebrán {member.mention}.", ephemeral=True
         )

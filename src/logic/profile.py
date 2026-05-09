@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from typing import Optional
 
-from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, ITEMS as ITEMS_FILE
+from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, ITEMS as ITEMS_FILE, PLAYER_PERKS, ACHIEVEMENTS
 from src.utils.json_utils import load_json, save_json
 from src.logic.stats import get_xp_cap, level_label, add_xp
 
@@ -338,6 +338,18 @@ class Profile(commands.Cog):
         if profile.get("motivation"):
             lines.append("")
             lines.append(f"✨  {profile['motivation']}")
+
+        # Perky & Achievementy
+        try:
+            pp_data   = load_json(PLAYER_PERKS, {})
+            ach_data  = load_json(ACHIEVEMENTS, {})
+            perk_cnt  = len(pp_data.get(str(user_id), {}).get("perks", []))
+            ach_cnt   = len(ach_data.get(str(user_id), []))
+            if perk_cnt > 0 or ach_cnt > 0:
+                lines.append("")
+                lines.append(f"🏷️ Perky: **{perk_cnt}**  ·  🏆 Achievementy: **{ach_cnt}**")
+        except Exception:
+            pass
 
         # Poslední vzpomínka
         if memories:
