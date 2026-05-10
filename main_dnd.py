@@ -41,9 +41,13 @@ if _data_dir_override:
     _paths.COMBAT_STATE     = _paths.data("combat_state.json")
     _paths.REPUTATION       = _paths.data("reputation.json")
     _paths.TAKEDOWNS        = _paths.data("takedowns.json")
-    _paths.ROLL_STATS       = _paths.data("roll_stats.json")
-    _paths.DND_COUNTER      = _paths.data("dnd_counter.json")
-    _paths.TUTORIAL_MSG     = _paths.data("tutorial_msg.json")
+    _paths.ROLL_STATS        = _paths.data("roll_stats.json")
+    _paths.DND_COUNTER       = _paths.data("dnd_counter.json")
+    _paths.TUTORIAL_MSG      = _paths.data("tutorial_msg.json")
+    _paths.PERKS             = _paths.data("perks.json")
+    _paths.PLAYER_PERKS      = _paths.data("player_perks.json")
+    _paths.ACHIEVEMENTS      = _paths.data("achievements.json")
+    _paths.ACHIEVEMENT_DATA  = _paths.data("achievement_data.json")
 
 os.makedirs(_paths.DATA_DIR, exist_ok=True)
 
