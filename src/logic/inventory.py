@@ -277,7 +277,7 @@ def _remove_equip_bonus(profile: dict, bonus: dict) -> None:
 
 
 def _equip_item(profile: dict, item_id: str, preferred_slot: str | None,
-                items_db: dict) -> tuple[bool, str]:
+                items_db: dict, user_id: str | None = None) -> tuple[bool, str]:
     _ensure_inv_fields(profile)
     db_item = items_db.get(item_id)
     if not db_item:
@@ -311,6 +311,17 @@ def _equip_item(profile: dict, item_id: str, preferred_slot: str | None,
     if failed:
         reqs = ", ".join(f"**{stat}** {needed} (máš {have})" for stat, needed, have in failed)
         return False, f"**{db_item['name']}** — nesplněné požadavky: {reqs}."
+
+    req_perk = db_item.get("required_perk")
+    if req_perk and user_id:
+        try:
+            from src.core.dnd.perks import load_player_perks, load_perks
+            owned_perks = load_player_perks().get(user_id, {}).get("perks", [])
+            if req_perk not in owned_perks:
+                perk_name = load_perks().get(req_perk, {}).get("name", req_perk)
+                return False, f"**{db_item['name']}** vyžaduje perk **{perk_name}**."
+        except Exception:
+            pass
 
     hand_type   = db_item.get("hand_type")
     equip_bonus = db_item.get("equip_bonus", {})
@@ -588,6 +599,15 @@ def _build_inspect_embed(item_id: str, items_db: dict,
             req_lines.append(line)
         desc_parts.append("\n**Požadavky:**\n" + "\n".join(req_lines))
 
+    req_perk = item.get("required_perk")
+    if req_perk:
+        try:
+            from src.core.dnd.perks import load_perks
+            perk_name = load_perks().get(req_perk, {}).get("name", req_perk)
+        except Exception:
+            perk_name = req_perk
+        desc_parts.append(f"\n**Potřebný perk:** ⚔️ **{perk_name}**\n-# `{req_perk}`")
+
     embed = discord.Embed(
         title=item["name"],
         description="\n".join(desc_parts) if desc_parts else "—",
@@ -621,6 +641,23 @@ async def _ac_database_item(
         for k, v in items_db.items()
         if cur in k.lower() or cur in v["name"].lower()
     ][:25]
+
+
+async def _ac_vyzboj_perk(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    try:
+        from src.core.dnd.perks import load_perks
+        perks = load_perks()
+        cur   = current.lower()
+        return [
+            app_commands.Choice(name=f"{p['name']} ({pid})", value=pid)
+            for pid, p in perks.items()
+            if p.get("group") == "Výzbroj"
+            and (cur in pid.lower() or cur in p.get("name", "").lower())
+        ][:25]
+    except Exception:
+        return []
 
 
 async def _ac_inventory_item(
@@ -1222,7 +1259,7 @@ class Inventory(commands.Cog):
             return
         _ensure_inv_fields(profile)
         items_db = _load_items()
-        ok, msg  = _equip_item(profile, item, slot, items_db)
+        ok, msg  = _equip_item(profile, item, slot, items_db, str(interaction.user.id))
         if ok:
             _save_profiles(profiles)
         await interaction.followup.send(f"{'✅' if ok else '❌'} {msg}")
@@ -1274,6 +1311,7 @@ class Inventory(commands.Cog):
         stat_bonus="Bonusy ke statům při equipu, např. STR:3 DEX:1 (0 = odebrat).",
         desc="Popis, lore, perky — volný text.",
         lore_drop="Narativní hláška zobrazená při použití itemu (místo desc).",
+        required_perk="Perk nutný pro equipnutí (autocomplete: Výzbroj perky).",
     )
     @app_commands.choices(
         category=[app_commands.Choice(name=c, value=c) for c in CATEGORIES],
@@ -1293,6 +1331,7 @@ class Inventory(commands.Cog):
             app_commands.Choice(name="Obouruční",  value="two"),
         ],
     )
+    @app_commands.autocomplete(required_perk=_ac_vyzboj_perk)
     async def inv_db_add(
         self, interaction: discord.Interaction,
         item_id: str, name: str, category: str,
@@ -1306,6 +1345,7 @@ class Inventory(commands.Cog):
         stat_bonus: Optional[str] = None,
         desc: Optional[str] = None,
         lore_drop: Optional[str] = None,
+        required_perk: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -1345,7 +1385,8 @@ class Inventory(commands.Cog):
             for k, v in _parse_requires(stat_bonus).items():
                 if v != 0:
                     equip_bonus[k] = v
-        if equip_bonus: item["equip_bonus"] = equip_bonus
+        if equip_bonus:    item["equip_bonus"]    = equip_bonus
+        if required_perk:  item["required_perk"]  = required_perk
         items_db[item_id] = item
         _save_items(items_db)
         await interaction.followup.send(
@@ -1369,8 +1410,9 @@ class Inventory(commands.Cog):
         mana_bonus="Bonus k max maně při equipu (0 = odebrat).",
         stat_bonus="Bonusy ke statům při equipu, např. STR:3 DEX:1 (stat:0 = odebrat).",
         lore_drop="Narativní hláška při použití (prázdné = beze změny · 'clear' = odebrat).",
+        required_perk="Perk nutný pro equipnutí ('clear' = odebrat).",
     )
-    @app_commands.autocomplete(item_id=_ac_database_item)
+    @app_commands.autocomplete(item_id=_ac_database_item, required_perk=_ac_vyzboj_perk)
     async def inv_db_edit(
         self, interaction: discord.Interaction,
         item_id: str,
@@ -1389,6 +1431,7 @@ class Inventory(commands.Cog):
         hp_bonus: Optional[int] = None,
         mana_bonus: Optional[int] = None,
         stat_bonus: Optional[str] = None,
+        required_perk: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -1441,6 +1484,9 @@ class Inventory(commands.Cog):
                     else:      eb.pop(k, None)
             if not eb:
                 item.pop("equip_bonus", None)
+        if required_perk is not None:
+            if required_perk.lower() == "clear": item.pop("required_perk", None)
+            else:                                 item["required_perk"] = required_perk
         _save_items(items_db)
         await interaction.followup.send(
             f"✅ Item **{item['name']}** (`{item_id}`) upraven.")

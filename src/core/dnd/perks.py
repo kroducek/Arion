@@ -932,11 +932,30 @@ def save_player_perks(data: dict):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def _get_player(uid_str: str, data: dict) -> dict:
-    data.setdefault(uid_str, {"perks": [], "cooldowns": {}})
+    data.setdefault(uid_str, {"perks": [], "cooldowns": {}, "progress": {}})
     p = data[uid_str]
     p.setdefault("perks", [])
     p.setdefault("cooldowns", {})
+    p.setdefault("progress", {})
     return p
+
+# ── Level-up helpers ──────────────────────────────────────────────────────────
+
+_NEXT_TIER: dict[str, str] = {"magicke_citeni": "mana_sensing_2", "mana_sensing_2": "mana_sensing_3"}
+
+def _next_tier_id(perk_id: str) -> str | None:
+    if perk_id in _NEXT_TIER:
+        return _NEXT_TIER[perk_id]
+    for suf, nxt in [("_1", "_2"), ("_2", "_3")]:
+        if perk_id.endswith(suf):
+            return perk_id[:-2] + nxt
+    return None
+
+PROGRESS_MAX = 5
+
+def _progress_bar(used: int, max_: int = PROGRESS_MAX) -> str:
+    used = min(used, max_)
+    return f"`{'▰' * used}{'▱' * (max_ - used)}` {used}/{max_}"
 
 # ── Migrace ───────────────────────────────────────────────────────────────────
 
@@ -1149,11 +1168,18 @@ class PerksCog(commands.Cog):
                 passive_list.append((pid, p))
 
         def fmt_entry(pid: str, p: dict) -> list[str]:
-            gemoji     = GROUP_EMOJI.get(p.get("group", ""), "▸")
+            gemoji      = GROUP_EMOJI.get(p.get("group", ""), "▸")
             passive_tag = " *(pasivní)*" if p.get("passive") else ""
             lines = [f"▸ {gemoji} **{p['name']}**{passive_tag}"]
-            cd_str = _cooldown_status(player, pid, p)
-            lines.append(f"-# {cd_str}  ·  `{pid}`" if cd_str else f"-# `{pid}`")
+            cd_str  = _cooldown_status(player, pid, p)
+            sub_parts: list[str] = []
+            if cd_str:
+                sub_parts.append(cd_str)
+            if p.get("learnable") and _next_tier_id(pid):
+                prog = player.get("progress", {}).get(pid, 0)
+                sub_parts.append(f"⬆️ {_progress_bar(prog)}")
+            sub_parts.append(f"`{pid}`")
+            lines.append("-# " + "  ·  ".join(sub_parts))
             return lines
 
         sections: list[str] = []
@@ -1393,6 +1419,62 @@ class PerksCog(commands.Cog):
                 "✅ Cooldowny všech hráčů resetovány.", ephemeral=True
             )
 
+    @perk_group.command(name="progress", description="Přidej bod do progress baru perku (admin)")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(perk_id="ID perku (musí být learnable)", member="Hráč", amount="Počet bodů (výchozí 1)")
+    async def perk_progress(self, interaction: discord.Interaction, perk_id: str, member: discord.Member, amount: int = 1):
+        await interaction.response.defer(ephemeral=True)
+        all_perks   = load_perks()
+        player_data = load_player_perks()
+        player      = _get_player(str(member.id), player_data)
+
+        if perk_id not in player["perks"]:
+            await interaction.followup.send(f"{member.mention} nemá perk `{perk_id}`.", ephemeral=True)
+            return
+        perk = all_perks.get(perk_id)
+        if not perk:
+            await interaction.followup.send(f"Perk `{perk_id}` není v databázi.", ephemeral=True)
+            return
+        if not perk.get("learnable"):
+            await interaction.followup.send(f"Perk `{perk_id}` není learnable — nelze levelovat.", ephemeral=True)
+            return
+        next_id = _next_tier_id(perk_id)
+        if not next_id:
+            await interaction.followup.send(f"**{perk['name']}** je už na maximálním tieru (III.).", ephemeral=True)
+            return
+
+        current = player["progress"].get(perk_id, 0) + amount
+        if current >= PROGRESS_MAX:
+            # Auto-evolve
+            next_perk = all_perks.get(next_id)
+            player["perks"].remove(perk_id)
+            player["progress"].pop(perk_id, None)
+            if next_id not in player["perks"]:
+                player["perks"].append(next_id)
+            save_player_perks(player_data)
+            log_action("perk_evolve", interaction.user.display_name, member.display_name, f"{perk_id} → {next_id}")
+
+            group  = (next_perk or perk).get("group", "")
+            color  = GROUP_COLOR.get(group, 0xFFD700)
+            gemoji = GROUP_EMOJI.get(group, "✨")
+            next_name = next_perk["name"] if next_perk else next_id
+            desc = (
+                f"### {gemoji} {perk['name']} → **{next_name}**\n"
+                f"{next_perk['desc'] if next_perk else ''}\n\n"
+                f"{'▰' * PROGRESS_MAX} {PROGRESS_MAX}/{PROGRESS_MAX} ✅"
+            )
+            embed = discord.Embed(title=f"⬆️ {member.display_name} — LEVEL UP!", description=desc, color=color)
+            embed.set_footer(text=f"⭐ {ARION_NAME}  ·  Nový tier: {next_name}")
+            await interaction.channel.send(embed=embed)
+            await interaction.followup.send(f"✅ Perk evolvnutý: **{perk['name']}** → **{next_name}**.", ephemeral=True)
+        else:
+            player["progress"][perk_id] = current
+            save_player_perks(player_data)
+            bar = _progress_bar(current)
+            await interaction.followup.send(
+                f"✅ Progres přidán — **{perk['name']}** {bar}  ({member.display_name})", ephemeral=True
+            )
+
     @perk_group.command(name="new", description="Vytvoř nový perk v databázi (admin)")
     @app_commands.checks.has_permissions(administrator=True)
     async def perk_new(self, interaction: discord.Interaction):
@@ -1498,6 +1580,7 @@ class PerksCog(commands.Cog):
     @perk_edit.autocomplete("perk_id")
     @perk_delete.autocomplete("perk_id")
     @perks_give.autocomplete("perk_id")
+    @perk_progress.autocomplete("perk_id")
     async def perk_db_autocomplete(self, interaction: discord.Interaction, current: str):
         perks = load_perks()
         return [
