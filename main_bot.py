@@ -48,6 +48,7 @@ os.makedirs(_paths.DATA_DIR, exist_ok=True)
 
 BOT_COGS = [
     # Minihry & karty
+    "src.core.bot.duel",
     "src.core.bot.cards",
     "src.core.bot.guess",
     "src.core.bot.kostky",
