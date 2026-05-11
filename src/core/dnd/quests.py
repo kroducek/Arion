@@ -887,11 +887,58 @@ class QuestsCog(commands.Cog):
             msg += f"\n⚠️ DM se nepodařilo odeslat: {', '.join(dm_errors)}."
         await interaction.followup.send(msg, ephemeral=True)
 
+    # ── /quest-pokrok ─────────────────────────────────────────────────────────
+
+    @app_commands.command(name="quest-pokrok", description="Oznám pokrok v questu — embed do kanálu + zápis do deníků (admin)")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(name="Název questu", note="Volitelná poznámka zobrazená v embedu")
+    async def quest_pokrok(self, interaction: discord.Interaction, name: str, note: str | None = None):
+        await interaction.response.defer(ephemeral=True)
+        quests = load_quests()
+        if name not in quests:
+            await interaction.followup.send(f"Quest **{name}** neexistuje.", ephemeral=True)
+            return
+
+        quest_data = quests[name]
+        category   = quest_data.get("category", Category.SIDE)
+        parent     = quest_data.get("parent_quest")
+        member_ids = quest_data.get("members", [])
+        if not isinstance(member_ids, list):
+            member_ids = []
+
+        cat_label = "main" if category == Category.MAIN else "side"
+        desc = f"📜 **Pokrok v questu: {name}** *({cat_label})*"
+        if parent:
+            desc += f"\n╠  main: {parent}"
+        if note:
+            desc += f"\n\n{note}"
+
+        embed = discord.Embed(description=desc, color=STATUS_META[Status.ACTIVE]["color"])
+        embed.set_footer(text=f"⭐ {ARION_NAME}")
+        await interaction.channel.send(embed=embed)
+
+        diaries = load_diaries()
+        for uid in member_ids:
+            uid_str = str(uid)
+            entries = _migrate_entries(diaries.get(uid_str, []))
+            diary_line = f"{today()} — 📜 Pokrok v questu: **{name}**"
+            if note:
+                diary_line += f" — {note}"
+            entries.append({"text": diary_line, "pinned": False, "tag": QUEST_TAG})
+            diaries[uid_str] = entries
+        save_diaries(diaries)
+
+        log_action("quest_pokrok", interaction.user.display_name, name, note or "")
+        await interaction.followup.send(
+            f"✅ Pokrok oznámen. Zapsáno do deníku {len(member_ids)} hráčů.", ephemeral=True
+        )
+
     # ── Autocomplete (sdílené pro remove + status + give) ─────────────────────
 
     @quest_remove.autocomplete("name")
     @quest_status.autocomplete("name")
     @quest_give.autocomplete("name")
+    @quest_pokrok.autocomplete("name")
     async def quest_name_autocomplete(self, interaction: discord.Interaction, current: str):
         quests = load_quests()
         return [
