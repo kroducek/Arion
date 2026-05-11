@@ -693,8 +693,9 @@ class ActionView(discord.ui.View):
         self.add_item(b_btn)
 
         # Ultimate
-        ult_ready = fighter.ult_charge >= cls["ult_charge_max"]
-        u_lbl = f"💥 {cls['ult_name']}  ({'✅ READY' if ult_ready else f\"{fighter.ult_charge}/{cls['ult_charge_max']}\"})"
+        ult_ready   = fighter.ult_charge >= cls["ult_charge_max"]
+        ult_status  = "✅ READY" if ult_ready else f"{fighter.ult_charge}/{cls['ult_charge_max']}"
+        u_lbl       = f"💥 {cls['ult_name']}  ({ult_status})"
         u_btn = discord.ui.Button(
             label=u_lbl,
             style=discord.ButtonStyle.red if ult_ready else discord.ButtonStyle.grey,
