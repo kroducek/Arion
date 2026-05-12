@@ -18,7 +18,8 @@ CLASSES: dict[str, dict] = {
     "Monk": {
         "emoji": "🥷", "hp": 85, "stamina": 120, "posture": 120, "recover": 40,
         "dmg_mod": 1.00, "color": 0xE67E22,
-        "passive": "Meditativní tok — Odpočinek léčí +5 HP navíc",
+        "guard_absorb": 0.38, "recover_hp": 10,
+        "passive": "Meditativní tok — Odpočinek léčí +10 HP navíc",
         "lore": "Disciplinovaný bojovník těla i ducha. Nikdy neutíká od boje.",
         "basic_name": "Meditace",           "basic_desc": "Obnov 30 HP a 10 sta",     "basic_cd": 3,
         "ult_name":   "Duch bouře",         "ult_desc":   "~70 dmg + 40 posture dmg",  "ult_charge_max": 5,
@@ -26,7 +27,8 @@ CLASSES: dict[str, dict] = {
     "Knight": {
         "emoji": "🛡️", "hp": 120, "stamina": 80, "posture": 160, "recover": 25,
         "dmg_mod": 1.15, "color": 0x95A5A6,
-        "passive": "Železná pevnost — štít absorbuje o 20 % více",
+        "guard_absorb": 0.58, "recover_hp": 8,
+        "passive": "Železná pevnost — nejsilnější štít v aréně",
         "lore": "Obrněný válečník. Pomalý. Neúprosný.",
         "basic_name": "Požehnání",          "basic_desc": "Obnov 45 sta a 40 posture", "basic_cd": 3,
         "ult_name":   "Úder spravedlnosti", "ult_desc":   "~80 dmg, ignoruje štít",    "ult_charge_max": 5,
@@ -34,7 +36,8 @@ CLASSES: dict[str, dict] = {
     "Rogue": {
         "emoji": "🗡️", "hp": 75, "stamina": 105, "posture": 90, "recover": 35,
         "dmg_mod": 0.95, "color": 0x2C3E50,
-        "passive": "Stínový krok — úskok vyhýbá i lehkým útokům",
+        "guard_absorb": 0.20, "recover_hp": 6,
+        "passive": "Stínový krok — úskok vyhýbá VŠEM útokům + free counter",
         "lore": "Rychlý a zákeřný. Kdo ho uvidí, je mrtvý.",
         "basic_name": "Jedová čepel",       "basic_desc": "+20 jed / 2 kola",          "basic_cd": 3,
         "ult_name":   "Zákeřný úder",       "ult_desc":   "~90 dmg, nelze blokovat",   "ult_charge_max": 4,
@@ -42,6 +45,7 @@ CLASSES: dict[str, dict] = {
     "Berserker": {
         "emoji": "🪓", "hp": 100, "stamina": 90, "posture": 100, "recover": 30,
         "dmg_mod": 1.35, "color": 0xE74C3C,
+        "guard_absorb": 0.25, "recover_hp": 5,
         "passive": "Krvavý hněv — pod 30 HP: dmg +50 %",
         "lore": "Šílený válečník. Čím méně HP, tím nebezpečnější.",
         "basic_name": "Bojový řev",         "basic_desc": "Příští útok +80 % (viditelné!)", "basic_cd": 4,
@@ -50,6 +54,7 @@ CLASSES: dict[str, dict] = {
     "Guardian": {
         "emoji": "⚜️", "hp": 110, "stamina": 85, "posture": 150, "recover": 30,
         "dmg_mod": 1.00, "color": 0x27AE60,
+        "guard_absorb": 0.55, "recover_hp": 8,
         "passive": "Trny — štít vrací 10 dmg útočníkovi",
         "lore": "Neproniknutelný. Protiúder je smrtící.",
         "basic_name": "Provokace",          "basic_desc": "Příší zásah -60 % + obnov posture", "basic_cd": 3,
@@ -58,7 +63,8 @@ CLASSES: dict[str, dict] = {
     "Duelist": {
         "emoji": "🤺", "hp": 80, "stamina": 100, "posture": 100, "recover": 35,
         "dmg_mod": 1.05, "color": 0x9B59B6,
-        "passive": "Dokonalé parírování — výpad counter +50 %",
+        "guard_absorb": 0.35, "recover_hp": 7,
+        "passive": "Přesné oko — klam ignoruje štít úplně, plný dmg",
         "lore": "Elegantní. Každá akce je kalkulovaná.",
         "basic_name": "Přesný výpad",       "basic_desc": "~40 dmg + posture dmg, nelze blokovat", "basic_cd": 2,
         "ult_name":   "Dokonalý souboj",    "ult_desc":   "Riposte stance: příší útok → 150 % counter", "ult_charge_max": 4,
@@ -71,7 +77,7 @@ CLASS_NAMES = list(CLASSES.keys())
 
 STAM_COSTS = {
     "attack": 15, "heavy": 25, "guard": 10,
-    "parry": 20,  "feint": 12, "dodge": 15, "recover": 0,
+    "feint": 12,  "dodge": 15, "recover": 0,
     "basic": 0,   "ultimate": 0,
 }
 
@@ -214,9 +220,9 @@ def _ctr(f: Fighter) -> int:
 
 def _guard_absorb(f: Fighter, raw: int) -> tuple[int, int]:
     """Returns (damage_taken, posture_damage)."""
-    absorb = 0.55 if f.cls_name == "Knight" else 0.35
+    absorb = CLASSES[f.cls_name]["guard_absorb"]
     if f.buff_absorb:
-        absorb = min(0.85, absorb + 0.5)
+        absorb = min(0.88, absorb + 0.5)
         f.buff_absorb = False
     return round(raw * (1 - absorb)), 15
 
@@ -323,12 +329,12 @@ def resolve_round(state: DuelState) -> list[str]:
         cls1 = CLASSES[f1.cls_name]
         f1.stamina = min(f1.max_sta, f1.stamina + cls1["recover"])
         f1.posture = min(f1.max_posture, f1.posture + 20)
-        if f1.cls_name == "Monk": f1.hp = min(f1.max_hp, f1.hp + 5)
+        f1.hp = min(f1.max_hp, f1.hp + cls1["recover_hp"])
     if a2 == "recover":
         cls2 = CLASSES[f2.cls_name]
         f2.stamina = min(f2.max_sta, f2.stamina + cls2["recover"])
         f2.posture = min(f2.max_posture, f2.posture + 20)
-        if f2.cls_name == "Monk": f2.hp = min(f2.max_hp, f2.hp + 5)
+        f2.hp = min(f2.max_hp, f2.hp + cls2["recover_hp"])
 
     # Posture passive recovery
     f1.posture = min(f1.max_posture, f1.posture + 5)
@@ -368,18 +374,6 @@ def resolve_round(state: DuelState) -> list[str]:
             log.append(f"✀ Trny vrací **{thorns}** zpět!")
         _apply_posture_dmg(grd, pdmg, log)
         return dmg, thorns
-
-    def do_parry(pry: Fighter, incoming: str, bonus_mult: float = 1.0) -> int:
-        # Perfect parry chance
-        is_perfect = incoming == "attack" and random.random() < (0.35 if pry.cls_name == "Duelist" else 0.20)
-        ctr = round(_ctr(pry) * bonus_mult * (2.0 if is_perfect else 1.0))
-        if is_perfect:
-            log.append(f"✨ **PERFECT PARRY** — {pry.member.display_name} vychází z oblouku!")
-            log.append(f"⚡ Bleskový counter za **{ctr}** dmg!")
-            _apply_posture_dmg(pry.member and pry, 0, log)  # no extra needed
-        else:
-            log.append(f"⚡ **{pry.member.display_name}** PARUJE — counter za **{ctr}** dmg!")
-        return ctr
 
     def berserk_attack(f: Fighter) -> int:
         """Double attack for berserk mode."""
@@ -514,8 +508,9 @@ def resolve_round(state: DuelState) -> list[str]:
             elif a2 == "heavy":
                 dmg, t = do_guard(f2, f1, _hvy(f2), is_heavy=True); d1 += dmg; d2 += t
             elif a2 == "feint":
-                raw = _atk(f2)
-                log.append(f"🎭 **{n2}** feintuje — štít brání vzduch! **{raw}** dmg proniká!")
+                raw = _atk(f2) if f2.cls_name != "Duelist" else round(_atk(f2) / 0.85)
+                suffix = " *(Přesné oko — plný dmg)*" if f2.cls_name == "Duelist" else ""
+                log.append(f"🎭 **{n2}** feintuje — štít brání vzduch! **{raw}** dmg proniká!{suffix}")
                 _apply_posture_dmg(f1, 25, log)
                 d1 += raw
             else:
@@ -527,70 +522,36 @@ def resolve_round(state: DuelState) -> list[str]:
             elif a1 == "heavy":
                 dmg, t = do_guard(f1, f2, _hvy(f1), is_heavy=True); d2 += dmg; d1 += t
             elif a1 == "feint":
-                raw = _atk(f1)
-                log.append(f"🎭 **{n1}** feintuje — štít brání vzduch! **{raw}** dmg proniká!")
+                raw = _atk(f1) if f1.cls_name != "Duelist" else round(_atk(f1) / 0.85)
+                suffix = " *(Přesné oko — plný dmg)*" if f1.cls_name == "Duelist" else ""
+                log.append(f"🎭 **{n1}** feintuje — štít brání vzduch! **{raw}** dmg proniká!{suffix}")
                 _apply_posture_dmg(f2, 25, log)
                 d2 += raw
             else:
                 log.append(f"*{n1} nezaútočil na štít {n2}.*")
 
-        elif a1 == "parry" and a2 == "parry":
-            log.append("⚡ Čepele se zamknou — nikdo nevítězí. Dramatické ticho.")
-
-        elif a1 == "parry":
-            if a2 in ("attack", "heavy"):
-                bonus = 1.5 if a2 == "heavy" else 1.0
-                d2 += do_parry(f1, a2, bonus)
-                _apply_posture_dmg(f2, 25, log)
-                log.append(f"*Útok {n2} byl přečten a odražen.*")
-            elif a2 == "feint":
-                # Feint punishes parry — parry whiffs
-                raw = _atk(f2); d1 += raw
-                log.append(f"🎭 **{n2}** — KLAM! **{n1}** paruje vzduch, čepel dopadá za — **{raw}** dmg!")
-                _apply_posture_dmg(f1, 20, log)
-            elif a2 == "dodge":
-                log.append("Oba čtou stejný moment — žádný kontakt.")
-            else:
-                log.append(f"**{n1}** čeká na útok... {n2} nikdy nepřichází.")
-
-        elif a2 == "parry":
-            if a1 in ("attack", "heavy"):
-                bonus = 1.5 if a1 == "heavy" else 1.0
-                d1 += do_parry(f2, a1, bonus)
-                _apply_posture_dmg(f1, 25, log)
-                log.append(f"*Útok {n1} byl přečten a odražen.*")
-            elif a1 == "feint":
-                raw = _atk(f1); d2 += raw
-                log.append(f"🎭 **{n1}** — KLAM! **{n2}** paruje vzduch, čepel dopadá za — **{raw}** dmg!")
-                _apply_posture_dmg(f2, 20, log)
-            elif a1 == "dodge":
-                log.append("Oba čtou stejný moment — žádný kontakt.")
-            else:
-                log.append(f"**{n2}** čeká na útok... {n1} nikdy nepřichází.")
-
         elif a1 == "dodge" and a2 == "dodge":
             log.append("💨 Oba proplují kolem — kroužení, žádný kontakt.")
 
         elif a1 == "dodge":
-            if a2 == "heavy":
-                perfect = random.random() < 0.25
-                if perfect:
-                    free_dmg = round(_atk(f1) * 0.8)
-                    d2 += free_dmg
-                    log.append(f"💨 **PERFECT DODGE** — {n1} mizí z trajektorie a kontrahuje! **{free_dmg}** dmg!")
-                else:
-                    log.append(f"💨 **{n1}** vykračuje ze sekyry — heavy mine!")
-            elif a2 == "attack":
+            if a2 in ("attack", "heavy"):
                 if f1.cls_name == "Rogue":
                     free_dmg = round(_atk(f1) * 0.7)
                     d2 += free_dmg
-                    log.append(f"💨 **{n1}** *(Stínový krok)* — zhasne světlo a kontrahuje za **{free_dmg}**!")
+                    log.append(f"💨 **{n1}** *(Stínový krok)* — mizí z dosahu a kontrahuje za **{free_dmg}** dmg!")
+                elif a2 == "heavy":
+                    perfect = random.random() < 0.25
+                    if perfect:
+                        free_dmg = round(_atk(f1) * 0.8); d2 += free_dmg
+                        log.append(f"💨 **PERFECT DODGE** — {n1} mizí z trajektorie heavy a kontrahuje! **{free_dmg}** dmg!")
+                    else:
+                        log.append(f"💨 **{n1}** vykračuje ze sekyry — heavy mine!")
                 else:
                     dmg = round(_atk(f2) * 0.45); d1 += dmg
                     log.append(f"💨 **{n1}** částečně uhýbá — **{dmg}** dmg clippí ramenem.")
             elif a2 == "feint":
                 if f1.cls_name == "Rogue":
-                    log.append(f"💨 **{n1}** čte feint — mizí úplně.")
+                    log.append(f"💨 **{n1}** čte feint — mizí beze stopy.")
                 else:
                     dmg = round(_atk(f2) * 0.45); d1 += dmg
                     log.append(f"🎭 **{n2}** feintuje a clippí uhýbajícího {n1} — **{dmg}** dmg.")
@@ -598,25 +559,24 @@ def resolve_round(state: DuelState) -> list[str]:
                 log.append(f"**{n1}** uhýbá — ale {n2} nezaútočil.")
 
         elif a2 == "dodge":
-            if a1 == "heavy":
-                perfect = random.random() < 0.25
-                if perfect:
-                    free_dmg = round(_atk(f2) * 0.8)
-                    d1 += free_dmg
-                    log.append(f"💨 **PERFECT DODGE** — {n2} mizí z trajektorie a kontrahuje! **{free_dmg}** dmg!")
-                else:
-                    log.append(f"💨 **{n2}** vykračuje ze sekyry — heavy mine!")
-            elif a1 == "attack":
+            if a1 in ("attack", "heavy"):
                 if f2.cls_name == "Rogue":
                     free_dmg = round(_atk(f2) * 0.7)
                     d1 += free_dmg
-                    log.append(f"💨 **{n2}** *(Stínový krok)* — zhasne světlo a kontrahuje za **{free_dmg}**!")
+                    log.append(f"💨 **{n2}** *(Stínový krok)* — mizí z dosahu a kontrahuje za **{free_dmg}** dmg!")
+                elif a1 == "heavy":
+                    perfect = random.random() < 0.25
+                    if perfect:
+                        free_dmg = round(_atk(f2) * 0.8); d1 += free_dmg
+                        log.append(f"💨 **PERFECT DODGE** — {n2} mizí z trajektorie heavy a kontrahuje! **{free_dmg}** dmg!")
+                    else:
+                        log.append(f"💨 **{n2}** vykračuje ze sekyry — heavy mine!")
                 else:
                     dmg = round(_atk(f1) * 0.45); d2 += dmg
                     log.append(f"💨 **{n2}** částečně uhýbá — **{dmg}** dmg clippí ramenem.")
             elif a1 == "feint":
                 if f2.cls_name == "Rogue":
-                    log.append(f"💨 **{n2}** čte feint — mizí úplně.")
+                    log.append(f"💨 **{n2}** čte feint — mizí beze stopy.")
                 else:
                     dmg = round(_atk(f1) * 0.45); d2 += dmg
                     log.append(f"🎭 **{n1}** feintuje a clippí uhýbajícího {n2} — **{dmg}** dmg.")
@@ -841,23 +801,20 @@ class ActionView(discord.ui.View):
         cls          = CLASSES[fighter.cls_name]
         berserk      = fighter.berserk > 0
 
-        # Row 0: attack, heavy, guard, parry, feint
+        # Row 0: attack, heavy, guard, feint, dodge
         row0 = [
-            ("attack", discord.ButtonStyle.red,     f"⚔️ Útok  (15 sta · ~{BASE_ATK} dmg)"),
-            ("heavy",  discord.ButtonStyle.red,     f"🪓 Těžký útok  (25 sta · ~{BASE_HEAVY} dmg)"),
-            ("guard",  discord.ButtonStyle.green,   "🛡️ Štít  (10 sta)", berserk),
-            ("parry",  discord.ButtonStyle.green,   "⚡ Výpad  (20 sta · counter)"),
-            ("feint",  discord.ButtonStyle.blurple, "🎭 Klam  (12 sta · čte obranu)"),
+            ("attack",  discord.ButtonStyle.red,     f"⚔️ Útok  (15 sta · ~{BASE_ATK} dmg)",       False),
+            ("heavy",   discord.ButtonStyle.red,     f"🪓 Těžký útok  (25 sta · ~{BASE_HEAVY} dmg)", False),
+            ("guard",   discord.ButtonStyle.green,   "🛡️ Štít  (10 sta)",                            berserk),
+            ("feint",   discord.ButtonStyle.blurple, "🎭 Klam  (12 sta · čte obranu)",               False),
+            ("dodge",   discord.ButtonStyle.blurple, "💨 Úskok  (15 sta)",                            False),
         ]
-        # Row 1: dodge, recover, basic, ultimate
+        # Row 1: recover, basic, ultimate
         row1_static = [
-            ("dodge",   discord.ButtonStyle.blurple, "💨 Úskok  (15 sta)"),
-            ("recover", discord.ButtonStyle.grey,    f"💚 Odpočinek  (+{cls['recover']} sta)"),
+            ("recover", discord.ButtonStyle.grey, f"💚 Odpočinek  (+{cls['recover']} sta, +{cls['recover_hp']} HP)"),
         ]
 
-        for item in row0:
-            action, style, label = item[0], item[1], item[2]
-            disabled = item[3] if len(item) > 3 else False
+        for action, style, label, disabled in row0:
             btn = discord.ui.Button(label=label, style=style, row=0, disabled=disabled)
             btn.callback = self._make_cb(action)
             self.add_item(btn)
