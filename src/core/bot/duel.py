@@ -7,7 +7,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-from src.utils.paths import ECONOMY as ECONOMY_FILE
+from src.utils.paths import ECONOMY as ECONOMY_FILE, DUEL_SCORES as DUEL_SCORES_FILE
 from src.utils.json_utils import load_json, save_json
 
 COIN = "<:goldcoin:1490171741237018795>"
@@ -195,6 +195,25 @@ def _cleanup(state: DuelState):
     _active.pop(state.f1.member.id, None)
     _active.pop(state.f2.member.id, None)
     state.done = True
+
+# ── Leaderboard ──────────────────────────────────────────────────────────────
+
+def _load_duel_scores() -> dict:
+    return load_json(DUEL_SCORES_FILE) or {}
+
+def _save_duel_scores(data: dict):
+    save_json(DUEL_SCORES_FILE, data)
+
+def _record_result(winner_id: int, loser_id: int, bet: int):
+    scores = _load_duel_scores()
+    wk, lk = str(winner_id), str(loser_id)
+    for uid in (wk, lk):
+        scores.setdefault(uid, {"wins": 0, "losses": 0, "profit": 0})
+    scores[wk]["wins"]   += 1
+    scores[lk]["losses"] += 1
+    scores[wk]["profit"] += bet
+    scores[lk]["profit"] -= bet
+    _save_duel_scores(scores)
 
 # ── Vizuální helpers ──────────────────────────────────────────────────────────
 
@@ -767,35 +786,7 @@ FINISHERS = [
     "nemůže vstát. Duel rozhodnut.",
 ]
 
-def build_log_embed(state: DuelState, log: list[str]) -> discord.Embed:
-    f1, f2 = state.f1, state.f2
-    sep    = "━" * 22
-    parts  = [
-        f"**Kolo {state.round}** — {random.choice(CROWD_LINES)}",
-        f"`{sep}`",
-        *log,
-        f"`{sep}`",
-    ]
-    if state.last_a1 == "heavy":
-        parts.append(f"⚠️ *{f1.member.display_name} se rozmáchá...*")
-    if state.last_a2 == "heavy":
-        parts.append(f"⚠️ *{f2.member.display_name} se rozmáchá...*")
-    if f1.buff_heavy:
-        parts.append(f"💢 *{f1.member.display_name} nabil úder — POZOR!*")
-    if f2.buff_heavy:
-        parts.append(f"💢 *{f2.member.display_name} nabil úder — POZOR!*")
-
-    embed = discord.Embed(
-        title=f"⚔️  {f1.member.display_name}  vs  {f2.member.display_name}",
-        description="\n".join(parts),
-        color=0x1a1a2e,
-    )
-    footer = f"⭐ Aurionis  ·  Kolo {state.round}"
-    if state.bet: footer += f"  ·  Sázka: {state.bet} {COIN}"
-    embed.set_footer(text=footer)
-    return embed
-
-def build_status_embed(state: DuelState) -> discord.Embed:
+def build_status_embed(state: DuelState, log: list[str] | None = None) -> discord.Embed:
     f1, f2 = state.f1, state.f2
     parts  = [_fighter_bar(f1), "", _fighter_bar(f2)]
 
@@ -803,7 +794,25 @@ def build_status_embed(state: DuelState) -> discord.Embed:
         w = _hp_warning(f)
         if w: parts += ["", w]
 
-    parts.append("\n-# *Oba hráči volí akci...*")
+    if log:
+        parts.append("")
+        for line in log:
+            # strip inline markdown that reads poorly at small size
+            parts.append(f"-# {line}")
+
+    warns = []
+    if state.last_a1 == "heavy":
+        warns.append(f"⚠️ {f1.member.display_name} se rozmáchá...")
+    if state.last_a2 == "heavy":
+        warns.append(f"⚠️ {f2.member.display_name} se rozmáchá...")
+    if f1.buff_heavy:
+        warns.append(f"💢 {f1.member.display_name} nabil úder!")
+    if f2.buff_heavy:
+        warns.append(f"💢 {f2.member.display_name} nabil úder!")
+    for w in warns:
+        parts.append(f"-# {w}")
+
+    parts.append("-# Oba hráči volí akci...")
 
     embed = discord.Embed(
         title=f"⚔️  {f1.member.display_name}  vs  {f2.member.display_name}",
@@ -838,15 +847,19 @@ def build_intro_embed(state: DuelState) -> discord.Embed:
         embed.set_footer(text=f"💰 Sázka: {state.bet} {COIN} každý  ·  výherce bere vše")
     return embed
 
-def build_finish_embed(winner: Fighter, loser: Fighter, bet: int) -> discord.Embed:
-    wcls = CLASSES[winner.cls_name]
-    desc = (
-        f"{wcls['emoji']} **{winner.member.display_name}** stojí jako vítěz!\n\n"
-        f"*{loser.member.display_name} {random.choice(FINISHERS)}*\n"
-    )
+def build_finish_embed(winner: Fighter, loser: Fighter, bet: int, log: list[str]) -> discord.Embed:
+    wcls  = CLASSES[winner.cls_name]
+    parts = [
+        f"{wcls['emoji']} **{winner.member.display_name}** stojí jako vítěz!\n",
+        f"*{loser.member.display_name} {random.choice(FINISHERS)}*",
+    ]
     if bet:
-        desc += f"\n💰 **{winner.member.display_name}** získává **{bet * 2}** {COIN}!"
-    embed = discord.Embed(title="☠️  KONEC DUELU", description=desc, color=wcls["color"])
+        parts.append(f"\n💰 **{winner.member.display_name}** získává **{bet * 2}** {COIN}!")
+    if log:
+        parts.append("")
+        for line in log:
+            parts.append(f"-# {line}")
+    embed = discord.Embed(title="☠️  KONEC DUELU", description="\n".join(parts), color=wcls["color"])
     embed.set_footer(text="⭐ Aurionis")
     return embed
 
@@ -1136,7 +1149,6 @@ async def _try_resolve(state: DuelState):
         if f1_dead or f2_dead:
             winner = state.f2 if f1_dead else state.f1
             loser  = state.f1 if f1_dead else state.f2
-            _cleanup(state)
 
             if state.bet > 0:
                 eco = load_json(ECONOMY_FILE, {})
@@ -1144,12 +1156,13 @@ async def _try_resolve(state: DuelState):
                 eco[wid] = eco.get(wid, 0) + state.bet * 2
                 save_json(ECONOMY_FILE, eco)
 
-            await state.channel.send(embed=build_log_embed(state, log))
-            await state.channel.send(embed=build_finish_embed(winner, loser, state.bet))
+            _record_result(winner.member.id, loser.member.id, state.bet)
+            _cleanup(state)
+
+            await state.channel.send(embed=build_finish_embed(winner, loser, state.bet, log))
         else:
-            await state.channel.send(embed=build_log_embed(state, log))
             state.arena_msg = await state.channel.send(
-                embed=build_status_embed(state), view=ArenaView(state)
+                embed=build_status_embed(state, log), view=ArenaView(state)
             )
 
 # ── Cog ───────────────────────────────────────────────────────────────────────
@@ -1158,10 +1171,12 @@ class DuelCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(name="duel", description="Vyzvi hráče na souboj s sázkou!")
+    duel_group = app_commands.Group(name="duel", description="Tahová PvP aréna")
+
+    @duel_group.command(name="challenge", description="Vyzvi hráče na souboj s sázkou!")
     @app_commands.describe(member="Soupeř", bet="Sázka v zlatých (0 = bez sázky)")
-    async def duel(self, interaction: discord.Interaction,
-                   member: discord.Member, bet: int = 0):
+    async def duel_challenge(self, interaction: discord.Interaction,
+                             member: discord.Member, bet: int = 0):
         challenger = interaction.user
         if member.id == challenger.id:
             await interaction.response.send_message("Nemůžeš vyzvat sám sebe.", ephemeral=True); return
@@ -1194,6 +1209,59 @@ class DuelCog(commands.Cog):
         embed.set_footer(text="⭐ Aurionis  ·  Výzva vyprší za 60 sekund")
         await interaction.response.send_message(embed=embed, view=view)
         view.message = await interaction.original_response()
+
+    @duel_group.command(name="leaderboard", description="Žebříček nejlepších duelistů")
+    async def duel_leaderboard(self, interaction: discord.Interaction):
+        scores = _load_duel_scores()
+        if not scores:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="⚔️  Duel — Žebříček",
+                    description="Zatím žádné duely na tomto serveru.\n*Buď první!*",
+                    color=0x1a1a2e,
+                ).set_footer(text="⭐ Aurionis"),
+            )
+            return
+
+        top     = sorted(scores.items(), key=lambda x: (-x[1].get("wins", 0), -x[1].get("profit", 0)))[:10]
+        medals  = ["🥇", "🥈", "🥉"] + ["🔹"] * 7
+        lines   = []
+        for i, (uid, s) in enumerate(top):
+            member = interaction.guild.get_member(int(uid))
+            name   = member.display_name if member else f"<@{uid}>"
+            wins   = s.get("wins", 0)
+            losses = s.get("losses", 0)
+            profit = s.get("profit", 0)
+            total  = wins + losses
+            ratio  = f"{round(wins/total*100)} %" if total else "—"
+            profit_str = (f"+{profit}" if profit > 0 else str(profit)) if profit else "—"
+            lines.append(
+                f"{medals[i]} **{name}**\n"
+                f"┣ 🏆 {wins}V / {losses}P  ·  {ratio} winrate\n"
+                f"┗ 💰 Profit: **{profit_str}** {COIN if profit else ''}"
+            )
+
+        embed = discord.Embed(
+            title="⚔️  Duel — Žebříček",
+            description="\n\n".join(lines),
+            color=0x1a1a2e,
+        )
+        caller_uid    = str(interaction.user.id)
+        caller_in_top = any(uid == caller_uid for uid, _ in top)
+        if not caller_in_top and caller_uid in scores:
+            cs     = scores[caller_uid]
+            wins   = cs.get("wins", 0); losses = cs.get("losses", 0)
+            profit = cs.get("profit", 0)
+            total  = wins + losses
+            ratio  = f"{round(wins/total*100)} %" if total else "—"
+            profit_str = (f"+{profit}" if profit > 0 else str(profit)) if profit else "—"
+            embed.add_field(
+                name="📍 Tvoje stats",
+                value=f"🏆 {wins}V / {losses}P  ·  {ratio} winrate  ·  💰 {profit_str} {COIN if profit else ''}",
+                inline=False,
+            )
+        embed.set_footer(text="⭐ Aurionis  ·  Top 10 duelistů")
+        await interaction.response.send_message(embed=embed)
 
 
 async def setup(bot: commands.Bot):

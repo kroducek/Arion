@@ -44,6 +44,7 @@ GUESS_SCORES       = data("guess_scores.json")
 LIAR_SCORES        = data("liar_scores.json")
 LIAR_SLOTS_SCORES  = data("liar_slots_scores.json")
 LABYRINTH_SCORES   = data("labyrinth_scores.json")
+DUEL_SCORES        = data("duel_scores.json")
 
 # ── Příběhy / novinky ────────────────────────────────────────
 NEWS        = data("news.json")
