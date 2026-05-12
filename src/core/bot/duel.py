@@ -767,7 +767,7 @@ FINISHERS = [
     "nemůže vstát. Duel rozhodnut.",
 ]
 
-def build_round_embed(state: DuelState, log: list[str]) -> discord.Embed:
+def build_log_embed(state: DuelState, log: list[str]) -> discord.Embed:
     f1, f2 = state.f1, state.f2
     sep    = "━" * 22
     parts  = [
@@ -775,14 +775,15 @@ def build_round_embed(state: DuelState, log: list[str]) -> discord.Embed:
         f"`{sep}`",
         *log,
         f"`{sep}`",
-        "",
-        _fighter_bar(f1),
-        "",
-        _fighter_bar(f2),
     ]
-    for f in (f1, f2):
-        w = _hp_warning(f)
-        if w: parts += ["", w]
+    if state.last_a1 == "heavy":
+        parts.append(f"⚠️ *{f1.member.display_name} se rozmáchá...*")
+    if state.last_a2 == "heavy":
+        parts.append(f"⚠️ *{f2.member.display_name} se rozmáchá...*")
+    if f1.buff_heavy:
+        parts.append(f"💢 *{f1.member.display_name} nabil úder — POZOR!*")
+    if f2.buff_heavy:
+        parts.append(f"💢 *{f2.member.display_name} nabil úder — POZOR!*")
 
     embed = discord.Embed(
         title=f"⚔️  {f1.member.display_name}  vs  {f2.member.display_name}",
@@ -795,17 +796,12 @@ def build_round_embed(state: DuelState, log: list[str]) -> discord.Embed:
     return embed
 
 def build_status_embed(state: DuelState) -> discord.Embed:
-    f1, f2  = state.f1, state.f2
-    parts   = [_fighter_bar(f1), "", _fighter_bar(f2), ""]
+    f1, f2 = state.f1, state.f2
+    parts  = [_fighter_bar(f1), "", _fighter_bar(f2)]
 
-    if state.last_a1 == "heavy":
-        parts.append(f"⚠️ *{f1.member.display_name} se rozmáchá...*")
-    if state.last_a2 == "heavy":
-        parts.append(f"⚠️ *{f2.member.display_name} se rozmáchá...*")
-    if f1.buff_heavy:
-        parts.append(f"💢 *{f1.member.display_name} nabil úder — POZOR!*")
-    if f2.buff_heavy:
-        parts.append(f"💢 *{f2.member.display_name} nabil úder — POZOR!*")
+    for f in (f1, f2):
+        w = _hp_warning(f)
+        if w: parts += ["", w]
 
     parts.append("\n-# *Oba hráči volí akci...*")
 
@@ -1148,10 +1144,10 @@ async def _try_resolve(state: DuelState):
                 eco[wid] = eco.get(wid, 0) + state.bet * 2
                 save_json(ECONOMY_FILE, eco)
 
-            await state.channel.send(embed=build_round_embed(state, log))
+            await state.channel.send(embed=build_log_embed(state, log))
             await state.channel.send(embed=build_finish_embed(winner, loser, state.bet))
         else:
-            await state.channel.send(embed=build_round_embed(state, log))
+            await state.channel.send(embed=build_log_embed(state, log))
             state.arena_msg = await state.channel.send(
                 embed=build_status_embed(state), view=ArenaView(state)
             )
