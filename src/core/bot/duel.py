@@ -57,8 +57,8 @@ CLASSES: dict[str, dict] = {
         "guard_absorb": 0.55, "recover_hp": 8,
         "passive": "Trny — štít vrací 10 dmg útočníkovi (15 při critical)",
         "lore": "Neproniknutelný. Protiúder je smrtící.",
-        "basic_name": "Provokace",          "basic_desc": "Příší zásah -60 % + obnov posture", "basic_cd": 3,
-        "ult_name":   "Odvetný úder",       "ult_desc":   "Odraz příštího útoku zpět",          "ult_charge_max": 5,
+        "basic_name": "Provokace",          "basic_desc": "Příší zásah -60 % + obnov posture",  "basic_cd": 3,
+        "ult_name":   "Odvetný úder",       "ult_desc":   "Odraz příštího útoku zpět",           "ult_charge_max": 5,
     },
     "Duelist": {
         "emoji": "🤺", "hp": 80, "stamina": 100, "posture": 100, "recover": 35,
@@ -96,18 +96,42 @@ INTENT_BERSERK: str = "🪓 *ZBĚSILOST — útočí bez zastavení. Zastavit ho
 # ── Critical log (přidá se do logu při zásahu pod 30 % HP) ───────────────────
 
 CRITICAL_LINES: dict[str, list[str]] = {
-    "Monk":      ["*{n} zakymácí... a pokračuje. Dech. Jen dech.*",
-                  "*{n} krvácí — ale mysl zůstává jasná.*"],
-    "Knight":    ["*{n} zaklesne zuby. Brnění je zkrvavené, ale drží.*",
-                  "*{n} se potácí — a přesto nezahodil štít.*"],
-    "Rogue":     ["*{n} krvácí. Ale oči zůstávají chladné.*",
-                  "*{n} ustoupí do tmy. Kritický stav.*"],
-    "Berserker": ["*{n} se skoro usmívá. Teď to začíná.*",
-                  "*{n} — krev ho jen rozzuřuje. VÍC.*"],
-    "Guardian":  ["*{n} se opře o štít. Nedá se.*",
-                  "*{n} krvácí, ale nohy stojí pevně.*"],
-    "Duelist":   ["*{n} si otře krev. Postoj je stále přesný.*",
-                  "*{n} zraněn — oči nikdy nepřestaly číst.*"],
+    "Monk": [
+        "*{n} zakymácí... a pokračuje. Dech. Jen dech.*",
+        "*{n} krvácí — ale mysl zůstává jasná.*",
+        "*Bolest je jen pocit. {n} se soustředí.*",
+        "*{n} zavírá oči na zlomek vteřiny. Pak znovu otevírá — klidné.*",
+    ],
+    "Knight": [
+        "*{n} zaklesne zuby. Brnění je zkrvavené, ale drží.*",
+        "*{n} se potácí — a přesto nezahodil štít.*",
+        "*Každý úder ho posílá zpět o krok. Ale nikdy o dva.*",
+        "*{n} krvácí. Musí vydržet. Vydrží.*",
+    ],
+    "Rogue": [
+        "*{n} krvácí. Ale oči zůstávají chladné.*",
+        "*{n} ustoupí do tmy. Kritický stav.*",
+        "*Zranění je smrtelné — pokud ho nechá zabít. {n} nepodvolí.*",
+        "*{n} si otírá krev z tváře. Úsměv mizí.*",
+    ],
+    "Berserker": [
+        "*{n} se skoro usmívá. Teď to začíná.*",
+        "*{n} — krev ho jen rozzuřuje. VÍC.*",
+        "*Každý zásah jen přilévá oleje. {n} řve.*",
+        "*Bolest? {n} to necítí. Vidí jen soupeře.*",
+    ],
+    "Guardian": [
+        "*{n} se opře o štít. Nedá se.*",
+        "*{n} krvácí, ale nohy stojí pevně.*",
+        "*Štít se tepe. {n} se netřese.*",
+        "*I zkrvavený {n} neustoupí ani o krok.*",
+    ],
+    "Duelist": [
+        "*{n} si otře krev. Postoj je stále přesný.*",
+        "*{n} zraněn — oči nikdy nepřestaly číst.*",
+        "*Krev mu stéká po ruce. Nevadí. Soustředí se.*",
+        "*{n} se usmívá. Takhle souboj teprve začíná.*",
+    ],
 }
 
 # ── Akce ─────────────────────────────────────────────────────────────────────
@@ -121,8 +145,8 @@ STAM_COSTS = {
 
 _ABILITY_ACTIONS = frozenset(("basic", "ultimate", "hp_potion", "sta_potion"))
 
-BASE_ATK   = 20
-BASE_HEAVY = 35
+BASE_ATK    = 20
+BASE_HEAVY  = 35
 RIPOSTE_CTR = 15
 
 # ── Fighter ───────────────────────────────────────────────────────────────────
@@ -139,7 +163,6 @@ class Fighter:
         self.posture     = cls["posture"]
         self.max_posture = cls["posture"]
         self.ult_charge  = 0
-        # State
         self.guard_broken: bool = False
         self.berserk:      int  = 0
         self.riposte:      bool = False
@@ -196,7 +219,7 @@ def _cleanup(state: DuelState):
     _active.pop(state.f2.member.id, None)
     state.done = True
 
-# ── Leaderboard ──────────────────────────────────────────────────────────────
+# ── Leaderboard ───────────────────────────────────────────────────────────────
 
 def _load_duel_scores() -> dict:
     return load_json(DUEL_SCORES_FILE) or {}
@@ -280,7 +303,6 @@ def _eff(f: Fighter, base: int) -> int:
     class_mod = CLASSES[f.cls_name]["dmg_mod"]
     rage_mod  = 1.5 if f.cls_name == "Berserker" and f.critical else 1.0
     boost_mod = 1.8 if f.buff_heavy else 1.0
-    # Critical pressure bonus
     crit_mod  = 1.20 if f.critical and f.cls_name == "Duelist" else 1.0
     f.buff_heavy = False
     return max(1, round(base * class_mod * stam_mod * rage_mod * boost_mod * crit_mod))
@@ -293,12 +315,10 @@ def _riposte_ctr(f: Fighter) -> int:
     return max(1, round(RIPOSTE_CTR * mult * CLASSES[f.cls_name]["dmg_mod"]))
 
 def _guard_absorb(f: Fighter, raw: int) -> tuple[int, int]:
-    """Returns (damage_taken, posture_damage)."""
     absorb = CLASSES[f.cls_name]["guard_absorb"]
     if f.buff_absorb:
         absorb = min(0.88, absorb + 0.5)
         f.buff_absorb = False
-    # Knight gets bonus under critical
     if f.critical and f.cls_name == "Knight":
         absorb = min(0.75, absorb + 0.10)
     return round(raw * (1 - absorb)), 15
@@ -306,7 +326,7 @@ def _guard_absorb(f: Fighter, raw: int) -> tuple[int, int]:
 def _posture_break(f: Fighter, log: list[str]):
     f.guard_broken = True
     f.posture = f.max_posture
-    log.append(f"💔 **GUARD BREAK** — obrана {f.member.display_name} se hroutí!")
+    log.append(f"💔 **GUARD BREAK** — obrana {f.member.display_name} se hroutí!")
 
 def _apply_posture_dmg(f: Fighter, pdmg: int, log: list[str]):
     f.posture = max(0, f.posture - pdmg)
@@ -465,7 +485,11 @@ def resolve_round(state: DuelState) -> list[str]:
             log.append(f"🛡️ **{grd.member.display_name}** — **BLOCKED** ({absorb_pct} % absorbed)")
             log.append(f"*Heavy tříští postoj! {dmg} dmg proniká.*")
         else:
-            log.append(f"🛡️ **{grd.member.display_name}** — **BLOCKED** ({absorb_pct} % absorbed) — {dmg} dmg.")
+            log.append(random.choice([
+                f"🛡️ **{grd.member.display_name}** — **BLOCKED** ({absorb_pct} % absorbed) — {dmg} dmg.",
+                f"🛡️ Štít **{grd.member.display_name}** pohltí úder. {dmg} dmg pronikne.",
+                f"🛡️ **{grd.member.display_name}** kryje — {dmg} dmg ({absorb_pct} % blokováno).",
+            ]))
         if thorns:
             log.append(f"✀ Trny vrací **{thorns}** dmg útočníkovi!")
         _apply_posture_dmg(grd, pdmg, log)
@@ -474,7 +498,11 @@ def resolve_round(state: DuelState) -> list[str]:
     def berserk_attack(f: Fighter) -> int:
         d1b = _atk(f); d2b = _atk(f)
         dmg = d1b + d2b
-        log.append(f"🪓 **{f.member.display_name}** — ZBĚSILOST! **{d1b}** + **{d2b}** = **{dmg}** dmg!")
+        log.append(random.choice([
+            f"🪓 **{f.member.display_name}** — ZBĚSILOST! **{d1b}** + **{d2b}** = **{dmg}** dmg!",
+            f"🪓 **{f.member.display_name}** útočí dvakrát bez zastavení! **{d1b}** + **{d2b}** = **{dmg}** dmg!",
+            f"🪓 Šílenství **{f.member.display_name}** — dva rychlé údery, **{dmg}** dmg celkem!",
+        ]))
         return dmg
 
     # ── Ability/Potion pre-pass ───────────────────────────────────────────────
@@ -516,6 +544,11 @@ def resolve_round(state: DuelState) -> list[str]:
         elif a2 == "feint":
             raw = _atk(f2); d1 += raw
             log.append(f"🎭 **{n2}** pronáší klam na otevřeného soupeře — **{raw}** dmg!")
+        elif a2 == "guard":
+            log.append(f"*{n2} se kryl za štít — nebylo co blokovat.*")
+        elif a2 == "dodge":
+            log.append(f"*{n2} uhýbá do strany — {n1} neútočil.*")
+        # a2 == "recover": already logged above
 
     elif not ab1 and ab2:
         if a1 in ("attack", "heavy"):
@@ -526,6 +559,11 @@ def resolve_round(state: DuelState) -> list[str]:
         elif a1 == "feint":
             raw = _atk(f1); d2 += raw
             log.append(f"🎭 **{n1}** pronáší klam na otevřeného soupeře — **{raw}** dmg!")
+        elif a1 == "guard":
+            log.append(f"*{n1} se kryl za štít — nebylo co blokovat.*")
+        elif a1 == "dodge":
+            log.append(f"*{n1} uhýbá do strany — {n2} neútočil.*")
+        # a1 == "recover": already logged above
 
     elif not ab1 and not ab2:
 
@@ -539,6 +577,18 @@ def resolve_round(state: DuelState) -> list[str]:
                 c = _hvy(f2) if a2 == "heavy" else _atk(f2)
                 d1 += c
                 log.append(f"⚔️ **{n2}** odpovídá — **{c}** dmg!")
+            elif a2 == "feint":
+                c = _atk(f2); d1 += c
+                log.append(f"🎭 **{n2}** feintuje zběsilce — **{c}** dmg!")
+            elif a2 == "guard":
+                log.append(f"🛡️ **{n2}** zvedá štít — zběsilost proniká skrz! Nelze blokovat.")
+            elif a2 == "dodge":
+                if f2.cls_name == "Rogue":
+                    d2 -= raw
+                    free_dmg = round(_atk(f2) * 0.7); d1 += free_dmg
+                    log.append(f"💨 **MISS!** **{n2}** *(Stínový krok)* — uhýbá i zběsilosti! Kontruje za **{free_dmg}** dmg!")
+                else:
+                    log.append(f"💨 **{n2}** se pokouší uhýbat — zběsilost je příliš rychlá.")
 
         elif f2.berserk > 0 and a2 in ("attack", "heavy", "feint"):
             raw = berserk_attack(f2)
@@ -549,6 +599,18 @@ def resolve_round(state: DuelState) -> list[str]:
                 c = _hvy(f1) if a1 == "heavy" else _atk(f1)
                 d2 += c
                 log.append(f"⚔️ **{n1}** odpovídá — **{c}** dmg!")
+            elif a1 == "feint":
+                c = _atk(f1); d2 += c
+                log.append(f"🎭 **{n1}** feintuje zběsilce — **{c}** dmg!")
+            elif a1 == "guard":
+                log.append(f"🛡️ **{n1}** zvedá štít — zběsilost proniká skrz! Nelze blokovat.")
+            elif a1 == "dodge":
+                if f1.cls_name == "Rogue":
+                    d1 -= raw
+                    free_dmg = round(_atk(f1) * 0.7); d2 += free_dmg
+                    log.append(f"💨 **MISS!** **{n1}** *(Stínový krok)* — uhýbá i zběsilosti! Kontruje za **{free_dmg}** dmg!")
+                else:
+                    log.append(f"💨 **{n1}** se pokouší uhýbat — zběsilost je příliš rychlá.")
 
         # ── Duelist riposte check ─────────────────────────────────────────────
         elif f1.riposte and a2 in ("attack", "heavy"):
@@ -560,6 +622,13 @@ def resolve_round(state: DuelState) -> list[str]:
             log.append(f"⚡ **{n1}** čekal přesně na tohle — **RIPOSTE** za **{ctr}** dmg!")
             log.append(f"*{n1} inkasuje jen zlomek — **{round(dmg_in * 0.2)}** dmg.*")
 
+        elif f1.riposte and a2 == "feint":
+            raw = _atk(f2) if f2.cls_name != "Duelist" else round(_atk(f2) / 0.85)
+            extra = " *(Přesné oko!)*" if f2.cls_name == "Duelist" else ""
+            d1 += raw
+            f1.riposte = False
+            log.append(f"🎭 **{n2}** pronáší klam — riposte stance propadá! **{raw}** dmg!{extra}")
+
         elif f2.riposte and a1 in ("attack", "heavy"):
             ctr = round(_riposte_ctr(f2) * 1.5)
             dmg_in = _hvy(f1) if a1 == "heavy" else _atk(f1)
@@ -569,11 +638,22 @@ def resolve_round(state: DuelState) -> list[str]:
             log.append(f"⚡ **{n2}** čekal přesně na tohle — **RIPOSTE** za **{ctr}** dmg!")
             log.append(f"*{n2} inkasuje jen zlomek — **{round(dmg_in * 0.2)}** dmg.*")
 
+        elif f2.riposte and a1 == "feint":
+            raw = _atk(f1) if f1.cls_name != "Duelist" else round(_atk(f1) / 0.85)
+            extra = " *(Přesné oko!)*" if f1.cls_name == "Duelist" else ""
+            d2 += raw
+            f2.riposte = False
+            log.append(f"🎭 **{n1}** pronáší klam — riposte stance propadá! **{raw}** dmg!{extra}")
+
         # ── Normal matrix ─────────────────────────────────────────────────────
 
         elif a1 == "recover" and a2 == "recover":
-            log.append("*Oba si oddechnou. Napětí v aréně stoupá...*")
-            # punish recover against recover with attack
+            log.append(random.choice([
+                "*Oba si oddechnou. Napětí v aréně stoupá...*",
+                "*Krátká přestávka. Aréna drží dech.*",
+                "*Oba se stáhnou zpátky. Souboj ještě neskončil.*",
+            ]))
+
         elif a1 == "recover":
             if a2 in ("attack", "heavy", "feint"):
                 raw = round((_hvy(f2) if a2 == "heavy" else _atk(f2)) * 1.3)
@@ -583,6 +663,7 @@ def resolve_round(state: DuelState) -> list[str]:
                 log.append(f"💀 {lbl} **{n2}** trestá recovery — **{raw}** dmg bez milosti!")
             else:
                 log.append(f"*{n2} se drží zpátky.*")
+
         elif a2 == "recover":
             if a1 in ("attack", "heavy", "feint"):
                 raw = round((_hvy(f1) if a1 == "heavy" else _atk(f1)) * 1.3)
@@ -594,7 +675,11 @@ def resolve_round(state: DuelState) -> list[str]:
                 log.append(f"*{n1} se drží zpátky.*")
 
         elif a1 == "guard" and a2 == "guard":
-            log.append("🛡️ Oba zvedají štíty — pat. Ticho.")
+            log.append(random.choice([
+                "🛡️ Oba zvedají štíty — pat. Ticho.",
+                "🛡️ Štít na štít. Nikdo neútočí.",
+                "🛡️ Čekání. Oba se brání, nikam nespěchají.",
+            ]))
             f1.posture = min(f1.max_posture, f1.posture + 5)
             f2.posture = min(f2.max_posture, f2.posture + 5)
 
@@ -627,7 +712,11 @@ def resolve_round(state: DuelState) -> list[str]:
                 log.append(f"*{n1} nezaútočil na štít {n2}.*")
 
         elif a1 == "dodge" and a2 == "dodge":
-            log.append("💨 Oba proplují kolem — kroužení. Žádný kontakt.")
+            log.append(random.choice([
+                "💨 Oba proplují kolem — kroužení. Žádný kontakt.",
+                "💨 Tanec stínů. Ani jeden nezaútočil.",
+                "💨 Obě postavy mizí a znovu se zhmotní — bez výsledku.",
+            ]))
 
         elif a1 == "dodge":
             if a2 in ("attack", "heavy"):
@@ -680,26 +769,43 @@ def resolve_round(state: DuelState) -> list[str]:
         elif a1 == "feint" and a2 == "feint":
             t1 = _atk(f2); t2 = _atk(f1)
             d1 += t1; d2 += t2
-            log.append("🎭 Oba feintují — oba se přeříznout!")
-            log.append(f"*Simultánní hit: **{t2}** / **{t1}** dmg.*")
+            log.append(random.choice([
+                "🎭 Oba feintují — oba se přeříznou!",
+                "🎭 Klam za klam. Ani jeden nepočítal s tímhle.",
+                "🎭 Simultánní klam — vzájemný zásah.",
+            ]))
+            log.append(f"*{t2} / {t1} dmg.*")
 
         elif a1 == "attack" and a2 == "attack":
             t1 = _atk(f2); t2 = _atk(f1)
             if f1.guard_broken: t1 = _apply_broken_bonus(t1); f1.guard_broken = False
             if f2.guard_broken: t2 = _apply_broken_bonus(t2); f2.guard_broken = False
             d1 += t1; d2 += t2
-            log.append(f"⚔️ **{n1}** vs **{n2}** — čepele se kříží!")
+            log.append(random.choice([
+                f"⚔️ **{n1}** vs **{n2}** — čepele se kříží!",
+                f"⚔️ Střet uprostřed arény — ani jeden necouvl!",
+                f"⚔️ **{n1}** se vrhá vpřed — **{n2}** odpovídá bez váhání.",
+                f"⚔️ Oba útočí — boj nepočká.",
+            ]))
             log.append(f"*Oba si vymění rány. **{t2}** / **{t1}** dmg.*")
 
         elif a1 == "attack" and a2 == "feint":
             t1 = _atk(f2); t2 = _atk(f1)
             d1 += t1; d2 += t2
-            log.append(f"⚔️ **{n1}** zaútočí — **{n2}** zároveň prolézá obranou. Oba zasáhnou.")
+            log.append(random.choice([
+                f"⚔️ **{n1}** zaútočí — **{n2}** zároveň prolézá obranou. Oba zasáhnou.",
+                f"🎭 **{n2}** feintuje, ale **{n1}** se nevzdal svého útoku. Oba inkasují.",
+            ]))
+            log.append(f"***{t2}** / **{t1}** dmg.*")
 
         elif a1 == "feint" and a2 == "attack":
             t1 = _atk(f2); t2 = _atk(f1)
             d1 += t1; d2 += t2
-            log.append(f"🎭 **{n1}** se vmísí — **{n2}** zároveň prolézá. Oba zasáhnou.")
+            log.append(random.choice([
+                f"🎭 **{n1}** se vmísí — **{n2}** zároveň prolézá. Oba zasáhnou.",
+                f"⚔️ **{n2}** zaútočí — **{n1}** feintuje, ale oba si vymění rány.",
+            ]))
+            log.append(f"***{t2}** / **{t1}** dmg.*")
 
         elif a1 == "heavy" and a2 == "heavy":
             t1 = _hvy(f2); t2 = _hvy(f1)
@@ -707,30 +813,34 @@ def resolve_round(state: DuelState) -> list[str]:
             if f2.guard_broken: t2 = _apply_broken_bonus(t2); f2.guard_broken = False
             d1 += t1; d2 += t2
             _apply_posture_dmg(f1, 20, log); _apply_posture_dmg(f2, 20, log)
-            log.append("💥 **MASIVNÍ KOLIZE** — oba heavy se střetnou!")
-            log.append(f"*Aréna se třese. **{t2}** / **{t1}** dmg. Postoje otřeseny.*")
+            log.append(random.choice([
+                "💥 **MASIVNÍ KOLIZE** — oba heavy se střetají!",
+                "💥 Otřes. Oba heavy dopadají ve stejný okamžik.",
+                "💥 Aréna se třese. Dva heavy — žádný necouvnul.",
+            ]))
+            log.append(f"*Postoje otřeseny. **{t2}** / **{t1}** dmg.*")
 
         elif a1 == "heavy" and a2 == "attack":
             t1 = _atk(f2); t2 = _hvy(f1)
             d1 += t1; d2 += t2
             _apply_posture_dmg(f2, 20, log)
-            log.append(f"⚔️ **{n2}** zaútočí rychle — ale **{n1}**'s heavy dopadá tíhou. 💥 **CRUSH!**")
+            log.append(f"⚔️ **{n2}** zaútočí rychle (**{t1}** dmg) — ale heavy od **{n1}** dopadá tíhou. 💥 **CRUSH! {t2}** dmg.")
 
         elif a1 == "attack" and a2 == "heavy":
             t1 = _hvy(f2); t2 = _atk(f1)
             d1 += t1; d2 += t2
             _apply_posture_dmg(f1, 20, log)
-            log.append(f"⚔️ **{n1}** zaútočí rychle — ale **{n2}**'s heavy dopadá tíhou. 💥 **CRUSH!**")
+            log.append(f"⚔️ **{n1}** zaútočí rychle (**{t2}** dmg) — ale heavy od **{n2}** dopadá tíhou. 💥 **CRUSH! {t1}** dmg.")
 
         elif a1 == "heavy" and a2 == "feint":
             t1 = _atk(f2); t2 = _hvy(f1)
             d1 += t1; d2 += t2
-            log.append(f"🎭 **{n2}** čte heavy a propluje — **{t1}** dmg. Ale heavy dopadá — 💥 **CRUSH! {t2}** dmg.")
+            log.append(f"🎭 **{n2}** čte heavy a propluje — **{t1}** dmg. Ale heavy od **{n1}** dopadá — 💥 **CRUSH! {t2}** dmg.")
 
         elif a1 == "feint" and a2 == "heavy":
             t1 = _hvy(f2); t2 = _atk(f1)
             d1 += t1; d2 += t2
-            log.append(f"🎭 **{n1}** čte heavy a propluje — **{t2}** dmg. Ale heavy dopadá — 💥 **CRUSH! {t1}** dmg.")
+            log.append(f"🎭 **{n1}** čte heavy a propluje — **{t2}** dmg. Ale heavy od **{n2}** dopadá — 💥 **CRUSH! {t1}** dmg.")
 
         else:
             log.append("*Boj pokračuje... nikdo nespěchá.*")
@@ -776,6 +886,10 @@ CROWD_LINES = [
     "Dav jásá!", "Aréna zní výkřiky!", "Krev na písku.",
     "Nikdo neopouští svá místa.", "Napětí je hmatatelné.",
     "Aréna drží dech.", "Bouře se schyluje.",
+    "Rány duní arénou.", "Ticho před bouří.",
+    "Diváci nemrkají.", "Pach krve a prachu.",
+    "Tenhle boj nebude krátký.", "Ani jeden se nevzdá.",
+    "Aréna tohle neviděla dlouho.",
 ]
 
 FINISHERS = [
@@ -784,6 +898,13 @@ FINISHERS = [
     "zakolísá a padá. Hotovo.",
     "je poražen. Aréna exploduje výkřiky!",
     "nemůže vstát. Duel rozhodnut.",
+    "klesá k zemi — soupeř stojí.",
+    "přijímá porážku. Bez slova.",
+    "padá jako strom. Konec.",
+    "se složí — bylo to blízko. Ale nestačilo.",
+    "leží na písku. Duel skončil.",
+    "nevstal. Aréna to potvrzuje potleskem.",
+    "se nevzdal — ale jeho tělo rozhodlo za něj.",
 ]
 
 def build_status_embed(state: DuelState, log: list[str] | None = None) -> discord.Embed:
@@ -796,8 +917,8 @@ def build_status_embed(state: DuelState, log: list[str] | None = None) -> discor
 
     if log:
         parts.append("")
+        parts.append(f"-# **Kolo {state.round}** — {random.choice(CROWD_LINES)}")
         for line in log:
-            # strip inline markdown that reads poorly at small size
             parts.append(f"-# {line}")
 
     warns = []
@@ -860,6 +981,21 @@ def build_finish_embed(winner: Fighter, loser: Fighter, bet: int, log: list[str]
         for line in log:
             parts.append(f"-# {line}")
     embed = discord.Embed(title="☠️  KONEC DUELU", description="\n".join(parts), color=wcls["color"])
+    embed.set_footer(text="⭐ Aurionis")
+    return embed
+
+def build_draw_embed(f1: Fighter, f2: Fighter, bet: int, log: list[str]) -> discord.Embed:
+    parts = [
+        f"*{f1.member.display_name} a {f2.member.display_name} padají ve stejnou chvíli...*\n",
+        "Žádný vítěz. Žádný poražený.",
+    ]
+    if bet:
+        parts.append(f"\n💰 Sázky vráceny — **{bet}** {COIN} každému.")
+    if log:
+        parts.append("")
+        for line in log:
+            parts.append(f"-# {line}")
+    embed = discord.Embed(title="💀  REMÍZA", description="\n".join(parts), color=0x95A5A6)
     embed.set_footer(text="⭐ Aurionis")
     return embed
 
@@ -1146,7 +1282,16 @@ async def _try_resolve(state: DuelState):
             except Exception:
                 pass
 
-        if f1_dead or f2_dead:
+        if f1_dead and f2_dead:
+            if state.bet > 0:
+                eco = load_json(ECONOMY_FILE, {})
+                for f in (state.f1, state.f2):
+                    eco[str(f.member.id)] = eco.get(str(f.member.id), 0) + state.bet
+                save_json(ECONOMY_FILE, eco)
+            _cleanup(state)
+            await state.channel.send(embed=build_draw_embed(state.f1, state.f2, state.bet, log))
+
+        elif f1_dead or f2_dead:
             winner = state.f2 if f1_dead else state.f1
             loser  = state.f1 if f1_dead else state.f2
 
@@ -1158,8 +1303,8 @@ async def _try_resolve(state: DuelState):
 
             _record_result(winner.member.id, loser.member.id, state.bet)
             _cleanup(state)
-
             await state.channel.send(embed=build_finish_embed(winner, loser, state.bet, log))
+
         else:
             state.arena_msg = await state.channel.send(
                 embed=build_status_embed(state, log), view=ArenaView(state)
@@ -1223,9 +1368,9 @@ class DuelCog(commands.Cog):
             )
             return
 
-        top     = sorted(scores.items(), key=lambda x: (-x[1].get("wins", 0), -x[1].get("profit", 0)))[:10]
-        medals  = ["🥇", "🥈", "🥉"] + ["🔹"] * 7
-        lines   = []
+        top    = sorted(scores.items(), key=lambda x: (-x[1].get("wins", 0), -x[1].get("profit", 0)))[:10]
+        medals = ["🥇", "🥈", "🥉"] + ["🔹"] * 7
+        lines  = []
         for i, (uid, s) in enumerate(top):
             member = interaction.guild.get_member(int(uid))
             name   = member.display_name if member else f"<@{uid}>"
