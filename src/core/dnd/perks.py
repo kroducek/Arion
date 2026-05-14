@@ -975,6 +975,10 @@ def _migrate_perks():
                 if perks[pid].get(field) != seed.get(field):
                     perks[pid][field] = seed[field]
                     changed = True
+    for pid in perks:
+        if "roll_tags" not in perks[pid]:
+            perks[pid]["roll_tags"] = []
+            changed = True
     if changed:
         save_perks(perks)
         print("[perks] Migrace dokončena.")
@@ -1077,6 +1081,7 @@ class PerkNewModal(discord.ui.Modal, title="Nový perk"):
             "subdesc":       None,
             "cooldown_uses": cd_uses,
             "cooldown_type": "daily" if cd_uses > 0 else None,
+            "roll_tags":     [],
         }
         save_perks(perks)
         await interaction.response.send_message(
@@ -1489,6 +1494,39 @@ class PerksCog(commands.Cog):
             await interaction.response.send_message(f"Perk `{perk_id}` neexistuje.", ephemeral=True)
             return
         await interaction.response.send_modal(PerkEditModal(perk_id, perks[perk_id]))
+
+    @perk_group.command(name="tags", description="Nastav roll_tags pro perk — staty kde se zobrazí pod /roll check (admin)")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(perk_id="ID perku", tags="Staty oddělené čárkou, např. INS,DEX (prázdné = žádné)")
+    async def perk_tags(self, interaction: discord.Interaction, perk_id: str, tags: str = ""):
+        perks = load_perks()
+        if perk_id not in perks:
+            await interaction.response.send_message(f"Perk `{perk_id}` neexistuje.", ephemeral=True)
+            return
+        valid = {"STR", "DEX", "INS", "INT", "CHA", "WIS"}
+        parsed = [t.strip().upper() for t in tags.split(",") if t.strip()]
+        invalid = [t for t in parsed if t not in valid]
+        if invalid:
+            await interaction.response.send_message(
+                f"❌ Neznámé staty: `{', '.join(invalid)}`. Povolené: STR, DEX, INS, INT, CHA, WIS.", ephemeral=True
+            )
+            return
+        perks[perk_id]["roll_tags"] = parsed
+        save_perks(perks)
+        name = perks[perk_id].get("name", perk_id)
+        tag_str = ", ".join(parsed) if parsed else "—"
+        await interaction.response.send_message(
+            f"✅ **{name}** — roll tagy nastaveny: `{tag_str}`", ephemeral=True
+        )
+
+    @perk_tags.autocomplete("perk_id")
+    async def _autocomplete_tags_id(self, interaction: discord.Interaction, current: str):
+        perks = load_perks()
+        return [
+            app_commands.Choice(name=f"{p['name']} ({pid})", value=pid)
+            for pid, p in perks.items()
+            if current.lower() in pid.lower() or current.lower() in p.get("name", "").lower()
+        ][:25]
 
     @perk_group.command(name="delete", description="Smaž perk z databáze (admin)")
     @app_commands.checks.has_permissions(administrator=True)
