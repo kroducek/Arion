@@ -903,6 +903,54 @@ _SEED_PERKS: dict[str, dict] = {
 _SYNC_FIELDS = {"name", "group", "passive", "unique", "learnable", "desc", "subdesc", "cooldown_uses", "cooldown_type"}
 _LEGACY_IDS  = {"terra", "ignis", "zaklady_bendingu", "vaha_svobody"}
 
+# roll_tags a bonus pro seed perky — aplikují se v migraci
+_SEED_ROLL_TAGS: dict[str, list[str]] = {
+    "magicke_citeni":  ["WIS"], "mana_sensing_2": ["WIS"], "mana_sensing_3": ["WIS"],
+    "stealth_1":       ["INS"], "stealth_2":      ["INS"], "stealth_3":      ["INS"],
+    "stealing_1":      ["INS"], "stealing_2":     ["INS"], "stealing_3":     ["INS"],
+    "lockpicking_1":   ["INS"], "lockpicking_2":  ["INS"], "lockpicking_3":  ["INS"],
+    "acrobacy_1":      ["DEX"], "acrobacy_2":     ["DEX"], "acrobacy_3":     ["DEX"],
+    "blacksmithing_1": ["STR"], "blacksmithing_2":["STR"], "blacksmithing_3":["STR"],
+    "cooking_1":       ["WIS"], "cooking_2":      ["WIS"], "cooking_3":      ["WIS"],
+    "alchemy_1":       ["INT"], "alchemy_2":      ["INT"], "alchemy_3":      ["INT"],
+    "animal_handling_1":["CHA"],"animal_handling_2":["CHA"],"animal_handling_3":["CHA"],
+    "learning_1":      ["INT"], "learning_2":     ["INT"], "learning_3":     ["INT"],
+    "bartering_1":     ["CHA"], "bartering_2":    ["CHA"], "bartering_3":    ["CHA"],
+    "night_vision_1":  ["INS"], "night_vision_2": ["INS"], "night_vision_3": ["INS"],
+    "tracking_1":      ["INS"], "tracking_2":     ["INS"], "tracking_3":     ["INS"],
+    "survival_1":      ["INS"], "survival_2":     ["INS"], "survival_3":     ["INS"],
+    "instinkt_preziti":["INS"], "temna_pritomnost":["INS"],
+    "one_handed_1":    ["STR"], "one_handed_2":   ["STR"], "one_handed_3":   ["STR"],
+    "two_handed_1":    ["STR"], "two_handed_2":   ["STR"], "two_handed_3":   ["STR"],
+    "light_armor_1":   ["DEX"], "light_armor_2":  ["DEX"], "light_armor_3":  ["DEX"],
+    "heavy_armor_1":   ["STR"], "heavy_armor_2":  ["STR"], "heavy_armor_3":  ["STR"],
+    "dual_wielding_1": ["DEX"], "dual_wielding_2":["DEX"], "dual_wielding_3":["DEX"],
+    "archery_1":       ["DEX"], "archery_2":      ["DEX"], "archery_3":      ["DEX"],
+}
+
+_SEED_BONUS: dict[str, int] = {
+    "magicke_citeni": 1,  "mana_sensing_2": 2,  "mana_sensing_3": 3,
+    "stealth_1": 1,       "stealth_2": 2,        "stealth_3": 3,
+    "stealing_1": 1,      "stealing_2": 2,       "stealing_3": 3,
+    "lockpicking_1": 1,   "lockpicking_2": 2,    "lockpicking_3": 3,
+    "acrobacy_1": 1,      "acrobacy_2": 2,       "acrobacy_3": 3,
+    "blacksmithing_1": 1, "blacksmithing_2": 2,  "blacksmithing_3": 3,
+    "cooking_1": 1,       "cooking_2": 2,        "cooking_3": 3,
+    "alchemy_1": 1,       "alchemy_2": 2,        "alchemy_3": 3,
+    "animal_handling_1": 1,"animal_handling_2": 2,"animal_handling_3": 3,
+    "learning_1": 1,      "learning_2": 2,       "learning_3": 3,
+    "bartering_1": 1,     "bartering_2": 2,      "bartering_3": 3,
+    "night_vision_1": 1,  "night_vision_2": 2,   "night_vision_3": 3,
+    "tracking_1": 1,      "tracking_2": 2,       "tracking_3": 3,
+    "survival_1": 1,      "survival_2": 2,       "survival_3": 3,
+    "one_handed_1": 1,    "one_handed_2": 2,     "one_handed_3": 3,
+    "two_handed_1": 1,    "two_handed_2": 2,     "two_handed_3": 3,
+    "light_armor_1": 1,   "light_armor_2": 2,    "light_armor_3": 3,
+    "heavy_armor_1": 1,   "heavy_armor_2": 2,    "heavy_armor_3": 3,
+    "dual_wielding_1": 1, "dual_wielding_2": 2,  "dual_wielding_3": 3,
+    "archery_1": 1,       "archery_2": 2,        "archery_3": 3,
+}
+
 # ── Storage ───────────────────────────────────────────────────────────────────
 
 def load_perks() -> dict:
@@ -976,8 +1024,12 @@ def _migrate_perks():
                     perks[pid][field] = seed[field]
                     changed = True
     for pid in perks:
-        if "roll_tags" not in perks[pid]:
-            perks[pid]["roll_tags"] = []
+        if not perks[pid].get("roll_tags"):
+            perks[pid]["roll_tags"] = _SEED_ROLL_TAGS.get(pid, [])
+            changed = True
+        seed_bonus = _SEED_BONUS.get(pid, 0)
+        if perks[pid].get("bonus", -1) != seed_bonus:
+            perks[pid]["bonus"] = seed_bonus
             changed = True
     if changed:
         save_perks(perks)

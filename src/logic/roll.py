@@ -268,10 +268,12 @@ class Dice(commands.Cog):
             if roll_perks:
                 lines = []
                 for p in roll_perks:
-                    emoji = _PERK_EMOJI.get(p.get("group", ""), "✨")
-                    desc  = p.get("desc", "")
-                    short = desc[:75] + ("…" if len(desc) > 75 else "")
-                    lines.append(f"{emoji} **{p['name']}** — {short}")
+                    emoji  = _PERK_EMOJI.get(p.get("group", ""), "✨")
+                    bonus  = p.get("bonus", 0)
+                    b_str  = f" **+{bonus}**" if bonus else ""
+                    desc   = p.get("desc", "")
+                    short  = desc[:75] + ("…" if len(desc) > 75 else "")
+                    lines.append(f"{emoji} **{p['name']}**{b_str} — {short}")
                 embed.add_field(name="✨ Perky", value="\n".join(lines), inline=False)
 
         embed.set_footer(text=f"{footer_stats}  ·  ✨ Aurionis ✨")
