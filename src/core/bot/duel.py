@@ -167,12 +167,13 @@ BASE_HEAVY  = 28   # reduced HP dmg — posture is the real weapon
 RIPOSTE_CTR = 15
 
 # Posture damage constants
-HEAVY_PDMG_BLOCK  = 50   # posture dmg when heavy is blocked by guard
+HEAVY_PDMG_BLOCK  = 60   # posture dmg when heavy is blocked by guard
 HEAVY_PDMG_HIT    = 35   # posture dmg when heavy lands on open target
 ATK_PDMG          = 8    # silent posture chip when normal attack lands
 FEINT_PDMG        = 12   # posture chip when feint lands
 FEINT_GUARD_PDMG  = 28   # posture dmg when feint bypasses guard
-GUARD_PDMG_NORMAL = 12   # posture chip when normal attack is blocked
+GUARD_PDMG_NORMAL = 15   # posture chip when normal attack is blocked
+GUARD_LIGHT_ABSORB = 0.92  # fixed high absorb for light attacks — guard is near-immune to normal hits
 
 # ── Fighter ───────────────────────────────────────────────────────────────────
 
@@ -519,19 +520,22 @@ def resolve_round(state: DuelState) -> list[str]:
             log.append(f"💔 **{grd.member.display_name}** — OTEVŘEN! Plný úder dopadá — **{dmg}** dmg!")
             grd.guard_broken = False
             return dmg, 0
-        dmg, _ = _guard_absorb(grd, raw)
         thorns = (15 if grd.critical else 10) if grd.cls_name == "Guardian" else 0
-        absorb_pct = round((1 - dmg / raw) * 100) if raw > 0 else 0
         if is_heavy:
+            # Heavy: class-specific absorb — štít pomáhá ale nezachrání, hlavní hrozba je posture
+            dmg, _ = _guard_absorb(grd, raw)
             pdmg = HEAVY_PDMG_BLOCK + _heavy_extra_posture(atk)
-            log.append(f"🛡️ **{grd.member.display_name}** drží štít — otřes! **BLOCKED** ({absorb_pct} %) — {dmg} dmg proklouznout.")
-            log.append(f"*Těžký úder tříští postoj!*")
+            absorb_pct = round((1 - dmg / raw) * 100) if raw > 0 else 0
+            log.append(f"🛡️ **{grd.member.display_name}** drží štít — ale heavy tříští postoj! **{dmg}** dmg ({absorb_pct} % pohlt).")
+            log.append(f"*Postoj se hroutí pod tlakem!*")
         else:
+            # Light attack: fixní vysoký absorb — guard je efektivní skoro na 0 dmg
+            dmg = max(1, round(raw * (1 - GUARD_LIGHT_ABSORB)))
             pdmg = GUARD_PDMG_NORMAL
             log.append(random.choice([
-                f"🛡️ **{grd.member.display_name}** vztyčí štít — **BLOCKED!** {dmg} dmg proklouznout. ({absorb_pct} % pohlt)",
-                f"🛡️ Štít **{grd.member.display_name}** pohltí úder — {dmg} dmg pronikne.",
-                f"🛡️ **{grd.member.display_name}** kryje — {dmg} dmg ({absorb_pct} % blokováno).",
+                f"🛡️ **{grd.member.display_name}** vztyčí štít — **BLOCKED!** Jen **{dmg}** dmg pronikne.",
+                f"🛡️ Štít **{grd.member.display_name}** pohltí téměř vše — **{dmg}** dmg.",
+                f"🛡️ **{grd.member.display_name}** kryje dokonale — **{dmg}** dmg proklouznout.",
             ]))
         if thorns:
             log.append(f"✀ Trny vrací **{thorns}** dmg útočníkovi!")
@@ -1129,7 +1133,7 @@ class ActionView(discord.ui.View):
         row0 = [
             ("attack", discord.ButtonStyle.red,   f"⚔️ Útok  ({STAM_COSTS['attack']} sta · ~{BASE_ATK} dmg)"),
             ("heavy",  discord.ButtonStyle.red,   f"🪓 Těžký útok  ({STAM_COSTS['heavy']} sta · ~{BASE_HEAVY} dmg)"),
-            ("guard",  discord.ButtonStyle.green, f"🛡️ Štít  ({STAM_COSTS['guard']} sta · {round(cls['guard_absorb']*100)} % absorb)"),
+            ("guard",  discord.ButtonStyle.green, f"🛡️ Štít  ({STAM_COSTS['guard']} sta · ~92 % vs light)"),
         ]
         for action, style, label in row0:
             disabled = berserk and action == "guard"
