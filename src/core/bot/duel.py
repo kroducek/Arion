@@ -233,7 +233,8 @@ class DuelState:
 
 # ── Registry ──────────────────────────────────────────────────────────────────
 
-_active: dict[int, DuelState] = {}
+_active:  dict[int, DuelState] = {}
+_pending: set[int]             = set()   # hráči v class selection (před registrací do _active)
 
 def _register(state: DuelState):
     _active[state.f1.member.id] = state
@@ -1260,6 +1261,151 @@ class ArenaView(discord.ui.View):
             _cleanup(self.state)
 
 
+class PreGame:
+    """Přechodný stav — oba hráči vybírají třídu před začátkem duelu."""
+    def __init__(self, challenger: discord.Member, target: discord.Member,
+                 bet: int, channel: discord.TextChannel):
+        self.challenger = challenger
+        self.target     = target
+        self.bet        = bet
+        self.channel    = channel
+        self.choices: dict[int, str | None] = {challenger.id: None, target.id: None}
+        self.picker_msg: discord.Message | None = None
+        self.started    = False
+        self._lock      = asyncio.Lock()
+
+
+def _picker_embed(pg: PreGame) -> discord.Embed:
+    def status(mid: int) -> str:
+        cls_name = pg.choices.get(mid)
+        if cls_name:
+            c = CLASSES[cls_name]
+            return f"{c['emoji']} **{cls_name}** ✅"
+        return "*vybírá...*"
+
+    c_stat = status(pg.challenger.id)
+    t_stat = status(pg.target.id)
+    both   = all(v is not None for v in pg.choices.values())
+    footer = "-# Obě volby dokončeny — souboj začíná!" if both else "-# Klikni na své jméno a zvol třídu."
+
+    desc = (
+        f"**{pg.challenger.mention}** — {c_stat}\n"
+        f"**{pg.target.mention}** — {t_stat}\n\n"
+        f"{footer}"
+    )
+    embed = discord.Embed(title="⚔️  Výběr třídy", description=desc, color=0x1a1a2e)
+    embed.set_footer(text="⭐ Aurionis")
+    return embed
+
+
+async def _start_duel_from_pregame(pg: PreGame):
+    _pending.discard(pg.challenger.id)
+    _pending.discard(pg.target.id)
+
+    cls1 = pg.choices[pg.challenger.id]
+    cls2 = pg.choices[pg.target.id]
+    f1   = Fighter(pg.challenger, cls1)
+    f2   = Fighter(pg.target,     cls2)
+    state = DuelState(f1, f2, pg.bet, pg.channel)
+    _register(state)
+
+    if pg.picker_msg:
+        try:
+            await pg.picker_msg.edit(embed=_picker_embed(pg), view=None)
+        except Exception:
+            pass
+
+    await pg.channel.send(embed=build_intro_embed(state))
+    state.arena_msg = await pg.channel.send(embed=build_status_embed(state), view=ArenaView(state))
+    await asyncio.gather(_dm_class_info(f1), _dm_class_info(f2), return_exceptions=True)
+
+
+class ClassSelectView(discord.ui.View):
+    """Ephemeral — hráč vybírá svou třídu z tlačítek."""
+
+    def __init__(self, pg: PreGame, member: discord.Member):
+        super().__init__(timeout=120)
+        self.pg     = pg
+        self.member = member
+
+        for i, (cls_name, cls) in enumerate(CLASSES.items()):
+            btn = discord.ui.Button(
+                label=f"{cls['emoji']} {cls_name}",
+                style=discord.ButtonStyle.blurple,
+                row=i // 4,
+            )
+            btn.callback = self._make_cb(cls_name)
+            self.add_item(btn)
+
+    def _make_cb(self, cls_name: str):
+        async def cb(interaction: discord.Interaction):
+            if interaction.user.id != self.member.id:
+                await interaction.response.send_message("Toto není tvůj výběr!", ephemeral=True)
+                return
+            if self.pg.choices.get(self.member.id) is not None:
+                await interaction.response.send_message("Už jsi vybral!", ephemeral=True)
+                return
+
+            self.pg.choices[self.member.id] = cls_name
+            self.stop()
+
+            cls = CLASSES[cls_name]
+            await interaction.response.edit_message(
+                content=f"✅ **{cls['emoji']} {cls_name}** vybráno — čekám na soupeře...",
+                view=None,
+            )
+
+            if self.pg.picker_msg:
+                try:
+                    new_view = ClassPickerPublicView(self.pg)
+                    await self.pg.picker_msg.edit(embed=_picker_embed(self.pg), view=new_view)
+                except Exception:
+                    pass
+
+            async with self.pg._lock:
+                if not self.pg.started and all(v is not None for v in self.pg.choices.values()):
+                    self.pg.started = True
+                    await _start_duel_from_pregame(self.pg)
+        return cb
+
+
+class ClassPickerPublicView(discord.ui.View):
+    """Veřejná — každý hráč má tlačítko pro otevření výběru třídy (ephemeral)."""
+
+    def __init__(self, pg: PreGame):
+        super().__init__(timeout=120)
+        self.pg = pg
+
+        for member in (pg.challenger, pg.target):
+            chosen = pg.choices.get(member.id)
+            btn = discord.ui.Button(
+                label=f"{'✅' if chosen else '🎭'} {member.display_name}",
+                style=discord.ButtonStyle.green if chosen else discord.ButtonStyle.blurple,
+                disabled=chosen is not None,
+            )
+            btn.callback = self._make_cb(member)
+            self.add_item(btn)
+
+    def _make_cb(self, member: discord.Member):
+        async def cb(interaction: discord.Interaction):
+            if interaction.user.id != member.id:
+                await interaction.response.send_message("Toto není tvůj výběr!", ephemeral=True)
+                return
+            if self.pg.choices.get(member.id) is not None:
+                await interaction.response.send_message("✅ Třídu jsi už vybral!", ephemeral=True)
+                return
+            await interaction.response.send_message(
+                content="⚔️ Vyber svou třídu:",
+                view=ClassSelectView(self.pg, member),
+                ephemeral=True,
+            )
+        return cb
+
+    async def on_timeout(self):
+        _pending.discard(self.pg.challenger.id)
+        _pending.discard(self.pg.target.id)
+
+
 class ChallengeView(discord.ui.View):
     def __init__(self, challenger: discord.Member, target: discord.Member,
                  bet: int, channel: discord.TextChannel):
@@ -1298,15 +1444,13 @@ class ChallengeView(discord.ui.View):
             eco[str(self.target.id)]     = t_bal - self.bet
             save_json(ECONOMY_FILE, eco)
 
-        cls1, cls2 = random.sample(CLASS_NAMES, 2)
-        f1    = Fighter(self.challenger, cls1)
-        f2    = Fighter(self.target,     cls2)
-        state = DuelState(f1, f2, self.bet, self.channel)
-        _register(state)
+        pg = PreGame(self.challenger, self.target, self.bet, self.channel)
+        _pending.add(self.challenger.id)
+        _pending.add(self.target.id)
 
-        await interaction.response.edit_message(embed=build_intro_embed(state), view=None)
-        state.arena_msg = await self.channel.send(embed=build_status_embed(state), view=ArenaView(state))
-        await asyncio.gather(_dm_class_info(f1), _dm_class_info(f2), return_exceptions=True)
+        picker_view = ClassPickerPublicView(pg)
+        await interaction.response.edit_message(embed=_picker_embed(pg), view=picker_view)
+        pg.picker_msg = interaction.message
 
     @discord.ui.button(label="🚫 Odmítnout", style=discord.ButtonStyle.grey)
     async def decline(self, interaction: discord.Interaction, _: discord.ui.Button):
@@ -1397,9 +1541,9 @@ class DuelCog(commands.Cog):
             await interaction.response.send_message("Nemůžeš vyzvat sám sebe.", ephemeral=True); return
         if member.bot:
             await interaction.response.send_message("Nemůžeš vyzvat bota.", ephemeral=True); return
-        if challenger.id in _active:
+        if challenger.id in _active or challenger.id in _pending:
             await interaction.response.send_message("Už jsi v aktivním duelu!", ephemeral=True); return
-        if member.id in _active:
+        if member.id in _active or member.id in _pending:
             await interaction.response.send_message(f"**{member.display_name}** je už v duelu.", ephemeral=True); return
         if bet < 0:
             await interaction.response.send_message("Sázka nesmí být záporná.", ephemeral=True); return
@@ -1416,7 +1560,7 @@ class DuelCog(commands.Cog):
             title="⚔️  Výzva k duelu!",
             description=(
                 f"{challenger.mention} vyzývá {member.mention} na souboj{bet_txt}!\n\n"
-                f"-# Obdržíš náhodnou bojovou třídu. Souboj je tahový — mindgames rozhodují.\n"
+                f"-# Každý si zvolí bojovou třídu. Souboj je tahový — mindgames rozhodují.\n"
                 f"-# Sázka je stržena při přijetí."
             ),
             color=0xE74C3C,
