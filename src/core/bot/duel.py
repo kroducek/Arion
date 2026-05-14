@@ -16,7 +16,7 @@ COIN = "<:goldcoin:1490171741237018795>"
 
 CLASSES: dict[str, dict] = {
     "Monk": {
-        "emoji": "🥷", "hp": 135, "stamina": 120, "furioku_max": 140, "recover": 40,
+        "emoji": "🥷", "hp": 135, "stamina": 120, "furioku_max": 170, "recover": 40,
         "dmg_mod": 1.00, "color": 0xE67E22,
         "guard_absorb": 0.38,
         "passive": "Meditativní tok — Furioku aura chráni před dmg; Meditace obnoví 30 HP",
@@ -34,7 +34,7 @@ CLASSES: dict[str, dict] = {
         "ult_name":   "Úder spravedlnosti", "ult_desc":   "~80 dmg, ignoruje štít",             "ult_charge_max": 5,
     },
     "Rogue": {
-        "emoji": "🗡️", "hp": 120, "stamina": 105, "furioku_max": 95, "recover": 35,
+        "emoji": "🗡️", "hp": 120, "stamina": 105, "furioku_max": 160, "recover": 35,
         "dmg_mod": 0.95, "color": 0x2C3E50,
         "guard_absorb": 0.20,
         "passive": "Stínový krok — úskok vyhýbá VŠEM útokům + free counter",
@@ -43,7 +43,7 @@ CLASSES: dict[str, dict] = {
         "ult_name":   "Zákeřný úder",       "ult_desc":   "~90 dmg, nelze blokovat",            "ult_charge_max": 4,
     },
     "Berserker": {
-        "emoji": "🪓", "hp": 160, "stamina": 90, "furioku_max": 115, "recover": 30,
+        "emoji": "🪓", "hp": 160, "stamina": 90, "furioku_max": 165, "recover": 30,
         "dmg_mod": 1.35, "color": 0xE74C3C,
         "guard_absorb": 0.25,
         "passive": "Krvavý hněv — pod 30 % HP: dmg +50 %",
@@ -52,7 +52,7 @@ CLASSES: dict[str, dict] = {
         "ult_name":   "Zběsilost",          "ult_desc":   "3 kola: 2× útok, nelze štítit, -8 HP/kolo", "ult_charge_max": 4,
     },
     "Guardian": {
-        "emoji": "⚜️", "hp": 175, "stamina": 85, "furioku_max": 185, "recover": 30,
+        "emoji": "⚜️", "hp": 175, "stamina": 85, "furioku_max": 190, "recover": 30,
         "dmg_mod": 1.00, "color": 0x27AE60,
         "guard_absorb": 0.55,
         "passive": "Trny — štít vrací 10 dmg útočníkovi (15 při critical)",
@@ -61,7 +61,7 @@ CLASSES: dict[str, dict] = {
         "ult_name":   "Odvetný úder",       "ult_desc":   "Odraz příštího útoku zpět",           "ult_charge_max": 5,
     },
     "Duelist": {
-        "emoji": "🤺", "hp": 130, "stamina": 100, "furioku_max": 125, "recover": 35,
+        "emoji": "🤺", "hp": 130, "stamina": 100, "furioku_max": 165, "recover": 35,
         "dmg_mod": 1.05, "color": 0x9B59B6,
         "guard_absorb": 0.35,
         "passive": "Přesné oko — klam ignoruje štít úplně, plný dmg",
@@ -70,7 +70,7 @@ CLASSES: dict[str, dict] = {
         "ult_name":   "Dokonalý souboj",    "ult_desc":   "Riposte stance: příší útok → 150 % counter", "ult_charge_max": 4,
     },
     "Gladiator": {
-        "emoji": "🏛️", "hp": 155, "stamina": 90, "furioku_max": 155, "recover": 28,
+        "emoji": "🏛️", "hp": 155, "stamina": 90, "furioku_max": 175, "recover": 28,
         "dmg_mod": 1.20, "color": 0xB8860B,
         "guard_absorb": 0.42,
         "passive": "Arénní pes — heavy útoky způsobují bonus dmg",
@@ -1320,10 +1320,8 @@ class PreGame:
 
 def _picker_embed(pg: PreGame) -> discord.Embed:
     def status(mid: int) -> str:
-        cls_name = pg.choices.get(mid)
-        if cls_name:
-            c = CLASSES[cls_name]
-            return f"{c['emoji']} **{cls_name}** ✅"
+        if pg.choices.get(mid):
+            return "✅ vybráno"
         return "*vybírá...*"
 
     c_stat = status(pg.challenger.id)
