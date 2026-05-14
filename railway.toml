@@ -1,5 +1,5 @@
 [build]
-builder = "DOCKERFILE"
+builder = "RAILPACK"
 
 [deploy]
 startCommand = "python -u start.py"
