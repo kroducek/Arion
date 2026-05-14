@@ -58,7 +58,7 @@ CLASSES: dict[str, dict] = {
         "passive": "Trny — štít vrací 10 dmg útočníkovi (15 při critical)",
         "lore": "Neproniknutelný. Protiúder je smrtící.",
         "basic_name": "Provokace",          "basic_desc": "Příší zásah -60 %",                 "basic_cd": 3,
-        "ult_name":   "Odvetný úder",       "ult_desc":   "Odraz příštího útoku zpět",           "ult_charge_max": 5,
+        "ult_name":   "Odvetný úder",       "ult_desc":   "Příší útok na tebe → 0 dmg + 3× zpět",  "ult_charge_max": 5,
     },
     "Duelist": {
         "emoji": "🤺", "hp": 130, "stamina": 100, "furioku_max": 165, "recover": 35,
@@ -529,18 +529,10 @@ def resolve_round(state: DuelState) -> list[str]:
 
     if a1 == "ultimate":
         raw = _apply_ultimate(f1, f2, log)
-        if f2.buff_reflect and raw > 0:
-            d1 += raw; f2.buff_reflect = False
-            log.append(f"🔄 **{n2}** ODRÁŽÍ útok — **{raw}** dmg letí zpět na **{n1}**!")
-        else:
-            d2 += raw
+        d2 += raw
     if a2 == "ultimate":
         raw = _apply_ultimate(f2, f1, log)
-        if f1.buff_reflect and raw > 0:
-            d2 += raw; f1.buff_reflect = False
-            log.append(f"🔄 **{n1}** ODRÁŽÍ útok — **{raw}** dmg letí zpět na **{n2}**!")
-        else:
-            d1 += raw
+        d1 += raw
 
     # ── Ability user is OPEN to normal attacks ────────────────────────────────
 
@@ -655,6 +647,23 @@ def resolve_round(state: DuelState) -> list[str]:
             d2 += raw
             f2.riposte = False
             log.append(f"🎭 **{n1}** pronáší klam — riposte stance propadá! **{raw}** dmg!{extra}")
+
+        # ── Guardian reflect stance ───────────────────────────────────────────
+        elif f1.buff_reflect and a2 in ("attack", "heavy", "feint"):
+            raw = _hvy(f2) if a2 == "heavy" else _atk(f2)
+            triple = raw * 3
+            d2 += triple
+            f1.buff_reflect = False
+            log.append(f"⚜️ **{n1}** — **ODVETNÝ ÚDER!** Absorbuje sílu a vrací ji trojnásobně — **{triple}** dmg! *(3×{raw})*")
+            log.append(f"*{n1} stojí bez újmy.*")
+
+        elif f2.buff_reflect and a1 in ("attack", "heavy", "feint"):
+            raw = _hvy(f1) if a1 == "heavy" else _atk(f1)
+            triple = raw * 3
+            d1 += triple
+            f2.buff_reflect = False
+            log.append(f"⚜️ **{n2}** — **ODVETNÝ ÚDER!** Absorbuje sílu a vrací ji trojnásobně — **{triple}** dmg! *(3×{raw})*")
+            log.append(f"*{n2} stojí bez újmy.*")
 
         # ── Normal matrix ─────────────────────────────────────────────────────
 
