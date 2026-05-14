@@ -7,8 +7,8 @@ import os
 # Kořen projektu (ArionBot/)
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Složka s daty
-DATA_DIR = os.path.join(ROOT, "src", "database", "data")
+# Složka s daty — přepíše se env var DATA_DIR (Railway volume: /data)
+DATA_DIR = os.environ.get("DATA_DIR", os.path.join(ROOT, "src", "database", "data"))
 
 
 def data(filename: str) -> str:

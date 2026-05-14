@@ -78,6 +78,15 @@ CLASSES: dict[str, dict] = {
         "basic_name": "Krvavý řez",         "basic_desc": "25 dmg přímý, nelze blokovat",      "basic_cd": 3,
         "ult_name":   "Gladiátorský tanec", "ult_desc":   "3 rychlé rány — ~85 dmg celkem",    "ult_charge_max": 4,
     },
+    "Necromancer": {
+        "emoji": "💀", "hp": 125, "stamina": 85, "furioku_max": 160, "recover": 28,
+        "dmg_mod": 1.10, "color": 0x4B0082,
+        "guard_absorb": 0.25,
+        "passive": "Krvavá žeň — každý útok vrátí 25 % způsobeného dmg jako HP",
+        "lore": "Tma je jen jiná forma energie. A energie nikdy nemizí — jen mění hostitele.",
+        "basic_name": "Výsání",             "basic_desc": "40 dmg + heal za plnou hodnotu, nelze blokovat", "basic_cd": 3,
+        "ult_name":   "Smrt přichází",      "ult_desc":   "~90 dmg + heal za stejnou hodnotu, nelze blokovat", "ult_charge_max": 5,
+    },
 }
 
 CLASS_NAMES = list(CLASSES.keys())
@@ -91,7 +100,8 @@ INTENT_TEXT: dict[str, str] = {
     "Berserker": "🪓 *Svírá zbraň. Krev v očích.*",
     "Guardian":  "⚜️ *Štít zapřen. Nepohne se z místa.*",
     "Duelist":   "🤺 *Analyzuje každý pohyb soupeře. Čeká na chybu.*",
-    "Gladiator": "🏛️ *Krok za krokem. Čeká na správný moment.*",
+    "Gladiator":    "🏛️ *Krok za krokem. Čeká na správný moment.*",
+    "Necromancer":  "💀 *Tma se sbírá kolem něj. Cítíš to na kůži.*",
 }
 INTENT_CRITICAL: dict[str, str] = {
     "Monk":      "🥷 *Krvácí... ale dech je stále klidný. Klid před bouří.*",
@@ -100,7 +110,8 @@ INTENT_CRITICAL: dict[str, str] = {
     "Berserker": "🪓 *KREV. BOLEST. ŠÍLENSTVÍ. Teď to začíná!*",
     "Guardian":  "⚜️ *Opírá se o štít. Krvácí. Ale necouvne.*",
     "Duelist":   "🤺 *Zraněn — ale oči nikdy nepřestaly číst soupeře.*",
-    "Gladiator": "🏛️ *Krvácí — ale oči žhnou. Aréna to vidí.*",
+    "Gladiator":    "🏛️ *Krvácí — ale oči žhnou. Aréna to vidí.*",
+    "Necromancer":  "💀 *Krvácí — a aura kolem něj houstne. Nebezpečnější než kdy dřív.*",
 }
 INTENT_BERSERK: str = "🪓 *ZBĚSILOST — útočí bez zastavení. Zastavit ho nelze.*"
 
@@ -148,6 +159,12 @@ CRITICAL_LINES: dict[str, list[str]] = {
         "*Rány na těle {n} — každá z nich odměněna dvěma zpět.*",
         "*{n} slyší arénu. To ho drží na nohách.*",
         "*Krev a písek. {n} byl stvořen pro tenhle okamžik.*",
+    ],
+    "Necromancer": [
+        "*{n} krvácí — ale energie kolem něj pulzuje silněji.*",
+        "*Čím blíže smrti, tím nebezpečnější. {n} to ví.*",
+        "*{n} se sotva drží. A přesto si z toho bere sílu.*",
+        "*Bolest {n} živí. Ne zastavuje.*",
     ],
 }
 
@@ -377,6 +394,11 @@ def _apply_basic(f: Fighter, opp: Fighter, log: list[str]) -> int:
         dmg = 25
         log.append(f"🏛️ **{n}** — Krvavý řez! Čepel prosekne přímo. **{dmg}** dmg!")
         return dmg
+    elif f.cls_name == "Necromancer":
+        dmg = 40 + random.randint(-3, 3)
+        f.hp = min(f.max_hp, f.hp + dmg)
+        log.append(f"💀 **{n}** — Výsání! Životní síla přetéká z soupeře přímo do těla. **{dmg}** dmg + **+{dmg} HP**!")
+        return dmg
     return 0
 
 def _apply_ultimate(f: Fighter, opp: Fighter, log: list[str]) -> int:
@@ -410,6 +432,11 @@ def _apply_ultimate(f: Fighter, opp: Fighter, log: list[str]) -> int:
         r1 = _rdm(28, 4); r2 = _rdm(28, 4); r3 = _rdm(29, 4)
         dmg = r1 + r2 + r3
         log.append(f"💥 **{n}** — **GLADIÁTORSKÝ TANEC!** Tři rychlé rány — **{r1}** + **{r2}** + **{r3}** = **{dmg}** dmg!")
+        return dmg
+    elif f.cls_name == "Necromancer":
+        dmg = 90 + random.randint(-5, 5)
+        f.hp = min(f.max_hp, f.hp + dmg)
+        log.append(f"💥 **{n}** — **SMRT PŘICHÁZÍ!** Temnota polkne soupeře — **{dmg}** dmg a životní síla se vrací. **+{dmg} HP**!")
         return dmg
     return 0
 
@@ -864,6 +891,18 @@ def resolve_round(state: DuelState) -> list[str]:
             f2.furioku -= bonus
             d1 += bonus
             log.append(f"💜 **{n2}** uvolní auru do útoku — **+{bonus}** dmg!")
+
+    # ── Necromancer life steal (25 % of damage dealt on attack/heavy/feint) ─────
+    if f1.cls_name == "Necromancer" and d2 > 0 and a1 in ("attack", "heavy", "feint"):
+        steal = round(d2 * 0.25)
+        if steal > 0:
+            f1.hp = min(f1.max_hp, f1.hp + steal)
+            log.append(f"🩸 **{n1}** drenuje životní sílu — **+{steal} HP**!")
+    if f2.cls_name == "Necromancer" and d1 > 0 and a2 in ("attack", "heavy", "feint"):
+        steal = round(d1 * 0.25)
+        if steal > 0:
+            f2.hp = min(f2.max_hp, f2.hp + steal)
+            log.append(f"🩸 **{n2}** drenuje životní sílu — **+{steal} HP**!")
 
     # ── Furioku shield absorbs damage before HP ───────────────────────────────
     if d1 > 0 and f1.furioku > 0 and f1.furioku_shield:
