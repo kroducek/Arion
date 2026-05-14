@@ -16,7 +16,7 @@ COIN = "<:goldcoin:1490171741237018795>"
 
 CLASSES: dict[str, dict] = {
     "Monk": {
-        "emoji": "🥷", "hp": 135, "stamina": 120, "furioku_max": 90, "recover": 40,
+        "emoji": "🥷", "hp": 135, "stamina": 120, "furioku_max": 140, "recover": 40,
         "dmg_mod": 1.00, "color": 0xE67E22,
         "guard_absorb": 0.38,
         "passive": "Meditativní tok — Furioku aura chráni před dmg; Meditace obnoví 30 HP",
@@ -25,7 +25,7 @@ CLASSES: dict[str, dict] = {
         "ult_name":   "Duch bouře",         "ult_desc":   "~70 dmg",                           "ult_charge_max": 5,
     },
     "Knight": {
-        "emoji": "🛡️", "hp": 190, "stamina": 80, "furioku_max": 130, "recover": 25,
+        "emoji": "🛡️", "hp": 190, "stamina": 80, "furioku_max": 200, "recover": 25,
         "dmg_mod": 1.15, "color": 0x95A5A6,
         "guard_absorb": 0.58,
         "passive": "Železná pevnost — nejsilnější štít v aréně",
@@ -34,7 +34,7 @@ CLASSES: dict[str, dict] = {
         "ult_name":   "Úder spravedlnosti", "ult_desc":   "~80 dmg, ignoruje štít",             "ult_charge_max": 5,
     },
     "Rogue": {
-        "emoji": "🗡️", "hp": 120, "stamina": 105, "furioku_max": 60, "recover": 35,
+        "emoji": "🗡️", "hp": 120, "stamina": 105, "furioku_max": 95, "recover": 35,
         "dmg_mod": 0.95, "color": 0x2C3E50,
         "guard_absorb": 0.20,
         "passive": "Stínový krok — úskok vyhýbá VŠEM útokům + free counter",
@@ -43,7 +43,7 @@ CLASSES: dict[str, dict] = {
         "ult_name":   "Zákeřný úder",       "ult_desc":   "~90 dmg, nelze blokovat",            "ult_charge_max": 4,
     },
     "Berserker": {
-        "emoji": "🪓", "hp": 160, "stamina": 90, "furioku_max": 75, "recover": 30,
+        "emoji": "🪓", "hp": 160, "stamina": 90, "furioku_max": 115, "recover": 30,
         "dmg_mod": 1.35, "color": 0xE74C3C,
         "guard_absorb": 0.25,
         "passive": "Krvavý hněv — pod 30 % HP: dmg +50 %",
@@ -52,7 +52,7 @@ CLASSES: dict[str, dict] = {
         "ult_name":   "Zběsilost",          "ult_desc":   "3 kola: 2× útok, nelze štítit, -8 HP/kolo", "ult_charge_max": 4,
     },
     "Guardian": {
-        "emoji": "⚜️", "hp": 175, "stamina": 85, "furioku_max": 120, "recover": 30,
+        "emoji": "⚜️", "hp": 175, "stamina": 85, "furioku_max": 185, "recover": 30,
         "dmg_mod": 1.00, "color": 0x27AE60,
         "guard_absorb": 0.55,
         "passive": "Trny — štít vrací 10 dmg útočníkovi (15 při critical)",
@@ -61,7 +61,7 @@ CLASSES: dict[str, dict] = {
         "ult_name":   "Odvetný úder",       "ult_desc":   "Odraz příštího útoku zpět",           "ult_charge_max": 5,
     },
     "Duelist": {
-        "emoji": "🤺", "hp": 130, "stamina": 100, "furioku_max": 80, "recover": 35,
+        "emoji": "🤺", "hp": 130, "stamina": 100, "furioku_max": 125, "recover": 35,
         "dmg_mod": 1.05, "color": 0x9B59B6,
         "guard_absorb": 0.35,
         "passive": "Přesné oko — klam ignoruje štít úplně, plný dmg",
@@ -70,7 +70,7 @@ CLASSES: dict[str, dict] = {
         "ult_name":   "Dokonalý souboj",    "ult_desc":   "Riposte stance: příší útok → 150 % counter", "ult_charge_max": 4,
     },
     "Gladiator": {
-        "emoji": "🏛️", "hp": 155, "stamina": 90, "furioku_max": 100, "recover": 28,
+        "emoji": "🏛️", "hp": 155, "stamina": 90, "furioku_max": 155, "recover": 28,
         "dmg_mod": 1.20, "color": 0xB8860B,
         "guard_absorb": 0.42,
         "passive": "Arénní pes — heavy útoky způsobují bonus dmg",
@@ -187,9 +187,10 @@ class Fighter:
         self.buff_poison:  int  = 0
         self.buff_absorb:  bool = False
         self.buff_reflect: bool = False
-        self.furioku     = cls.get("furioku_max", 0)
-        self.max_furioku = cls.get("furioku_max", 0)
-        self.furioku_invest: int = 0
+        self.furioku        = cls.get("furioku_max", 0)
+        self.max_furioku    = cls.get("furioku_max", 0)
+        self.furioku_invest: int  = 0
+        self.furioku_shield: bool = True   # True = furioku absorbuje dmg pasivně
         self.cooldowns: dict[str, int] = {"basic": 0}
         self.bag:       dict[str, int] = {"hp_potion": 1, "sta_potion": 1}
         self.action: str | None = None
@@ -856,13 +857,13 @@ def resolve_round(state: DuelState) -> list[str]:
             log.append(f"💜 **{n2}** uvolní auru do útoku — **+{bonus}** dmg!")
 
     # ── Furioku shield absorbs damage before HP ───────────────────────────────
-    if d1 > 0 and f1.furioku > 0:
+    if d1 > 0 and f1.furioku > 0 and f1.furioku_shield:
         absorbed = min(f1.furioku, d1)
         f1.furioku -= absorbed
         d1 -= absorbed
         if absorbed > 0:
             log.append(f"💜 Aura **{n1}** pohltí **{absorbed}** dmg! (furioku: {max(0, f1.furioku)}/{f1.max_furioku})")
-    if d2 > 0 and f2.furioku > 0:
+    if d2 > 0 and f2.furioku > 0 and f2.furioku_shield:
         absorbed = min(f2.furioku, d2)
         f2.furioku -= absorbed
         d2 -= absorbed
@@ -1135,6 +1136,15 @@ class ActionView(discord.ui.View):
         fheal_btn.callback = self._make_cb("furioku_heal")
         self.add_item(fheal_btn)
 
+        shield_on = fighter.furioku_shield
+        shield_btn = discord.ui.Button(
+            label="💜 Štít ZAP" if shield_on else "🖤 Štít VYP",
+            style=discord.ButtonStyle.blurple if shield_on else discord.ButtonStyle.grey,
+            row=1,
+        )
+        shield_btn.callback = self._make_shield_toggle_cb()
+        self.add_item(shield_btn)
+
         # ── Row 2: Recover + Special + Bag ───────────────────────────────────
         rec_btn = discord.ui.Button(
             label=f"💚 Odpočinek  (+{cls['recover']} sta)",
@@ -1198,6 +1208,24 @@ class ActionView(discord.ui.View):
             await interaction.response.edit_message(
                 content=_intent_content(self.state, self.fighter),
                 view=ActionView(self.state, self.fighter, invest=new_invest),
+            )
+        return cb
+
+    def _make_shield_toggle_cb(self):
+        async def cb(interaction: discord.Interaction):
+            if interaction.user.id != self.fighter.member.id:
+                await interaction.response.send_message("Toto není tvůj souboj!", ephemeral=True)
+                return
+            if self.fighter.action is not None:
+                await interaction.response.send_message("Už jsi vybral!", ephemeral=True)
+                return
+            if self.state.done:
+                await interaction.response.send_message("Duel skončil.", ephemeral=True)
+                return
+            self.fighter.furioku_shield = not self.fighter.furioku_shield
+            await interaction.response.edit_message(
+                content=_intent_content(self.state, self.fighter),
+                view=ActionView(self.state, self.fighter, invest=self.invest),
             )
         return cb
 
