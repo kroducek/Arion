@@ -25,10 +25,10 @@ CLASSES: dict[str, dict] = {
         "ult_name":   "Duch bouře",         "ult_desc":   "~70 dmg",                           "ult_charge_max": 5,
     },
     "Knight": {
-        "emoji": "🛡️", "hp": 190, "stamina": 80, "furioku_max": 200, "recover": 25,
-        "dmg_mod": 1.15, "color": 0x95A5A6,
-        "guard_absorb": 0.58,
-        "passive": "Železná pevnost — nejsilnější štít v aréně",
+        "emoji": "🛡️", "hp": 180, "stamina": 80, "furioku_max": 200, "recover": 25,
+        "dmg_mod": 1.10, "color": 0x95A5A6,
+        "guard_absorb": 0.52,
+        "passive": "Železná pevnost — nejvyšší furioku v aréně",
         "lore": "Obrněný válečník. Pomalý. Neúprosný.",
         "basic_name": "Požehnání",          "basic_desc": "Obnov 45 sta",                      "basic_cd": 3,
         "ult_name":   "Úder spravedlnosti", "ult_desc":   "~80 dmg, ignoruje štít",             "ult_charge_max": 5,
@@ -78,6 +78,15 @@ CLASSES: dict[str, dict] = {
         "basic_name": "Krvavý řez",         "basic_desc": "25 dmg přímý, nelze blokovat",      "basic_cd": 3,
         "ult_name":   "Gladiátorský tanec", "ult_desc":   "3 rychlé rány — ~85 dmg celkem",    "ult_charge_max": 4,
     },
+    "Cyborg": {
+        "emoji": "🤖", "hp": 140, "stamina": 95, "furioku_max": 165, "recover": 30,
+        "dmg_mod": 1.05, "color": 0x00BFFF,
+        "guard_absorb": 0.38,
+        "passive": "Přesný mechanismus — Laserová střela se nabíjí každé kolo (CD 1)",
+        "lore": "Polovina člověka, polovina stroje. Žádný cit, žádná únava — jen výpočty.",
+        "basic_name": "Laserová střela",    "basic_desc": "20 dmg přímý, nelze blokovat",      "basic_cd": 1,
+        "ult_name":   "Výboj",             "ult_desc":   "4×20 dmg, poté stamina → 0",         "ult_charge_max": 4,
+    },
     "Vampire": {
         "emoji": "🧛", "hp": 120, "stamina": 85, "furioku_max": 160, "recover": 28,
         "dmg_mod": 1.05, "color": 0x6A0DAD,
@@ -101,6 +110,7 @@ INTENT_TEXT: dict[str, str] = {
     "Guardian":  "⚜️ *Štít zapřen. Nepohne se z místa.*",
     "Duelist":   "🤺 *Analyzuje každý pohyb soupeře. Čeká na chybu.*",
     "Gladiator":    "🏛️ *Krok za krokem. Čeká na správný moment.*",
+    "Cyborg":       "🤖 *Systémy aktivovány. Cíl uzamčen. Střelba povolena.*",
     "Vampire":      "🧛 *Oči žhnou rudě. Voní krev — tvoje.*",
 }
 INTENT_CRITICAL: dict[str, str] = {
@@ -111,6 +121,7 @@ INTENT_CRITICAL: dict[str, str] = {
     "Guardian":  "⚜️ *Opírá se o štít. Krvácí. Ale necouvne.*",
     "Duelist":   "🤺 *Zraněn — ale oči nikdy nepřestaly číst soupeře.*",
     "Gladiator":    "🏛️ *Krvácí — ale oči žhnou. Aréna to vidí.*",
+    "Cyborg":       "🤖 *Přehřátí systémů. Chladicí selhání. Funkce omezeny. Pokračuji.*",
     "Vampire":      "🧛 *Krvácí — a v očích se rozhoří něco temného. Nebezpečnější než kdy dřív.*",
 }
 INTENT_BERSERK: str = "🪓 *ZBĚSILOST — útočí bez zastavení. Zastavit ho nelze.*"
@@ -160,6 +171,12 @@ CRITICAL_LINES: dict[str, list[str]] = {
         "*{n} slyší arénu. To ho drží na nohách.*",
         "*Krev a písek. {n} byl stvořen pro tenhle okamžik.*",
     ],
+    "Cyborg": [
+        "*{n} se přehřívá — chlazení na limitech. Systém přesto pokračuje.*",
+        "*Kritické poškození struktury. {n} přepočítává strategii.*",
+        "*Varování: kapacita na 20 %. {n} ignoruje výzvy k zastavení.*",
+        "*{n} — chyba systému. Hrubá síla jako záloha.*",
+    ],
     "Vampire": [
         "*{n} krvácí — ale oči žhnou rudě. Nezastaví ho to.*",
         "*Čím blíže smrti, tím hladovější. {n} to cítí.*",
@@ -203,7 +220,8 @@ class Fighter:
         self.buff_heavy:   bool = False
         self.buff_poison:  int  = 0
         self.buff_absorb:  bool = False
-        self.buff_reflect: bool = False
+        self.buff_reflect:  bool = False
+        self.reflect_used:  bool = False
         self.furioku        = cls.get("furioku_max", 0)
         self.max_furioku    = cls.get("furioku_max", 0)
         self.furioku_invest: int  = 0
@@ -394,6 +412,10 @@ def _apply_basic(f: Fighter, opp: Fighter, log: list[str]) -> int:
         dmg = 25
         log.append(f"🏛️ **{n}** — Krvavý řez! Čepel prosekne přímo. **{dmg}** dmg!")
         return dmg
+    elif f.cls_name == "Cyborg":
+        dmg = 20 + random.randint(-2, 2)
+        log.append(f"🤖 **{n}** — Laserová střela! Paprsek z ramene. **{dmg}** dmg!")
+        return dmg
     elif f.cls_name == "Vampire":
         dmg = 35 + random.randint(-3, 3)
         heal = round(dmg * 0.5)
@@ -422,8 +444,12 @@ def _apply_ultimate(f: Fighter, opp: Fighter, log: list[str]) -> int:
         log.append(f"💥 **{n}** — **ZBĚSILOST!** Přichází šílenství. **3 kola berserk módu!** Aréna se chvěje.")
         return 0
     elif f.cls_name == "Guardian":
+        if f.reflect_used:
+            dmg = 50 + random.randint(-5, 5)
+            log.append(f"💥 **{n}** — **ODVETNÝ ÚDER!** Reflect již použit — silný přímý úder místo. **{dmg}** dmg!")
+            return dmg
         f.buff_reflect = True
-        log.append(f"💥 **{n}** — **ODVETNÝ ÚDER!** Štít se rozžhaví. Příští útok letí zpět. ⚜️")
+        log.append(f"💥 **{n}** — **ODVETNÝ ÚDER!** Štít se rozžhaví. Příší útok letí zpět 2×. ⚜️")
         return 0
     elif f.cls_name == "Duelist":
         f.riposte = True
@@ -433,6 +459,12 @@ def _apply_ultimate(f: Fighter, opp: Fighter, log: list[str]) -> int:
         r1 = _rdm(28, 4); r2 = _rdm(28, 4); r3 = _rdm(29, 4)
         dmg = r1 + r2 + r3
         log.append(f"💥 **{n}** — **GLADIÁTORSKÝ TANEC!** Tři rychlé rány — **{r1}** + **{r2}** + **{r3}** = **{dmg}** dmg!")
+        return dmg
+    elif f.cls_name == "Cyborg":
+        hits = [20 + random.randint(-2, 2) for _ in range(4)]
+        dmg = sum(hits)
+        f.stamina = 0
+        log.append(f"💥 **{n}** — **VÝBOJ!** Reaktor v hrudi se vybije — {' + '.join(map(str, hits))} = **{dmg}** dmg! Stamina → 0!")
         return dmg
     elif f.cls_name == "Vampire":
         dmg = 75 + random.randint(-5, 5)
@@ -680,18 +712,20 @@ def resolve_round(state: DuelState) -> list[str]:
         # ── Guardian reflect stance ───────────────────────────────────────────
         elif f1.buff_reflect and a2 in ("attack", "heavy", "feint"):
             raw = _hvy(f2) if a2 == "heavy" else _atk(f2)
-            triple = raw * 3
-            d2 += triple
+            doubled = raw * 2
+            d2 += doubled
             f1.buff_reflect = False
-            log.append(f"⚜️ **{n1}** — **ODVETNÝ ÚDER!** Absorbuje sílu a vrací ji trojnásobně — **{triple}** dmg! *(3×{raw})*")
+            f1.reflect_used = True
+            log.append(f"⚜️ **{n1}** — **ODVETNÝ ÚDER!** Absorbuje sílu a vrací ji dvojnásobně — **{doubled}** dmg! *(2×{raw})*")
             log.append(f"*{n1} stojí bez újmy.*")
 
         elif f2.buff_reflect and a1 in ("attack", "heavy", "feint"):
             raw = _hvy(f1) if a1 == "heavy" else _atk(f1)
-            triple = raw * 3
-            d1 += triple
+            doubled = raw * 2
+            d1 += doubled
             f2.buff_reflect = False
-            log.append(f"⚜️ **{n2}** — **ODVETNÝ ÚDER!** Absorbuje sílu a vrací ji trojnásobně — **{triple}** dmg! *(3×{raw})*")
+            f2.reflect_used = True
+            log.append(f"⚜️ **{n2}** — **ODVETNÝ ÚDER!** Absorbuje sílu a vrací ji dvojnásobně — **{doubled}** dmg! *(2×{raw})*")
             log.append(f"*{n2} stojí bez újmy.*")
 
         # ── Normal matrix ─────────────────────────────────────────────────────
@@ -986,6 +1020,13 @@ FINISHERS = [
     "se nevzdal — ale jeho tělo rozhodlo za něj.",
 ]
 
+_ACTION_LABEL: dict[str, str] = {
+    "attack": "⚔️ Útok", "heavy": "🪓 Těžký útok", "guard": "🛡️ Štít",
+    "feint": "🎭 Klam", "dodge": "💨 Úskok", "recover": "💚 Odpočinek",
+    "basic": "✨ Schopnost", "ultimate": "💥 Ult", "furioku_heal": "💜 Fur Heal",
+    "hp_potion": "🧪 HP Lektvar", "sta_potion": "⚡ Sta Lektvar",
+}
+
 def build_status_embed(state: DuelState, log: list[str] | None = None) -> discord.Embed:
     f1, f2 = state.f1, state.f2
     parts  = [_fighter_bar(f1), "", _fighter_bar(f2)]
@@ -999,6 +1040,11 @@ def build_status_embed(state: DuelState, log: list[str] | None = None) -> discor
         parts.append(f"-# **Kolo {state.round}** — {random.choice(CROWD_LINES)}")
         for line in log:
             parts.append(f"-# {line}")
+
+    if state.last_a1 is not None and state.round > 0:
+        l1 = _ACTION_LABEL.get(state.last_a1, state.last_a1)
+        l2 = _ACTION_LABEL.get(state.last_a2 or "", state.last_a2 or "?")
+        parts.append(f"-# 🕹️ Kolo {state.round}: **{f1.member.display_name}** → {l1}  ·  **{f2.member.display_name}** → {l2}")
 
     warns = []
     if state.last_a1 == "heavy":
@@ -1125,10 +1171,10 @@ def _intent_content(state: DuelState, fighter: Fighter) -> str:
 
 
 class ActionView(discord.ui.View):
-    """Ephemeral — hráč vybírá akci. Bez timeoutu."""
+    """Ephemeral — hráč vybírá akci."""
 
     def __init__(self, state: DuelState, fighter: Fighter, invest: int = 0):
-        super().__init__(timeout=None)
+        super().__init__(timeout=300)
         self.state   = state
         self.fighter = fighter
         self.invest  = invest
@@ -1317,6 +1363,17 @@ class ActionView(discord.ui.View):
             )
             await _try_resolve(self.state)
         return cb
+
+    async def on_timeout(self):
+        if self.fighter.action is None and not self.state.done:
+            self.fighter.action = "recover"
+            try:
+                await self.state.channel.send(
+                    f"-# ⏰ {self.fighter.member.mention} nevybral akci včas — automatický **Odpočinek**.",
+                )
+            except Exception:
+                pass
+            await _try_resolve(self.state)
 
 
 class ArenaView(discord.ui.View):

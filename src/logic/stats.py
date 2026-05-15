@@ -170,68 +170,56 @@ def spend_sp(user_id: int, stat: str, amount: int = 1) -> bool:
 # LEVELUP VIEW — hráč rozděluje SP po levelupu
 # ══════════════════════════════════════════════════════════════════════════════
 
+_SP_EMOJI = {"STR": "💪", "DEX": "🤸", "INS": "👁️", "INT": "🧠", "CHA": "✨", "WIS": "🔮"}
+
+
 class SpendSPView(discord.ui.View):
-    """Ephemeral view pro rozdělení SP po levelupu."""
+    """Ephemeral view — 6 tlačítek, jedno na stat."""
 
     def __init__(self, user_id: int, sp_to_spend: int):
         super().__init__(timeout=300)
-        self.user_id     = user_id
-        self.sp_to_spend = sp_to_spend
-
-    @discord.ui.button(label="Rozdělit skill pointy", style=discord.ButtonStyle.primary, emoji="⚡")
-    async def open_modal(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("Toto není tvůj levelup.", ephemeral=True)
-            return
-        await interaction.response.send_modal(SpendSPModal(user_id=self.user_id))
-
-
-class SpendSPModal(discord.ui.Modal, title="Rozdělit Skill Pointy"):
-    choice = discord.ui.TextInput(
-        label="Stat (STR / DEX / INS / INT / CHA / WIS)",
-        placeholder="Napiš název statu — např. STR",
-        required=True,
-        max_length=3,
-    )
-
-    def __init__(self, user_id: int):
-        super().__init__()
         self.user_id = user_id
-
-    async def on_submit(self, interaction: discord.Interaction):
-        stat = self.choice.value.strip().upper()
-        if stat not in STAT_LABELS:
-            await interaction.response.send_message(
-                f"❌ Neznámý stat `{stat}`. Použij: {', '.join(STAT_LABELS)}",
-                ephemeral=True,
+        for stat in STAT_LABELS:
+            btn = discord.ui.Button(
+                label=f"{_SP_EMOJI.get(stat, '')} {stat}",
+                style=discord.ButtonStyle.blurple,
+                row=0,
             )
-            return
+            btn.callback = self._make_cb(stat)
+            self.add_item(btn)
 
-        data = _load()
-        uid  = str(self.user_id)
-        p    = _profile(data, uid)
-
-        if p["sp"] <= 0:
-            await interaction.response.send_message("Nemáš žádné volné skill pointy.", ephemeral=True)
-            return
-
-        p["sp"]         -= 1
-        p["stats"][stat] = p["stats"].get(stat, 1) + 1
-        _save(data)
-
-        remaining = p["sp"]
-        new_val   = p["stats"][stat]
-
-        embed = discord.Embed(
-            title="⚡  Skill Point utracen",
-            description=(
-                f"**{stat}** zvýšen na **{new_val}**.\n\n"
-                f"Zbývající SP: **{remaining}**"
-                + ("\n\n*Klikni znovu pro další SP.*" if remaining > 0 else "\n\n*Všechny SP rozděleny.*")
-            ),
-            color=0x9b59b6,
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    def _make_cb(self, stat: str):
+        async def cb(interaction: discord.Interaction):
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("Toto není tvůj výběr.", ephemeral=True)
+                return
+            data = _load()
+            uid  = str(self.user_id)
+            p    = _profile(data, uid)
+            if p["sp"] <= 0:
+                await interaction.response.edit_message(
+                    content="Nemáš žádné volné SP.", embed=None, view=None
+                )
+                return
+            p["sp"]          -= 1
+            p["stats"][stat]  = p["stats"].get(stat, 1) + 1
+            _save(data)
+            remaining = p["sp"]
+            new_val   = p["stats"][stat]
+            embed = discord.Embed(
+                title="⚡  Skill Point utracen",
+                description=(
+                    f"{_SP_EMOJI.get(stat, '')} **{stat}** zvýšen na **{new_val}**.\n\n"
+                    f"Zbývající SP: **{remaining}**"
+                    + ("\n\n*Vyber další stat.*" if remaining > 0 else "\n\n*Všechny SP rozděleny.*")
+                ),
+                color=0x9b59b6,
+            )
+            await interaction.response.edit_message(
+                embed=embed,
+                view=SpendSPView(self.user_id, remaining) if remaining > 0 else None,
+            )
+        return cb
 
 
 # ══════════════════════════════════════════════════════════════════════════════
