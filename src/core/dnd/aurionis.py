@@ -25,6 +25,19 @@ def _save_tournament(data: list):
     with open(TOURNAMENT_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
+_CLOCK_EMOJIS = ["🕛","🕐","🕑","🕒","🕓","🕔","🕕","🕖","🕗","🕘","🕙","🕚"]
+
+def _clock_sequence(hours: int) -> str:
+    start = random.randint(0, 11)
+    if hours + 1 <= 10:
+        return " ".join(_CLOCK_EMOJIS[(start + i) % 12] for i in range(hours + 1))
+    return " ".join(_CLOCK_EMOJIS[(start + round(i * hours / 9)) % 12] for i in range(10))
+
+def _hours_cz(n: int) -> str:
+    if n == 1: return "hodina"
+    if n <= 4: return "hodiny"
+    return "hodin"
+
 class Aurionis(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -221,6 +234,7 @@ class Aurionis(commands.Cog):
             value=(
                 "`/vliv` — Uděl hráči Vliv (Světlo/Temnota/Rovnováha)\n"
                 "`/takedown` — Arion provede Takedown\n"
+                "`/timeskip` — Přeskok v čase (narativní utilita)\n"
                 "`/erase all` — Smaže všechny zprávy v místnosti\n"
                 "`/hunger-balance` — Simulace hladu v čase\n"
                 "`/profile-admin-hp/mana/fury/vliv` — Nastav staty hráče\n"
@@ -405,6 +419,38 @@ class Aurionis(commands.Cog):
     async def tournament_admin_error(self, interaction: discord.Interaction, error):
         if isinstance(error, app_commands.MissingPermissions):
             await interaction.response.send_message("Nemáš oprávnění spravovat turnaj.", ephemeral=True)
+
+    # --- TIMESKIP ---
+
+    @app_commands.command(name="timeskip", description="Přeskok v čase — narativní DM utilita")
+    @app_commands.describe(
+        hours="Počet přeskočených hodin (1–72)",
+        poznamka="Co se během přeskoku dělo (volitelné)"
+    )
+    async def timeskip(
+        self,
+        interaction: discord.Interaction,
+        hours: app_commands.Range[int, 1, 72],
+        poznamka: str = None,
+    ):
+        clocks = _clock_sequence(hours)
+        noun = _hours_cz(hours)
+
+        if hours == 1:
+            elapsed = f"Uběhla **1 {noun}**."
+        elif hours <= 4:
+            elapsed = f"Uběhly **{hours} {noun}**."
+        else:
+            elapsed = f"Uběhlo **{hours} {noun}**."
+
+        embed = discord.Embed(color=0x3B1F6B)
+        embed.set_author(name="⏳  Přeskok v čase")
+        embed.add_field(name="​", value=clocks, inline=False)
+        embed.add_field(name="​", value=elapsed, inline=False)
+        if poznamka:
+            embed.add_field(name="​", value=f"*{poznamka}*", inline=False)
+        embed.set_footer(text="Aurionis · Přeskok v čase")
+        await interaction.response.send_message(embed=embed)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Aurionis(bot))
