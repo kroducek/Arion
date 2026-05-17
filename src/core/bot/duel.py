@@ -23,7 +23,7 @@ CLASSES: dict[str, dict] = {
         "passive": "Meditativní tok — Furioku aura chráni před dmg; Meditace obnoví 30 HP",
         "lore": "Disciplinovaný bojovník těla i ducha. Nikdy neutíká od boje.",
         "basic_name": "Meditace",           "basic_desc": "Obnov 30 HP a 10 sta",              "basic_cd": 3,
-        "ult_name":   "Duch bouře",         "ult_desc":   "~70 dmg + 🌀 CONFUSION 1 kolo",     "ult_charge_max": 5,
+        "ult_name":   "Duch bouře",         "ult_desc":   "~63 dmg + 🌀 CONFUSION 1 kolo",     "ult_charge_max": 5,
     },
     "Knight": {
         "emoji": "🛡️", "hp": 180, "stamina": 80, "furioku_max": 200, "recover": 25,
@@ -32,7 +32,7 @@ CLASSES: dict[str, dict] = {
         "passive": "Železná pevnost — nejvyšší furioku v aréně",
         "lore": "Obrněný válečník. Pomalý. Neúprosný.",
         "basic_name": "Požehnání",          "basic_desc": "Obnov 45 sta",                      "basic_cd": 3,
-        "ult_name":   "Úder spravedlnosti", "ult_desc":   "~80 dmg + 💫 STUN 1 kolo, ignoruje štít", "ult_charge_max": 5,
+        "ult_name":   "Úder spravedlnosti", "ult_desc":   "~72 dmg + 💫 STUN 1 kolo, ignoruje štít", "ult_charge_max": 5,
     },
     "Rogue": {
         "emoji": "🗡️", "hp": 120, "stamina": 105, "furioku_max": 160, "recover": 35,
@@ -41,7 +41,7 @@ CLASSES: dict[str, dict] = {
         "passive": "Stínový krok — úskok vyhýbá VŠEM útokům + free counter",
         "lore": "Rychlý a zákeřný. Kdo ho uvidí, je mrtvý.",
         "basic_name": "Jedová čepel",       "basic_desc": "☠️ POISON 3 kola (15/kolo)",          "basic_cd": 3,
-        "ult_name":   "Zákeřný úder",       "ult_desc":   "~90 dmg + 🩸 BLEED 2 kola, nelze blokovat", "ult_charge_max": 4,
+        "ult_name":   "Zákeřný úder",       "ult_desc":   "~81 dmg + 🩸 BLEED 2 kola, nelze blokovat", "ult_charge_max": 4,
     },
     "Berserker": {
         "emoji": "🪓", "hp": 160, "stamina": 90, "furioku_max": 165, "recover": 30,
@@ -77,7 +77,7 @@ CLASSES: dict[str, dict] = {
         "passive": "Arénní pes — heavy útoky způsobují bonus dmg",
         "lore": "Vychován v písku a krvi. Aréna je jeho chrám. Všechno ostatní je příprava.",
         "basic_name": "Krvavý řez",         "basic_desc": "25 dmg přímý, nelze blokovat",      "basic_cd": 3,
-        "ult_name":   "Gladiátorský tanec", "ult_desc":   "3 rychlé rány — ~85 dmg celkem",    "ult_charge_max": 4,
+        "ult_name":   "Gladiátorský tanec", "ult_desc":   "3 rychlé rány — ~76 dmg celkem",    "ult_charge_max": 4,
     },
     "Cyborg": {
         "emoji": "🤖", "hp": 140, "stamina": 95, "furioku_max": 165, "recover": 30,
@@ -86,7 +86,7 @@ CLASSES: dict[str, dict] = {
         "passive": "Přesný mechanismus — Laserová střela se nabíjí každé kolo (CD 1)",
         "lore": "Polovina člověka, polovina stroje. Žádný cit, žádná únava — jen výpočty.",
         "basic_name": "Laserová střela",    "basic_desc": "20 dmg přímý + 40% 🔥 BURN 2 kola, nelze blokovat", "basic_cd": 1,
-        "ult_name":   "Výboj",             "ult_desc":   "4×20 dmg, poté stamina → 0",         "ult_charge_max": 4,
+        "ult_name":   "Výboj",             "ult_desc":   "4×18 dmg, poté stamina → 0",         "ult_charge_max": 4,
     },
     "Vampire": {
         "emoji": "🧛", "hp": 120, "stamina": 85, "furioku_max": 160, "recover": 28,
@@ -95,7 +95,7 @@ CLASSES: dict[str, dict] = {
         "passive": "Krvavý pakt — každý útok vrátí 15 % způsobeného dmg jako HP",
         "lore": "Smrt je jen práh. Za ním je něco mnohem horšího — a ty to právě potkáváš.",
         "basic_name": "Krvavý políbek",     "basic_desc": "35 dmg + heal ~12 HP + 30% 💤 SLEEP, nelze blokovat", "basic_cd": 3,
-        "ult_name":   "Noční hostina",      "ult_desc":   "~75 dmg + heal ~26 HP, nelze blokovat",           "ult_charge_max": 5,
+        "ult_name":   "Noční hostina",      "ult_desc":   "~68 dmg + heal ~24 HP, nelze blokovat",           "ult_charge_max": 5,
     },
 }
 
@@ -492,17 +492,17 @@ def _apply_ultimate(f: Fighter, opp: Fighter, log: list[str]) -> int:
     f.ult_charge = 0
     n = f.member.display_name
     if f.cls_name == "Monk":
-        dmg = 70 + random.randint(-5, 5)
+        dmg = 63 + random.randint(-5, 5)
         log.append(f"💥 **{n}** — **DUCH BOUŘE!** Energie exploduje z každého póru — **{dmg}** dmg!")
         log.append(_apply_status(opp, "confusion", 1))
         return dmg
     elif f.cls_name == "Knight":
-        dmg = 80 + random.randint(-5, 5)
+        dmg = 72 + random.randint(-5, 5)
         log.append(f"💥 **{n}** — **ÚDER SPRAVEDLNOSTI!** Meč padá z výše, bez milosti — **{dmg}** dmg, žádný štít!")
         log.append(_apply_status(opp, "stun", 1))
         return dmg
     elif f.cls_name == "Rogue":
-        dmg = 90 + random.randint(-5, 5)
+        dmg = 81 + random.randint(-5, 5)
         log.append(f"💥 **{n}** — **ZÁKEŘNÝ ÚDER!** Z temnoty, tam kde nikdo nečekal — **{dmg}** dmg!")
         log.append(_apply_status(opp, "bleed", 2))
         return dmg
@@ -512,7 +512,7 @@ def _apply_ultimate(f: Fighter, opp: Fighter, log: list[str]) -> int:
         return 0
     elif f.cls_name == "Guardian":
         if f.reflect_used:
-            dmg = 50 + random.randint(-5, 5)
+            dmg = 45 + random.randint(-5, 5)
             log.append(f"💥 **{n}** — **ODVETNÝ ÚDER!** Reflect již použit — silný přímý úder místo. **{dmg}** dmg!")
             return dmg
         f.buff_reflect = True
@@ -523,18 +523,18 @@ def _apply_ultimate(f: Fighter, opp: Fighter, log: list[str]) -> int:
         log.append(f"💥 **{n}** — **DOKONALÝ SOUBOJ!** Čepel se ponoří do ticha. Riposte stance. ⚡")
         return 0
     elif f.cls_name == "Gladiator":
-        r1 = _rdm(28, 4); r2 = _rdm(28, 4); r3 = _rdm(29, 4)
+        r1 = _rdm(25, 4); r2 = _rdm(25, 4); r3 = _rdm(26, 4)
         dmg = r1 + r2 + r3
         log.append(f"💥 **{n}** — **GLADIÁTORSKÝ TANEC!** Tři rychlé rány — **{r1}** + **{r2}** + **{r3}** = **{dmg}** dmg!")
         return dmg
     elif f.cls_name == "Cyborg":
-        hits = [20 + random.randint(-2, 2) for _ in range(4)]
+        hits = [18 + random.randint(-2, 2) for _ in range(4)]
         dmg = sum(hits)
         f.stamina = 0
         log.append(f"💥 **{n}** — **VÝBOJ!** Reaktor v hrudi se vybije — {' + '.join(map(str, hits))} = **{dmg}** dmg! Stamina → 0!")
         return dmg
     elif f.cls_name == "Vampire":
-        dmg = 75 + random.randint(-5, 5)
+        dmg = 68 + random.randint(-5, 5)
         heal = round(dmg * 0.35)
         f.hp = min(f.max_hp, f.hp + heal)
         log.append(f"💥 **{n}** — **NOČNÍ HOSTINA!** Temnota pohltí soupeře — **{dmg}** dmg, **+{heal} HP** zpět!")
