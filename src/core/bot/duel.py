@@ -97,6 +97,15 @@ CLASSES: dict[str, dict] = {
         "basic_name": "Krvavý políbek",     "basic_desc": "35 dmg + heal ~12 HP + 30% 💤 SLEEP, nelze blokovat", "basic_cd": 3,
         "ult_name":   "Noční hostina",      "ult_desc":   "~68 dmg + heal ~24 HP, nelze blokovat",           "ult_charge_max": 5,
     },
+    "Warlock": {
+        "emoji": "🔮", "hp": 110, "stamina": 85, "furioku_max": 155, "recover": 28,
+        "dmg_mod": 1.00, "color": 0x4B0082,
+        "guard_absorb": 0.22,
+        "passive": "Krvavý pakt — každý zásah přidá CURSE stack (+5 dmg na útok, max ×3)",
+        "lore": "Podepsal smlouvu, jejíž podmínky nikdy nečetl. Teď z ní žije — nebo umírá.",
+        "basic_name": "Hexe",           "basic_desc": "20 % max HP soupeře jako přímý dmg, nelze blokovat",  "basic_cd": 2,
+        "ult_name":   "Duše za duši",   "ult_desc":   "Prohodí aktuální HP obou hráčů",                      "ult_charge_max": 5,
+    },
 }
 
 CLASS_NAMES = list(CLASSES.keys())
@@ -113,6 +122,7 @@ INTENT_TEXT: dict[str, str] = {
     "Gladiator":    "🏛️ *Krok za krokem. Čeká na správný moment.*",
     "Cyborg":       "🤖 *Systémy aktivovány. Cíl uzamčen. Střelba povolena.*",
     "Vampire":      "🧛 *Oči žhnou rudě. Voní krev — tvoje.*",
+    "Warlock":      "🔮 *Rty se pohybují. Smlouva hoří. Pakt je aktivní.*",
 }
 INTENT_CRITICAL: dict[str, str] = {
     "Monk":      "🥷 *Krvácí... ale dech je stále klidný. Klid před bouří.*",
@@ -124,6 +134,7 @@ INTENT_CRITICAL: dict[str, str] = {
     "Gladiator":    "🏛️ *Krvácí — ale oči žhnou. Aréna to vidí.*",
     "Cyborg":       "🤖 *Přehřátí systémů. Chladicí selhání. Funkce omezeny. Pokračuji.*",
     "Vampire":      "🧛 *Krvácí — a v očích se rozhoří něco temného. Nebezpečnější než kdy dřív.*",
+    "Warlock":      "🔮 *Krvácí. Ale smlouva zesiluje — každý zásah ho dělá smrtelnějším.*",
 }
 INTENT_BERSERK: str = "🪓 *ZBĚSILOST — útočí bez zastavení. Zastavit ho nelze.*"
 
@@ -184,6 +195,12 @@ CRITICAL_LINES: dict[str, list[str]] = {
         "*{n} se sotva drží. Každá kapka krve ho jen dráždí.*",
         "*Bolest je jen připomínka, že stále žije. {n} se usmívá.*",
     ],
+    "Warlock": [
+        "*{n} krvácí — a smlouva mu to vrátí trojnásobně.*",
+        "*Každý zásah jen posiluje prokletí. {n} to ví.*",
+        "*Na pokraji. Ale pakt ještě nebyl naplněn.*",
+        "*{n} se lopotí. Temná energie ho drží pohromadě.*",
+    ],
 }
 
 # ── Akce ─────────────────────────────────────────────────────────────────────
@@ -194,10 +211,10 @@ STAM_COSTS = {
     "basic": 0,   "ultimate": 0,
     "hp_potion": 0, "sta_potion": 0,
     "furioku_heal": 0,
-    "bandage": 0, "antidote": 0, "stun": 0,
+    "stimulant": 0, "stun": 0,
 }
 
-_ABILITY_ACTIONS = frozenset(("basic", "ultimate", "hp_potion", "sta_potion", "furioku_heal", "bandage", "antidote", "stun"))
+_ABILITY_ACTIONS = frozenset(("basic", "ultimate", "hp_potion", "sta_potion", "furioku_heal", "stimulant", "stun"))
 
 BASE_ATK    = 22
 BASE_HEAVY  = 28
@@ -254,8 +271,9 @@ class Fighter:
         self.furioku_invest: int  = 0
         self.furioku_shield: bool = True   # True = furioku absorbuje dmg pasivně
         self.cooldowns: dict[str, int] = {"basic": 0}
-        self.bag:       dict[str, int] = {"hp_potion": 1, "sta_potion": 1, "bandage": 1, "antidote": 1}
-        self.statuses:  dict[str, int] = {}   # status_name → rounds_remaining
+        self.bag:       dict[str, int] = {"hp_potion": 1, "sta_potion": 1, "stimulant": 2}
+        self.statuses:    dict[str, int] = {}   # status_name → rounds_remaining
+        self.curse_stacks: int          = 0    # Warlock passive — max 3
         self.action: str | None = None
 
     @property
@@ -350,11 +368,12 @@ def _fighter_bar(f: Fighter) -> str:
     ready = " ✨ READY!" if f.ult_charge >= max_c else f" {f.ult_charge}/{max_c}"
 
     tags = []
-    if f.berserk > 0:       tags.append(f"🔥 BERSERK {f.berserk}")
-    if f.riposte:           tags.append("⚡ RIPOSTE")
-    if f.buff_heavy:        tags.append("💢 NABITO")
-    if f.shield_hp > 0:     tags.append(f"🛡️ SHIELD {f.shield_hp}")
-    if f.critical:          tags.append("🩸 CRITICAL")
+    if f.berserk > 0:        tags.append(f"🔥 BERSERK {f.berserk}")
+    if f.riposte:            tags.append("⚡ RIPOSTE")
+    if f.buff_heavy:         tags.append("💢 NABITO")
+    if f.shield_hp > 0:      tags.append(f"🛡️ SHIELD {f.shield_hp}")
+    if f.curse_stacks > 0:   tags.append(f"🔮 KLETBA ×{f.curse_stacks}")
+    if f.critical:           tags.append("🩸 CRITICAL")
     if f.furioku_invest > 0: tags.append(f"💜 invest {f.furioku_invest}")
     for _st, _r in f.statuses.items():
         _e = STATUS_EMOJIS.get(_st, "?")
@@ -427,21 +446,18 @@ def _apply_status(target: Fighter, status: str, rounds: int) -> str:
         return f"{e} **{n}** — {l} obnoven! ({target.statuses[status]} kola)"
     return f"{e} **{n}** — **{l}**! ({rounds} {'kolo' if rounds == 1 else 'kola'})"
 
-def _apply_cure(f: Fighter, kind: str, log: list[str]):
-    f.bag[kind] = max(0, f.bag.get(kind, 0) - 1)
+def _apply_stimulant(f: Fighter, log: list[str]):
+    f.bag["stimulant"] = max(0, f.bag.get("stimulant", 0) - 1)
     n = f.member.display_name
-    if kind == "bandage":
-        if "bleed" in f.statuses:
-            del f.statuses["bleed"]
-            log.append(f"🩹 **{n}** zastaví krvácení bandáží — **BLEEDING** vyléčeno!")
-        else:
-            log.append(f"🩹 **{n}** použije bandáž... ale neměl krvácení.")
-    elif kind == "antidote":
-        if "poison" in f.statuses:
-            del f.statuses["poison"]
-            log.append(f"🧫 **{n}** vypije protijed — **POISON** neutralizován!")
-        else:
-            log.append(f"🧫 **{n}** vypije protijed... ale nebyl otráven.")
+    neg = [s for s in ("bleed", "poison", "burn", "stun", "confusion", "sleep") if s in f.statuses]
+    for s in neg:
+        del f.statuses[s]
+    f.stamina = min(f.max_sta, f.stamina + 20)
+    if neg:
+        removed = ", ".join(STATUS_LABELS[s] for s in neg)
+        log.append(f"💉 **{n}** — Stimulant! **+20 STA**, odstraněno: **{removed}**!")
+    else:
+        log.append(f"💉 **{n}** — Stimulant! **+20 STA**.")
 
 # ── Ability handlers ──────────────────────────────────────────────────────────
 
@@ -480,6 +496,10 @@ def _apply_basic(f: Fighter, opp: Fighter, log: list[str]) -> int:
         log.append(f"🤖 **{n}** — Laserová střela! Paprsek z ramene. **{dmg}** dmg!")
         if random.random() < 0.40:
             log.append(_apply_status(opp, "burn", 2))
+        return dmg
+    elif f.cls_name == "Warlock":
+        dmg = round(opp.max_hp * 0.20)
+        log.append(f"🔮 **{n}** — **HEXE!** Prokletí pálí zevnitř — **{dmg}** dmg *(20 % max HP)*!")
         return dmg
     elif f.cls_name == "Vampire":
         dmg = 35 + random.randint(-3, 3)
@@ -536,6 +556,12 @@ def _apply_ultimate(f: Fighter, opp: Fighter, log: list[str]) -> int:
         f.stamina = 0
         log.append(f"💥 **{n}** — **VÝBOJ!** Reaktor v hrudi se vybije — {' + '.join(map(str, hits))} = **{dmg}** dmg! Stamina → 0!")
         return dmg
+    elif f.cls_name == "Warlock":
+        old_f, old_opp = f.hp, opp.hp
+        f.hp   = old_opp
+        opp.hp = old_f
+        log.append(f"🔮 **{n}** — **DUŠE ZA DUŠI!** Životní energie se prohodí — **{old_f} HP ↔ {old_opp} HP**!")
+        return 0
     elif f.cls_name == "Vampire":
         dmg = 68 + random.randint(-5, 5)
         heal = round(dmg * 0.35)
@@ -677,8 +703,8 @@ def resolve_round(state: DuelState) -> list[str]:
 
     if a1 in ("hp_potion", "sta_potion"): _apply_potion(f1, a1, log)
     if a2 in ("hp_potion", "sta_potion"): _apply_potion(f2, a2, log)
-    if a1 in ("bandage", "antidote"): _apply_cure(f1, a1, log)
-    if a2 in ("bandage", "antidote"): _apply_cure(f2, a2, log)
+    if a1 == "stimulant": _apply_stimulant(f1, log)
+    if a2 == "stimulant": _apply_stimulant(f2, log)
 
     if a1 == "basic":
         d2 += _apply_basic(f1, f2, log)
@@ -1037,6 +1063,31 @@ def resolve_round(state: DuelState) -> list[str]:
             f2.hp = min(f2.max_hp, f2.hp + steal)
             log.append(f"🩸 **{n2}** nasaje trochu síly — **+{steal} HP**!")
 
+    # ── Gladiator heavy BLEED proc (50 %) ────────────────────────────────────
+    if a1 == "heavy" and f1.cls_name == "Gladiator" and d2 > 0 and random.random() < 0.50:
+        log.append(_apply_status(f2, "bleed", 1))
+    if a2 == "heavy" and f2.cls_name == "Gladiator" and d1 > 0 and random.random() < 0.50:
+        log.append(_apply_status(f1, "bleed", 1))
+
+    # ── Feint CONFUSION proc (25 %) ───────────────────────────────────────────
+    if a1 == "feint" and d2 > 0 and random.random() < 0.25:
+        log.append(_apply_status(f2, "confusion", 1))
+    if a2 == "feint" and d1 > 0 and random.random() < 0.25:
+        log.append(_apply_status(f1, "confusion", 1))
+
+    # ── Warlock curse bonus on offensive attacks ──────────────────────────────
+    if a1 in ("attack", "heavy", "feint") and f1.cls_name == "Warlock" and d2 > 0 and f1.curse_stacks > 0:
+        bonus = f1.curse_stacks * 5
+        d2 += bonus
+        log.append(f"🔮 **{n1}** — Prokletí posiluje! **+{bonus} dmg** (kletba ×{f1.curse_stacks})")
+    if a2 in ("attack", "heavy", "feint") and f2.cls_name == "Warlock" and d1 > 0 and f2.curse_stacks > 0:
+        bonus = f2.curse_stacks * 5
+        d1 += bonus
+        log.append(f"🔮 **{n2}** — Prokletí posiluje! **+{bonus} dmg** (kletba ×{f2.curse_stacks})")
+
+    # uložit dmg před absorbcemi pro Warlock curse akumulaci
+    orig_d1, orig_d2 = d1, d2
+
     # ── Physical shield absorbs damage first (Guardian) ─────────────────────
     if d1 > 0 and f1.shield_hp > 0:
         absorbed = min(f1.shield_hp, d1)
@@ -1077,6 +1128,14 @@ def resolve_round(state: DuelState) -> list[str]:
     if d2 > 0 and "sleep" in f2.statuses:
         del f2.statuses["sleep"]
         log.append(f"😤 **{n2}** se probouzí bolestí!")
+
+    # ── Warlock curse accumulation ────────────────────────────────────────────
+    if f1.cls_name == "Warlock" and orig_d1 > 0 and f1.curse_stacks < 3:
+        f1.curse_stacks += 1
+        log.append(f"🔮 **{n1}** — Krvavý pakt zesiluje! Kletba ×{f1.curse_stacks}")
+    if f2.cls_name == "Warlock" and orig_d2 > 0 and f2.curse_stacks < 3:
+        f2.curse_stacks += 1
+        log.append(f"🔮 **{n2}** — Krvavý pakt zesiluje! Kletba ×{f2.curse_stacks}")
 
     if not log:
         log.append("*Ticho. Nikdo se nehýbá.*")
@@ -1159,7 +1218,7 @@ _ACTION_LABEL: dict[str, str] = {
     "feint": "🎭 Klam", "dodge": "💨 Úskok", "recover": "💚 Odpočinek",
     "basic": "✨ Schopnost", "ultimate": "💥 Ult", "furioku_heal": "💜 Fur Heal",
     "hp_potion": "🧪 HP Lektvar", "sta_potion": "⚡ Sta Lektvar",
-    "bandage": "🩹 Bandáž", "antidote": "🧫 Protijed", "stun": "💫 Stun",
+    "stimulant": "💉 Stimulant", "stun": "💫 Stun",
 }
 
 def build_status_embed(state: DuelState, log: list[str] | None = None) -> discord.Embed:
@@ -1220,7 +1279,7 @@ def build_intro_embed(state: DuelState) -> discord.Embed:
     desc = (
         f"{block(f1)}\n\n{block(f2)}\n\n"
         f"📨 *Detaily třídy jsem odeslal do DM!*\n"
-        f"🎒 Každý hráč začíná s **1× 🧪 HP lektvar**, **1× ⚡ Sta lektvar**, **1× 🩹 Bandáž** a **1× 🧫 Protijed**.\n"
+        f"🎒 Každý hráč začíná s **1× 🧪 HP lektvar**, **1× ⚡ Sta lektvar** a **2× 💉 Stimulant**.\n"
         f"**Oba hráči volí první akci!**"
     )
     embed = discord.Embed(title="⚔️  DUEL ZAČÍNÁ!", description=desc, color=0x1a1a2e)
@@ -1275,8 +1334,7 @@ async def _dm_class_info(fighter: Fighter):
         f"**🎒 Bag:**\n"
         f"> 🧪 HP lektvar — obnov 45 HP (bere akci)\n"
         f"> ⚡ Sta lektvar — obnov 60 staminy (bere akci)\n"
-        f"> 🩹 Bandáž — okamžitě vyléčí **BLEEDING** (bere akci)\n"
-        f"> 🧫 Protijed — okamžitě vyléčí **POISON** (bere akci)\n\n"
+        f"> 💉 Stimulant ×2 — +20 STA + odstraní VŠECHNY negativní stavy (bere akci)\n\n"
         f"**💜 Furioku** — aura chrání HP. Veškerý příchozí dmg jde nejprve do furioku, pak do HP. Nedoplní se.\n"
         f"**Invest** — +10/−10 tlačítka nastavují, kolik furioku investuješ do příštího útoku (bonus dmg) nebo léčení.\n"
         f"**Klam** ignoruje štít a dává plný dmg."
@@ -1433,28 +1491,17 @@ class ActionView(discord.ui.View):
         sta_btn.callback = self._make_cb("sta_potion")
         self.add_item(sta_btn)
 
-        # ── Row 3: Status consumables ─────────────────────────────────────────
-        bandage_n = fighter.bag.get("bandage", 0)
-        has_bleed  = "bleed" in fighter.statuses
-        band_btn   = discord.ui.Button(
-            label=f"🩹 Bandáž  ({bandage_n}×)" + (" ← 🩸" if has_bleed else ""),
-            style=discord.ButtonStyle.green if (bandage_n and has_bleed) else discord.ButtonStyle.grey,
-            disabled=not bandage_n,
+        # ── Row 3: Stimulant ──────────────────────────────────────────────────
+        stim_n  = fighter.bag.get("stimulant", 0)
+        neg_act = any(s in fighter.statuses for s in ("bleed", "poison", "burn", "stun", "confusion", "sleep"))
+        stim_btn = discord.ui.Button(
+            label=f"💉 Stimulant  ({stim_n}×)" + (" ← ⚠️" if neg_act else ""),
+            style=(discord.ButtonStyle.green if neg_act else discord.ButtonStyle.blurple) if stim_n else discord.ButtonStyle.grey,
+            disabled=not stim_n,
             row=3,
         )
-        band_btn.callback = self._make_cb("bandage")
-        self.add_item(band_btn)
-
-        antidote_n = fighter.bag.get("antidote", 0)
-        has_poison = "poison" in fighter.statuses
-        anti_btn   = discord.ui.Button(
-            label=f"🧫 Protijed  ({antidote_n}×)" + (" ← ☠️" if has_poison else ""),
-            style=discord.ButtonStyle.green if (antidote_n and has_poison) else discord.ButtonStyle.grey,
-            disabled=not antidote_n,
-            row=3,
-        )
-        anti_btn.callback = self._make_cb("antidote")
-        self.add_item(anti_btn)
+        stim_btn.callback = self._make_cb("stimulant")
+        self.add_item(stim_btn)
 
     def _make_invest_cb(self, delta: int):
         async def cb(interaction: discord.Interaction):
@@ -1503,7 +1550,7 @@ class ActionView(discord.ui.View):
             if self.state.done:
                 await interaction.response.send_message("Duel skončil.", ephemeral=True)
                 return
-            if self.fighter.exhausted and action not in ("recover", "guard", "basic", "ultimate", "hp_potion", "sta_potion", "furioku_heal", "bandage", "antidote"):
+            if self.fighter.exhausted and action not in ("recover", "guard", "basic", "ultimate", "hp_potion", "sta_potion", "furioku_heal", "stimulant"):
                 await interaction.response.edit_message(
                     content=f"⚠️ **Vyčerpán!** Použij 💚 Odpočinek nebo 🛡️ Štít.\n-# STA: {self.fighter.stamina}/{self.fighter.max_sta}",
                     view=self,
@@ -1528,7 +1575,7 @@ class ActionView(discord.ui.View):
                 "feint": "Klam", "dodge": "Úskok", "recover": "Odpočinek",
                 "hp_potion": "HP lektvar", "sta_potion": "Sta lektvar",
                 "furioku_heal": "Furioku Léčení",
-                "bandage": "Bandáž", "antidote": "Protijed",
+                "stimulant": "Stimulant",
                 "basic": cls["basic_name"], "ultimate": cls["ult_name"],
             }
             label = label_map.get(action, action)
