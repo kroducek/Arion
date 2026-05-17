@@ -58,7 +58,7 @@ CLASSES: dict[str, dict] = {
         "guard_absorb": 0.55,
         "passive": "Trny — štít vrací 10 dmg útočníkovi (15 při critical)",
         "lore": "Neproniknutelný. Protiúder je smrtící.",
-        "basic_name": "Provokace",          "basic_desc": "Příší zásah -60 %",                 "basic_cd": 3,
+        "basic_name": "Železný hrad",       "basic_desc": "35 HP absorb shield, neotevírá",    "basic_cd": 3,
         "ult_name":   "Odvetný úder",       "ult_desc":   "Příší útok na tebe → 0 dmg + 3× zpět",  "ult_charge_max": 5,
     },
     "Duelist": {
@@ -246,6 +246,7 @@ class Fighter:
         self.buff_heavy:   bool = False
         self.buff_poison:  int  = 0
         self.buff_absorb:  bool = False
+        self.shield_hp:    int  = 0
         self.buff_reflect:  bool = False
         self.reflect_used:  bool = False
         self.furioku        = cls.get("furioku_max", 0)
@@ -352,6 +353,7 @@ def _fighter_bar(f: Fighter) -> str:
     if f.berserk > 0:       tags.append(f"🔥 BERSERK {f.berserk}")
     if f.riposte:           tags.append("⚡ RIPOSTE")
     if f.buff_heavy:        tags.append("💢 NABITO")
+    if f.shield_hp > 0:     tags.append(f"🛡️ SHIELD {f.shield_hp}")
     if f.critical:          tags.append("🩸 CRITICAL")
     if f.furioku_invest > 0: tags.append(f"💜 invest {f.furioku_invest}")
     for _st, _r in f.statuses.items():
@@ -462,8 +464,9 @@ def _apply_basic(f: Fighter, opp: Fighter, log: list[str]) -> int:
         f.buff_heavy = True
         log.append(f"💢 **{n}** zadusí řev — energie se sbírá. Příští úder bude devastující!")
     elif f.cls_name == "Guardian":
-        f.buff_absorb = True
-        log.append(f"⚜️ **{n}** zaujme pevný postoj — příší zásah **-60 %**.")
+        gained = 35
+        f.shield_hp = max(f.shield_hp, gained)
+        log.append(f"⚜️ **{n}** vztyčí Železný hrad — **+{gained} HP absorb shield!** Pozice není otevřena.")
     elif f.cls_name == "Duelist":
         dmg = 40 + random.randint(-3, 3)
         log.append(f"🤺 **{n}** vyrazí vpřed — přesný výpad! **{dmg}** dmg, žádná obrana!")
@@ -669,8 +672,8 @@ def resolve_round(state: DuelState) -> list[str]:
 
     # ── Ability/Potion pre-pass ───────────────────────────────────────────────
 
-    ab1 = a1 in _ABILITY_ACTIONS
-    ab2 = a2 in _ABILITY_ACTIONS
+    ab1 = a1 in _ABILITY_ACTIONS and not (a1 == "basic" and f1.cls_name == "Guardian")
+    ab2 = a2 in _ABILITY_ACTIONS and not (a2 == "basic" and f2.cls_name == "Guardian")
 
     if a1 in ("hp_potion", "sta_potion"): _apply_potion(f1, a1, log)
     if a2 in ("hp_potion", "sta_potion"): _apply_potion(f2, a2, log)
@@ -1033,6 +1036,20 @@ def resolve_round(state: DuelState) -> list[str]:
         if steal > 0:
             f2.hp = min(f2.max_hp, f2.hp + steal)
             log.append(f"🩸 **{n2}** nasaje trochu síly — **+{steal} HP**!")
+
+    # ── Physical shield absorbs damage first (Guardian) ─────────────────────
+    if d1 > 0 and f1.shield_hp > 0:
+        absorbed = min(f1.shield_hp, d1)
+        f1.shield_hp -= absorbed
+        d1 -= absorbed
+        rem = f" (zbývá {f1.shield_hp})" if f1.shield_hp > 0 else " — **štít prolomem!**"
+        log.append(f"🛡️ **{n1}** — Železný hrad pohlcuje **{absorbed}** dmg!{rem}")
+    if d2 > 0 and f2.shield_hp > 0:
+        absorbed = min(f2.shield_hp, d2)
+        f2.shield_hp -= absorbed
+        d2 -= absorbed
+        rem = f" (zbývá {f2.shield_hp})" if f2.shield_hp > 0 else " — **štít prolomen!**"
+        log.append(f"🛡️ **{n2}** — Železný hrad pohlcuje **{absorbed}** dmg!{rem}")
 
     # ── Furioku shield absorbs damage before HP ───────────────────────────────
     if d1 > 0 and f1.furioku > 0 and f1.furioku_shield:
