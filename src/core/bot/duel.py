@@ -9,6 +9,7 @@ from discord import app_commands
 
 from src.utils.paths import ECONOMY as ECONOMY_FILE, DUEL_SCORES as DUEL_SCORES_FILE
 from src.utils.json_utils import load_json, save_json
+from src.core.dnd.achievements import grant_achievement, announce_achievement, has_achievement
 
 COIN = "<:goldcoin:1490171741237018795>"
 
@@ -22,7 +23,7 @@ CLASSES: dict[str, dict] = {
         "passive": "Meditativní tok — Furioku aura chráni před dmg; Meditace obnoví 30 HP",
         "lore": "Disciplinovaný bojovník těla i ducha. Nikdy neutíká od boje.",
         "basic_name": "Meditace",           "basic_desc": "Obnov 30 HP a 10 sta",              "basic_cd": 3,
-        "ult_name":   "Duch bouře",         "ult_desc":   "~70 dmg",                           "ult_charge_max": 5,
+        "ult_name":   "Duch bouře",         "ult_desc":   "~70 dmg + 🌀 CONFUSION 1 kolo",     "ult_charge_max": 5,
     },
     "Knight": {
         "emoji": "🛡️", "hp": 180, "stamina": 80, "furioku_max": 200, "recover": 25,
@@ -31,7 +32,7 @@ CLASSES: dict[str, dict] = {
         "passive": "Železná pevnost — nejvyšší furioku v aréně",
         "lore": "Obrněný válečník. Pomalý. Neúprosný.",
         "basic_name": "Požehnání",          "basic_desc": "Obnov 45 sta",                      "basic_cd": 3,
-        "ult_name":   "Úder spravedlnosti", "ult_desc":   "~80 dmg, ignoruje štít",             "ult_charge_max": 5,
+        "ult_name":   "Úder spravedlnosti", "ult_desc":   "~80 dmg + 💫 STUN 1 kolo, ignoruje štít", "ult_charge_max": 5,
     },
     "Rogue": {
         "emoji": "🗡️", "hp": 120, "stamina": 105, "furioku_max": 160, "recover": 35,
@@ -39,8 +40,8 @@ CLASSES: dict[str, dict] = {
         "guard_absorb": 0.20,
         "passive": "Stínový krok — úskok vyhýbá VŠEM útokům + free counter",
         "lore": "Rychlý a zákeřný. Kdo ho uvidí, je mrtvý.",
-        "basic_name": "Jedová čepel",       "basic_desc": "+20 jed / 2 kola",                   "basic_cd": 3,
-        "ult_name":   "Zákeřný úder",       "ult_desc":   "~90 dmg, nelze blokovat",            "ult_charge_max": 4,
+        "basic_name": "Jedová čepel",       "basic_desc": "☠️ POISON 3 kola (15/kolo)",          "basic_cd": 3,
+        "ult_name":   "Zákeřný úder",       "ult_desc":   "~90 dmg + 🩸 BLEED 2 kola, nelze blokovat", "ult_charge_max": 4,
     },
     "Berserker": {
         "emoji": "🪓", "hp": 160, "stamina": 90, "furioku_max": 165, "recover": 30,
@@ -84,7 +85,7 @@ CLASSES: dict[str, dict] = {
         "guard_absorb": 0.38,
         "passive": "Přesný mechanismus — Laserová střela se nabíjí každé kolo (CD 1)",
         "lore": "Polovina člověka, polovina stroje. Žádný cit, žádná únava — jen výpočty.",
-        "basic_name": "Laserová střela",    "basic_desc": "20 dmg přímý, nelze blokovat",      "basic_cd": 1,
+        "basic_name": "Laserová střela",    "basic_desc": "20 dmg přímý + 40% 🔥 BURN 2 kola, nelze blokovat", "basic_cd": 1,
         "ult_name":   "Výboj",             "ult_desc":   "4×20 dmg, poté stamina → 0",         "ult_charge_max": 4,
     },
     "Vampire": {
@@ -93,8 +94,8 @@ CLASSES: dict[str, dict] = {
         "guard_absorb": 0.25,
         "passive": "Krvavý pakt — každý útok vrátí 15 % způsobeného dmg jako HP",
         "lore": "Smrt je jen práh. Za ním je něco mnohem horšího — a ty to právě potkáváš.",
-        "basic_name": "Krvavý políbek",     "basic_desc": "35 dmg + heal 17 HP, nelze blokovat",             "basic_cd": 3,
-        "ult_name":   "Noční hostina",      "ult_desc":   "~75 dmg + heal 37 HP, nelze blokovat",            "ult_charge_max": 5,
+        "basic_name": "Krvavý políbek",     "basic_desc": "35 dmg + heal ~12 HP + 30% 💤 SLEEP, nelze blokovat", "basic_cd": 3,
+        "ult_name":   "Noční hostina",      "ult_desc":   "~75 dmg + heal ~26 HP, nelze blokovat",           "ult_charge_max": 5,
     },
 }
 
@@ -193,15 +194,40 @@ STAM_COSTS = {
     "basic": 0,   "ultimate": 0,
     "hp_potion": 0, "sta_potion": 0,
     "furioku_heal": 0,
+    "bandage": 0, "antidote": 0, "stun": 0,
 }
 
-_ABILITY_ACTIONS = frozenset(("basic", "ultimate", "hp_potion", "sta_potion", "furioku_heal"))
+_ABILITY_ACTIONS = frozenset(("basic", "ultimate", "hp_potion", "sta_potion", "furioku_heal", "bandage", "antidote", "stun"))
 
 BASE_ATK    = 22
 BASE_HEAVY  = 28
 RIPOSTE_CTR = 15
 
 GUARD_LIGHT_ABSORB = 0.92  # fixed high absorb for light attacks — guard is near-immune to normal hits
+
+# ── Status effects ────────────────────────────────────────────────────────────
+
+STATUS_EMOJIS: dict[str, str] = {
+    "bleed":     "🩸",
+    "poison":    "☠️",
+    "stun":      "💫",
+    "burn":      "🔥",
+    "confusion": "🌀",
+    "sleep":     "💤",
+}
+STATUS_LABELS: dict[str, str] = {
+    "bleed":     "BLEEDING",
+    "poison":    "POISON",
+    "stun":      "STUN",
+    "burn":      "BURN",
+    "confusion": "CONFUSION",
+    "sleep":     "SLEEP",
+}
+STATUS_DMG: dict[str, int] = {   # per-round damage for DoT statuses
+    "bleed":  8,
+    "poison": 15,
+    "burn":   10,
+}
 
 # ── Fighter ───────────────────────────────────────────────────────────────────
 
@@ -227,7 +253,8 @@ class Fighter:
         self.furioku_invest: int  = 0
         self.furioku_shield: bool = True   # True = furioku absorbuje dmg pasivně
         self.cooldowns: dict[str, int] = {"basic": 0}
-        self.bag:       dict[str, int] = {"hp_potion": 1, "sta_potion": 1}
+        self.bag:       dict[str, int] = {"hp_potion": 1, "sta_potion": 1, "bandage": 1, "antidote": 1}
+        self.statuses:  dict[str, int] = {}   # status_name → rounds_remaining
         self.action: str | None = None
 
     @property
@@ -257,6 +284,7 @@ class DuelState:
         self.arena_msg: discord.Message | None = None
         self.last_a1: str | None = None
         self.last_a2: str | None = None
+        self.round_logs: list[tuple[int, list[str]]] = []
 
     def both_chose(self) -> bool:
         return self.f1.action is not None and self.f2.action is not None
@@ -264,8 +292,9 @@ class DuelState:
 
 # ── Registry ──────────────────────────────────────────────────────────────────
 
-_active:  dict[int, DuelState] = {}
-_pending: set[int]             = set()   # hráči v class selection (před registrací do _active)
+_active:   dict[int, DuelState] = {}
+_pending:  set[int]             = set()   # hráči v class selection (před registrací do _active)
+_eco_lock: asyncio.Lock         = asyncio.Lock()
 
 def _register(state: DuelState):
     _active[state.f1.member.id] = state
@@ -284,16 +313,19 @@ def _load_duel_scores() -> dict:
 def _save_duel_scores(data: dict):
     save_json(DUEL_SCORES_FILE, data)
 
-def _record_result(winner_id: int, loser_id: int, bet: int):
+def _record_result(winner_id: int, loser_id: int, bet: int) -> int:
     scores = _load_duel_scores()
     wk, lk = str(winner_id), str(loser_id)
     for uid in (wk, lk):
-        scores.setdefault(uid, {"wins": 0, "losses": 0, "profit": 0})
+        scores.setdefault(uid, {"wins": 0, "losses": 0, "profit": 0, "streak": 0})
     scores[wk]["wins"]   += 1
     scores[lk]["losses"] += 1
     scores[wk]["profit"] += bet
     scores[lk]["profit"] -= bet
+    scores[wk]["streak"]  = scores[wk].get("streak", 0) + 1
+    scores[lk]["streak"]  = 0
     _save_duel_scores(scores)
+    return scores[wk]["streak"]
 
 # ── Vizuální helpers ──────────────────────────────────────────────────────────
 
@@ -320,9 +352,12 @@ def _fighter_bar(f: Fighter) -> str:
     if f.berserk > 0:       tags.append(f"🔥 BERSERK {f.berserk}")
     if f.riposte:           tags.append("⚡ RIPOSTE")
     if f.buff_heavy:        tags.append("💢 NABITO")
-    if f.buff_poison > 0:   tags.append(f"☠️ JED {f.buff_poison}")
     if f.critical:          tags.append("🩸 CRITICAL")
     if f.furioku_invest > 0: tags.append(f"💜 invest {f.furioku_invest}")
+    for _st, _r in f.statuses.items():
+        _e = STATUS_EMOJIS.get(_st, "?")
+        _l = STATUS_LABELS.get(_st, _st.upper())
+        tags.append(f"{_e} {_l}{'!' if _r <= 1 else f' {_r}'}")
     tag_line = ("  " + "  ".join(tags)) if tags else ""
 
     bag_line = ""
@@ -380,6 +415,32 @@ def _critical_line(f: Fighter) -> str | None:
     lines = CRITICAL_LINES.get(f.cls_name, [])
     return random.choice(lines).format(n=f.member.display_name) if lines else None
 
+def _apply_status(target: Fighter, status: str, rounds: int) -> str:
+    current = target.statuses.get(status, 0)
+    target.statuses[status] = max(current, rounds)
+    e = STATUS_EMOJIS[status]
+    l = STATUS_LABELS[status]
+    n = target.member.display_name
+    if current > 0:
+        return f"{e} **{n}** — {l} obnoven! ({target.statuses[status]} kola)"
+    return f"{e} **{n}** — **{l}**! ({rounds} {'kolo' if rounds == 1 else 'kola'})"
+
+def _apply_cure(f: Fighter, kind: str, log: list[str]):
+    f.bag[kind] = max(0, f.bag.get(kind, 0) - 1)
+    n = f.member.display_name
+    if kind == "bandage":
+        if "bleed" in f.statuses:
+            del f.statuses["bleed"]
+            log.append(f"🩹 **{n}** zastaví krvácení bandáží — **BLEEDING** vyléčeno!")
+        else:
+            log.append(f"🩹 **{n}** použije bandáž... ale neměl krvácení.")
+    elif kind == "antidote":
+        if "poison" in f.statuses:
+            del f.statuses["poison"]
+            log.append(f"🧫 **{n}** vypije protijed — **POISON** neutralizován!")
+        else:
+            log.append(f"🧫 **{n}** vypije protijed... ale nebyl otráven.")
+
 # ── Ability handlers ──────────────────────────────────────────────────────────
 
 def _apply_basic(f: Fighter, opp: Fighter, log: list[str]) -> int:
@@ -396,8 +457,7 @@ def _apply_basic(f: Fighter, opp: Fighter, log: list[str]) -> int:
         f.stamina = min(f.max_sta, f.stamina + sta)
         log.append(f"✨ **{n}** se požehná světlem — **+{sta} sta**.")
     elif f.cls_name == "Rogue":
-        f.buff_poison = 2
-        log.append(f"☠️ **{n}** natírá čepel jedem v záblesku pohybu... **+20 dmg** po 2 kola!")
+        log.append(f"☠️ **{n}** natírá čepel jedem a bodne — {_apply_status(opp, 'poison', 3)}")
     elif f.cls_name == "Berserker":
         f.buff_heavy = True
         log.append(f"💢 **{n}** zadusí řev — energie se sbírá. Příští úder bude devastující!")
@@ -415,12 +475,16 @@ def _apply_basic(f: Fighter, opp: Fighter, log: list[str]) -> int:
     elif f.cls_name == "Cyborg":
         dmg = 20 + random.randint(-2, 2)
         log.append(f"🤖 **{n}** — Laserová střela! Paprsek z ramene. **{dmg}** dmg!")
+        if random.random() < 0.40:
+            log.append(_apply_status(opp, "burn", 2))
         return dmg
     elif f.cls_name == "Vampire":
         dmg = 35 + random.randint(-3, 3)
-        heal = round(dmg * 0.5)
+        heal = round(dmg * 0.35)
         f.hp = min(f.max_hp, f.hp + heal)
         log.append(f"🧛 **{n}** — Krvavý políbek! Životní síla přetéká. **{dmg}** dmg + **+{heal} HP**!")
+        if random.random() < 0.30:
+            log.append(_apply_status(opp, "sleep", 1))
         return dmg
     return 0
 
@@ -430,14 +494,17 @@ def _apply_ultimate(f: Fighter, opp: Fighter, log: list[str]) -> int:
     if f.cls_name == "Monk":
         dmg = 70 + random.randint(-5, 5)
         log.append(f"💥 **{n}** — **DUCH BOUŘE!** Energie exploduje z každého póru — **{dmg}** dmg!")
+        log.append(_apply_status(opp, "confusion", 1))
         return dmg
     elif f.cls_name == "Knight":
         dmg = 80 + random.randint(-5, 5)
         log.append(f"💥 **{n}** — **ÚDER SPRAVEDLNOSTI!** Meč padá z výše, bez milosti — **{dmg}** dmg, žádný štít!")
+        log.append(_apply_status(opp, "stun", 1))
         return dmg
     elif f.cls_name == "Rogue":
         dmg = 90 + random.randint(-5, 5)
         log.append(f"💥 **{n}** — **ZÁKEŘNÝ ÚDER!** Z temnoty, tam kde nikdo nečekal — **{dmg}** dmg!")
+        log.append(_apply_status(opp, "bleed", 2))
         return dmg
     elif f.cls_name == "Berserker":
         f.berserk = 3
@@ -468,7 +535,7 @@ def _apply_ultimate(f: Fighter, opp: Fighter, log: list[str]) -> int:
         return dmg
     elif f.cls_name == "Vampire":
         dmg = 75 + random.randint(-5, 5)
-        heal = round(dmg * 0.5)
+        heal = round(dmg * 0.35)
         f.hp = min(f.max_hp, f.hp + heal)
         log.append(f"💥 **{n}** — **NOČNÍ HOSTINA!** Temnota pohltí soupeře — **{dmg}** dmg, **+{heal} HP** zpět!")
         return dmg
@@ -503,6 +570,18 @@ def resolve_round(state: DuelState) -> list[str]:
             if f.cooldowns[k] > 0:
                 f.cooldowns[k] -= 1
 
+    # Confusion action override (before stamina costs; stun immune)
+    for f in (f1, f2):
+        if f.statuses.get("confusion", 0) > 0 and f.action != "stun":
+            old = f.action
+            f.action = random.choice(["attack", "heavy", "guard", "dodge", "recover"])
+            n = f.member.display_name
+            log.append(f"🌀 **{n}** — **CONFUSION!** Místo _{_ACTION_LABEL.get(old, old)}_ provede **{_ACTION_LABEL.get(f.action, f.action)}**!")
+            f.statuses["confusion"] -= 1
+            if f.statuses["confusion"] <= 0:
+                del f.statuses["confusion"]
+    a1, a2 = f1.action, f2.action
+
     # Stamina costs
     f1.stamina = max(0, f1.stamina - STAM_COSTS.get(a1, 0))
     f2.stamina = max(0, f2.stamina - STAM_COSTS.get(a2, 0))
@@ -531,13 +610,24 @@ def resolve_round(state: DuelState) -> list[str]:
         f2.furioku_invest = 0
         log.append(f"💜 **{n2}** kanalizuje auru do léčení — **+{heal} HP**! (furioku: {f2.furioku}/{f2.max_furioku})")
 
-    # Poison tick
-    if f1.buff_poison > 0:
-        d1 += 20; f1.buff_poison -= 1
-        log.append(f"☠️ Jed prosákl žilami **{n1}** — **20** dmg!")
-    if f2.buff_poison > 0:
-        d2 += 20; f2.buff_poison -= 1
-        log.append(f"☠️ Jed prosákl žilami **{n2}** — **20** dmg!")
+    # Status DoT tick (bleed, poison, burn)
+    for f, is_f1 in ((f1, True), (f2, False)):
+        n = f.member.display_name
+        for status in list(f.statuses):
+            dmg_per = STATUS_DMG.get(status, 0)
+            if dmg_per == 0:
+                continue
+            if is_f1:
+                d1 += dmg_per
+            else:
+                d2 += dmg_per
+            f.statuses[status] -= 1
+            e, l = STATUS_EMOJIS[status], STATUS_LABELS[status]
+            if f.statuses[status] <= 0:
+                del f.statuses[status]
+                log.append(f"{e} **{n}** — {l}! **{dmg_per}** dmg. *(skončilo)*")
+            else:
+                log.append(f"{e} **{n}** — {l}! **{dmg_per}** dmg. ({f.statuses[status]} kola zbývá)")
 
     # Berserk HP drain
     if f1.berserk > 0:
@@ -573,6 +663,8 @@ def resolve_round(state: DuelState) -> list[str]:
             f"🪓 **{f.member.display_name}** se vrhá vpřed — nikdo ho nezastaví! **{d1b}** + **{d2b}** = **{dmg}** dmg!",
             f"🪓 Šílenství **{f.member.display_name}** dosáhlo vrcholu — dva záblesky, **{dmg}** dmg celkem!",
         ]))
+        if random.random() < 0.35:
+            log.append(_apply_status(opp, "bleed", 2))
         return dmg
 
     # ── Ability/Potion pre-pass ───────────────────────────────────────────────
@@ -582,6 +674,8 @@ def resolve_round(state: DuelState) -> list[str]:
 
     if a1 in ("hp_potion", "sta_potion"): _apply_potion(f1, a1, log)
     if a2 in ("hp_potion", "sta_potion"): _apply_potion(f2, a2, log)
+    if a1 in ("bandage", "antidote"): _apply_cure(f1, a1, log)
+    if a2 in ("bandage", "antidote"): _apply_cure(f2, a2, log)
 
     if a1 == "basic":
         d2 += _apply_basic(f1, f2, log)
@@ -712,20 +806,20 @@ def resolve_round(state: DuelState) -> list[str]:
         # ── Guardian reflect stance ───────────────────────────────────────────
         elif f1.buff_reflect and a2 in ("attack", "heavy", "feint"):
             raw = _hvy(f2) if a2 == "heavy" else _atk(f2)
-            doubled = raw * 2
-            d2 += doubled
+            tripled = raw * 3
+            d2 += tripled
             f1.buff_reflect = False
             f1.reflect_used = True
-            log.append(f"⚜️ **{n1}** — **ODVETNÝ ÚDER!** Absorbuje sílu a vrací ji dvojnásobně — **{doubled}** dmg! *(2×{raw})*")
+            log.append(f"⚜️ **{n1}** — **ODVETNÝ ÚDER!** Absorbuje sílu a vrací ji trojnásobně — **{tripled}** dmg! *(3×{raw})*")
             log.append(f"*{n1} stojí bez újmy.*")
 
         elif f2.buff_reflect and a1 in ("attack", "heavy", "feint"):
             raw = _hvy(f1) if a1 == "heavy" else _atk(f1)
-            doubled = raw * 2
-            d1 += doubled
+            tripled = raw * 3
+            d1 += tripled
             f2.buff_reflect = False
             f2.reflect_used = True
-            log.append(f"⚜️ **{n2}** — **ODVETNÝ ÚDER!** Absorbuje sílu a vrací ji dvojnásobně — **{doubled}** dmg! *(2×{raw})*")
+            log.append(f"⚜️ **{n2}** — **ODVETNÝ ÚDER!** Absorbuje sílu a vrací ji trojnásobně — **{tripled}** dmg! *(3×{raw})*")
             log.append(f"*{n2} stojí bez újmy.*")
 
         # ── Normal matrix ─────────────────────────────────────────────────────
@@ -959,6 +1053,14 @@ def resolve_round(state: DuelState) -> list[str]:
     f1.hp -= d1
     f2.hp -= d2
 
+    # Sleep break on damage
+    if d1 > 0 and "sleep" in f1.statuses:
+        del f1.statuses["sleep"]
+        log.append(f"😤 **{n1}** se probouzí bolestí!")
+    if d2 > 0 and "sleep" in f2.statuses:
+        del f2.statuses["sleep"]
+        log.append(f"😤 **{n2}** se probouzí bolestí!")
+
     if not log:
         log.append("*Ticho. Nikdo se nehýbá.*")
 
@@ -985,12 +1087,27 @@ def resolve_round(state: DuelState) -> list[str]:
     f1.furioku_invest = 0
     f2.furioku_invest = 0
 
+    # ── Non-DoT status countdown (stun, sleep) ───────────────────────────────
+    for f in (f1, f2):
+        n = f.member.display_name
+        if f.action == "stun":
+            for status in ("stun", "sleep"):
+                if status in f.statuses:
+                    f.statuses[status] -= 1
+                    if f.statuses[status] <= 0:
+                        del f.statuses[status]
+                        e = STATUS_EMOJIS[status]
+                        log.append(f"{e} **{n}** — **{STATUS_LABELS[status]}** skončil!")
+
     # ── Telegraph ─────────────────────────────────────────────────────────────
     state.last_a1 = a1
     state.last_a2 = a2
 
     f1.action = None
     f2.action = None
+    state.round_logs.append((state.round, list(log)))
+    if len(state.round_logs) > 5:
+        state.round_logs.pop(0)
     return log
 
 # ── Embed builders ────────────────────────────────────────────────────────────
@@ -1025,6 +1142,7 @@ _ACTION_LABEL: dict[str, str] = {
     "feint": "🎭 Klam", "dodge": "💨 Úskok", "recover": "💚 Odpočinek",
     "basic": "✨ Schopnost", "ultimate": "💥 Ult", "furioku_heal": "💜 Fur Heal",
     "hp_potion": "🧪 HP Lektvar", "sta_potion": "⚡ Sta Lektvar",
+    "bandage": "🩹 Bandáž", "antidote": "🧫 Protijed", "stun": "💫 Stun",
 }
 
 def build_status_embed(state: DuelState, log: list[str] | None = None) -> discord.Embed:
@@ -1085,7 +1203,7 @@ def build_intro_embed(state: DuelState) -> discord.Embed:
     desc = (
         f"{block(f1)}\n\n{block(f2)}\n\n"
         f"📨 *Detaily třídy jsem odeslal do DM!*\n"
-        f"🎒 Každý hráč začíná s **1× 🧪 HP lektvar** a **1× ⚡ Sta lektvar**.\n"
+        f"🎒 Každý hráč začíná s **1× 🧪 HP lektvar**, **1× ⚡ Sta lektvar**, **1× 🩹 Bandáž** a **1× 🧫 Protijed**.\n"
         f"**Oba hráči volí první akci!**"
     )
     embed = discord.Embed(title="⚔️  DUEL ZAČÍNÁ!", description=desc, color=0x1a1a2e)
@@ -1139,7 +1257,9 @@ async def _dm_class_info(fighter: Fighter):
         f"> {cls['ult_desc']}\n\n"
         f"**🎒 Bag:**\n"
         f"> 🧪 HP lektvar — obnov 45 HP (bere akci)\n"
-        f"> ⚡ Sta lektvar — obnov 60 staminy (bere akci)\n\n"
+        f"> ⚡ Sta lektvar — obnov 60 staminy (bere akci)\n"
+        f"> 🩹 Bandáž — okamžitě vyléčí **BLEEDING** (bere akci)\n"
+        f"> 🧫 Protijed — okamžitě vyléčí **POISON** (bere akci)\n\n"
         f"**💜 Furioku** — aura chrání HP. Veškerý příchozí dmg jde nejprve do furioku, pak do HP. Nedoplní se.\n"
         f"**Invest** — +10/−10 tlačítka nastavují, kolik furioku investuješ do příštího útoku (bonus dmg) nebo léčení.\n"
         f"**Klam** ignoruje štít a dává plný dmg."
@@ -1160,6 +1280,11 @@ def _intent_content(state: DuelState, fighter: Fighter) -> str:
     else:
         intent = INTENT_TEXT.get(fighter.cls_name, "")
 
+    status_line = ""
+    if fighter.statuses:
+        parts = [f"{STATUS_EMOJIS.get(s,'?')} **{STATUS_LABELS.get(s,s.upper())}** {r}" for s, r in fighter.statuses.items()]
+        status_line = f"\n-# ⚠️ Stavy: {' · '.join(parts)}"
+
     return (
         f"{intent}\n\n"
         f"**Kolo {state.round + 1}** — Vyber akci!\n"
@@ -1167,6 +1292,7 @@ def _intent_content(state: DuelState, fighter: Fighter) -> str:
         f"FUR: {fighter.furioku}/{fighter.max_furioku}  ·  "
         f"Invest: {fighter.furioku_invest}  ·  "
         f"ULT: {fighter.ult_charge}/{cls['ult_charge_max']}"
+        f"{status_line}"
     )
 
 
@@ -1175,10 +1301,11 @@ class ActionView(discord.ui.View):
 
     def __init__(self, state: DuelState, fighter: Fighter, invest: int = 0):
         super().__init__(timeout=300)
-        self.state   = state
-        self.fighter = fighter
-        self.invest  = invest
-        cls          = CLASSES[fighter.cls_name]
+        self.state           = state
+        self.fighter         = fighter
+        self.invest          = invest
+        self._invest_confirm: str | None = None
+        cls                  = CLASSES[fighter.cls_name]
         berserk      = fighter.berserk > 0
 
         # ── Row 0: Core combat + tactical ────────────────────────────────────
@@ -1289,6 +1416,29 @@ class ActionView(discord.ui.View):
         sta_btn.callback = self._make_cb("sta_potion")
         self.add_item(sta_btn)
 
+        # ── Row 3: Status consumables ─────────────────────────────────────────
+        bandage_n = fighter.bag.get("bandage", 0)
+        has_bleed  = "bleed" in fighter.statuses
+        band_btn   = discord.ui.Button(
+            label=f"🩹 Bandáž  ({bandage_n}×)" + (" ← 🩸" if has_bleed else ""),
+            style=discord.ButtonStyle.green if (bandage_n and has_bleed) else discord.ButtonStyle.grey,
+            disabled=not bandage_n,
+            row=3,
+        )
+        band_btn.callback = self._make_cb("bandage")
+        self.add_item(band_btn)
+
+        antidote_n = fighter.bag.get("antidote", 0)
+        has_poison = "poison" in fighter.statuses
+        anti_btn   = discord.ui.Button(
+            label=f"🧫 Protijed  ({antidote_n}×)" + (" ← ☠️" if has_poison else ""),
+            style=discord.ButtonStyle.green if (antidote_n and has_poison) else discord.ButtonStyle.grey,
+            disabled=not antidote_n,
+            row=3,
+        )
+        anti_btn.callback = self._make_cb("antidote")
+        self.add_item(anti_btn)
+
     def _make_invest_cb(self, delta: int):
         async def cb(interaction: discord.Interaction):
             if interaction.user.id != self.fighter.member.id:
@@ -1336,9 +1486,17 @@ class ActionView(discord.ui.View):
             if self.state.done:
                 await interaction.response.send_message("Duel skončil.", ephemeral=True)
                 return
-            if self.fighter.exhausted and action not in ("recover", "guard", "basic", "ultimate", "hp_potion", "sta_potion", "furioku_heal"):
+            if self.fighter.exhausted and action not in ("recover", "guard", "basic", "ultimate", "hp_potion", "sta_potion", "furioku_heal", "bandage", "antidote"):
                 await interaction.response.edit_message(
                     content=f"⚠️ **Vyčerpán!** Použij 💚 Odpočinek nebo 🛡️ Štít.\n-# STA: {self.fighter.stamina}/{self.fighter.max_sta}",
+                    view=self,
+                )
+                return
+
+            if self.invest > 0 and action in ("basic", "ultimate", "hp_potion", "sta_potion") and self._invest_confirm != action:
+                self._invest_confirm = action
+                await interaction.response.edit_message(
+                    content=f"⚠️ Máš **{self.invest} fur** investovaný — tato akce ho zahodí bez efektu.\nKlikni znovu pro potvrzení.",
                     view=self,
                 )
                 return
@@ -1353,6 +1511,7 @@ class ActionView(discord.ui.View):
                 "feint": "Klam", "dodge": "Úskok", "recover": "Odpočinek",
                 "hp_potion": "HP lektvar", "sta_potion": "Sta lektvar",
                 "furioku_heal": "Furioku Léčení",
+                "bandage": "Bandáž", "antidote": "Protijed",
                 "basic": cls["basic_name"], "ultimate": cls["ult_name"],
             }
             label = label_map.get(action, action)
@@ -1388,6 +1547,10 @@ class ArenaView(discord.ui.View):
         self.add_item(b1)
         self.add_item(b2)
 
+        hist = discord.ui.Button(label="📜 Historie", style=discord.ButtonStyle.grey)
+        hist.callback = self._history_cb
+        self.add_item(hist)
+
     def _make_choose(self, fighter: Fighter):
         async def cb(interaction: discord.Interaction):
             if interaction.user.id != fighter.member.id:
@@ -1399,6 +1562,20 @@ class ArenaView(discord.ui.View):
             if fighter.action is not None:
                 await interaction.response.send_message("✅ Akce vybrána. Čekáš na soupeře...", ephemeral=True)
                 return
+            if fighter.statuses.get("stun", 0) > 0:
+                fighter.action = "stun"
+                await interaction.response.send_message(
+                    f"💫 **STUN!** Jsi omráčen — toto kolo přeskakuješ.", ephemeral=True
+                )
+                await _try_resolve(self.state)
+                return
+            if fighter.statuses.get("sleep", 0) > 0:
+                fighter.action = "stun"
+                await interaction.response.send_message(
+                    f"💤 **SLEEP!** Spíš — toto kolo přeskakuješ.", ephemeral=True
+                )
+                await _try_resolve(self.state)
+                return
             await interaction.response.send_message(
                 content=_intent_content(self.state, fighter),
                 view=ActionView(self.state, fighter),
@@ -1406,9 +1583,149 @@ class ArenaView(discord.ui.View):
             )
         return cb
 
+    async def _history_cb(self, interaction: discord.Interaction):
+        logs = self.state.round_logs
+        if not logs:
+            await interaction.response.send_message("-# Zatím žádná kola.", ephemeral=True)
+            return
+        parts = []
+        for rnd, lines in logs[-3:]:
+            parts.append(f"**— Kolo {rnd} —**")
+            parts += [f"-# {l}" for l in lines]
+            parts.append("")
+        text = "\n".join(parts).strip()
+        if len(text) > 1900:
+            text = text[-1900:]
+        await interaction.response.send_message(text, ephemeral=True)
+
     async def on_timeout(self):
         if not self.state.done:
+            bet  = self.state.bet
+            f1n  = self.state.f1.member.display_name
+            f2n  = self.state.f2.member.display_name
+            if bet > 0:
+                async with _eco_lock:
+                    eco = load_json(ECONOMY_FILE, {})
+                    for f in (self.state.f1, self.state.f2):
+                        uid = str(f.member.id)
+                        eco[uid] = eco.get(uid, 0) + bet
+                    save_json(ECONOMY_FILE, eco)
             _cleanup(self.state)
+            try:
+                bet_note = " Sázky vráceny." if bet > 0 else ""
+                await self.state.channel.send(
+                    f"⏱️ Duel **{f1n}** vs **{f2n}** byl ukončen z důvodu nečinnosti.{bet_note}"
+                )
+            except Exception:
+                pass
+
+
+# ── Rematch ───────────────────────────────────────────────────────────────────
+
+class RematchView(discord.ui.View):
+    def __init__(self, f1: Fighter, f2: Fighter, bet: int,
+                 channel: discord.TextChannel, round_logs: list | None = None):
+        super().__init__(timeout=60)
+        self.f1         = f1
+        self.f2         = f2
+        self.bet        = bet
+        self.channel    = channel
+        self.round_logs = round_logs or []
+        self._requester: int | None = None
+        self._done      = False
+
+        btn = discord.ui.Button(label="🔁 Rematch", style=discord.ButtonStyle.blurple)
+        btn.callback = self._on_click
+        self.add_item(btn)
+
+        if self.round_logs:
+            hist = discord.ui.Button(label="📜 Historie", style=discord.ButtonStyle.grey)
+            hist.callback = self._history_cb
+            self.add_item(hist)
+
+    async def _history_cb(self, interaction: discord.Interaction):
+        parts = []
+        for rnd, lines in self.round_logs[-5:]:
+            parts.append(f"**— Kolo {rnd} —**")
+            parts += [f"-# {l}" for l in lines]
+            parts.append("")
+        text = "\n".join(parts).strip()
+        if len(text) > 1900:
+            text = text[-1900:]
+        await interaction.response.send_message(text, ephemeral=True)
+
+    async def _on_click(self, interaction: discord.Interaction):
+        if interaction.user.id not in (self.f1.member.id, self.f2.member.id):
+            await interaction.response.send_message("Nejsi účastník tohoto duelu.", ephemeral=True)
+            return
+        if self._done:
+            await interaction.response.send_message("Rematch již zahájen.", ephemeral=True)
+            return
+
+        if self._requester is None:
+            self._requester = interaction.user.id
+            other = self.f2.member if interaction.user.id == self.f1.member.id else self.f1.member
+            for item in self.children:
+                item.disabled = True
+            accept_btn = discord.ui.Button(label="✅ Přijmout rematch", style=discord.ButtonStyle.green)
+            accept_btn.callback = self._on_accept
+            self.add_item(accept_btn)
+            await interaction.response.edit_message(
+                content=f"🔁 **{interaction.user.display_name}** chce rematch! {other.mention}, přijmout?",
+                view=self,
+            )
+        elif interaction.user.id == self._requester:
+            await interaction.response.send_message("Čekáš na odpověď soupeře.", ephemeral=True)
+        else:
+            await self._launch(interaction)
+
+    async def _on_accept(self, interaction: discord.Interaction):
+        if interaction.user.id not in (self.f1.member.id, self.f2.member.id):
+            await interaction.response.send_message("Nejsi účastník tohoto duelu.", ephemeral=True)
+            return
+        if interaction.user.id == self._requester:
+            await interaction.response.send_message("Ty jsi rematch vyžádal — čekáš na soupeře.", ephemeral=True)
+            return
+        await self._launch(interaction)
+
+    async def _launch(self, interaction: discord.Interaction):
+        if self._done:
+            return
+        self._done = True
+        self.stop()
+
+        for ftr in (self.f1, self.f2):
+            if ftr.member.id in _active or ftr.member.id in _pending:
+                self._done = False
+                await interaction.response.edit_message(content="❌ Jeden z hráčů je již v jiném duelu.", view=None)
+                return
+
+        if self.bet > 0:
+            eco   = load_json(ECONOMY_FILE, {})
+            c_bal = eco.get(str(self.f1.member.id), 0)
+            t_bal = eco.get(str(self.f2.member.id), 0)
+            if c_bal < self.bet:
+                self._done = False
+                await interaction.response.edit_message(
+                    content=f"❌ **{self.f1.member.display_name}** nemá dost zlatých!", view=None
+                )
+                return
+            if t_bal < self.bet:
+                self._done = False
+                await interaction.response.edit_message(
+                    content=f"❌ **{self.f2.member.display_name}** nemá dost zlatých!", view=None
+                )
+                return
+            eco[str(self.f1.member.id)] = c_bal - self.bet
+            eco[str(self.f2.member.id)] = t_bal - self.bet
+            save_json(ECONOMY_FILE, eco)
+
+        pg = PreGame(self.f1.member, self.f2.member, self.bet, self.channel)
+        _pending.add(self.f1.member.id)
+        _pending.add(self.f2.member.id)
+        picker_view = ClassPickerPublicView(pg)
+        await interaction.response.edit_message(content=None, embed=_picker_embed(pg), view=picker_view)
+        pg.picker_msg = interaction.message
 
 
 class PreGame:
@@ -1423,6 +1740,23 @@ class PreGame:
         self.picker_msg: discord.Message | None = None
         self.started    = False
         self._lock      = asyncio.Lock()
+
+
+def _build_class_overview_embed() -> discord.Embed:
+    lines = []
+    for name, c in CLASSES.items():
+        lines.append(
+            f"{c['emoji']} **{name}** — HP {c['hp']} · STA {c['stamina']} · FUR {c['furioku_max']}\n"
+            f"-# ✨ {c['basic_name']}: {c['basic_desc']}  ·  💥 {c['ult_name']}: {c['ult_desc']}\n"
+            f"-# _{c['lore']}_"
+        )
+    embed = discord.Embed(
+        title="⚔️  Výběr třídy — přehled",
+        description="\n\n".join(lines),
+        color=0x1a1a2e,
+    )
+    embed.set_footer(text="Podrobnosti třídy přijdou do DM po startu duelu.")
+    return embed
 
 
 def _picker_embed(pg: PreGame) -> discord.Embed:
@@ -1543,7 +1877,7 @@ class ClassPickerPublicView(discord.ui.View):
                 await interaction.response.send_message("✅ Třídu jsi už vybral!", ephemeral=True)
                 return
             await interaction.response.send_message(
-                content="⚔️ Vyber svou třídu:",
+                embed=_build_class_overview_embed(),
                 view=ClassSelectView(self.pg, member),
                 ephemeral=True,
             )
@@ -1575,22 +1909,23 @@ class ChallengeView(discord.ui.View):
         self.stop()
 
         if self.bet > 0:
-            eco   = load_json(ECONOMY_FILE, {})
-            c_bal = eco.get(str(self.challenger.id), 0)
-            t_bal = eco.get(str(self.target.id), 0)
-            if c_bal < self.bet:
-                await interaction.response.edit_message(
-                    content=f"❌ **{self.challenger.display_name}** nemá dost zlatých!", view=None
-                )
-                return
-            if t_bal < self.bet:
-                await interaction.response.edit_message(
-                    content=f"❌ **{self.target.display_name}** nemá dost zlatých!", view=None
-                )
-                return
-            eco[str(self.challenger.id)] = c_bal - self.bet
-            eco[str(self.target.id)]     = t_bal - self.bet
-            save_json(ECONOMY_FILE, eco)
+            async with _eco_lock:
+                eco   = load_json(ECONOMY_FILE, {})
+                c_bal = eco.get(str(self.challenger.id), 0)
+                t_bal = eco.get(str(self.target.id), 0)
+                if c_bal < self.bet:
+                    await interaction.response.edit_message(
+                        content=f"❌ **{self.challenger.display_name}** nemá dost zlatých!", view=None
+                    )
+                    return
+                if t_bal < self.bet:
+                    await interaction.response.edit_message(
+                        content=f"❌ **{self.target.display_name}** nemá dost zlatých!", view=None
+                    )
+                    return
+                eco[str(self.challenger.id)] = c_bal - self.bet
+                eco[str(self.target.id)]     = t_bal - self.bet
+                save_json(ECONOMY_FILE, eco)
 
         pg = PreGame(self.challenger, self.target, self.bet, self.channel)
         _pending.add(self.challenger.id)
@@ -1625,6 +1960,16 @@ class ChallengeView(discord.ui.View):
 
 # ── Resolution loop ───────────────────────────────────────────────────────────
 
+async def _check_duel_achievements(member: discord.Member, streak: int, channel):
+    checks = [
+        ("Křest krví",    streak >= 1),
+        ("Neporazitelný", streak >= 10),
+    ]
+    for name, condition in checks:
+        if condition and not has_achievement(member.id, name):
+            if grant_achievement(member.id, name):
+                await announce_achievement(member, channel, name)
+
 async def _try_resolve(state: DuelState):
     if state.done or not state.both_chose():
         return
@@ -1646,31 +1991,46 @@ async def _try_resolve(state: DuelState):
 
         if f1_dead and f2_dead:
             if state.bet > 0:
-                eco = load_json(ECONOMY_FILE, {})
-                for f in (state.f1, state.f2):
-                    eco[str(f.member.id)] = eco.get(str(f.member.id), 0) + state.bet
-                save_json(ECONOMY_FILE, eco)
+                async with _eco_lock:
+                    eco = load_json(ECONOMY_FILE, {})
+                    for f in (state.f1, state.f2):
+                        eco[str(f.member.id)] = eco.get(str(f.member.id), 0) + state.bet
+                    save_json(ECONOMY_FILE, eco)
             _cleanup(state)
-            await state.channel.send(embed=build_draw_embed(state.f1, state.f2, state.bet, log))
+            await state.channel.send(
+                embed=build_draw_embed(state.f1, state.f2, state.bet, log),
+                view=RematchView(state.f1, state.f2, state.bet, state.channel, state.round_logs),
+            )
 
         elif f1_dead or f2_dead:
             winner = state.f2 if f1_dead else state.f1
             loser  = state.f1 if f1_dead else state.f2
 
             if state.bet > 0:
-                eco = load_json(ECONOMY_FILE, {})
-                wid = str(winner.member.id)
-                eco[wid] = eco.get(wid, 0) + state.bet * 2
-                save_json(ECONOMY_FILE, eco)
+                async with _eco_lock:
+                    eco = load_json(ECONOMY_FILE, {})
+                    wid = str(winner.member.id)
+                    eco[wid] = eco.get(wid, 0) + state.bet * 2
+                    save_json(ECONOMY_FILE, eco)
 
-            _record_result(winner.member.id, loser.member.id, state.bet)
+            streak     = _record_result(winner.member.id, loser.member.id, state.bet)
+            round_logs = state.round_logs
             _cleanup(state)
-            await state.channel.send(embed=build_finish_embed(winner, loser, state.bet, log))
+            await state.channel.send(
+                embed=build_finish_embed(winner, loser, state.bet, log),
+                view=RematchView(winner, loser, state.bet, state.channel, round_logs),
+            )
+            await _check_duel_achievements(winner.member, streak, state.channel)
 
         else:
+            for f in (state.f1, state.f2):
+                if f.statuses.get("stun", 0) > 0 or f.statuses.get("sleep", 0) > 0:
+                    f.action = "stun"
             state.arena_msg = await state.channel.send(
                 embed=build_status_embed(state, log), view=ArenaView(state)
             )
+            if state.both_chose():
+                await _try_resolve(state)
 
 # ── Cog ───────────────────────────────────────────────────────────────────────
 
@@ -1717,6 +2077,27 @@ class DuelCog(commands.Cog):
         await interaction.response.send_message(embed=embed, view=view)
         view.message = await interaction.original_response()
 
+    @duel_group.command(name="classes", description="Přehled všech bojových tříd")
+    async def duel_classes(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="⚔️  Bojové třídy",
+            description="*Každá třída má unikátní pasivní schopnost, útočný styl a ult.*",
+            color=0x1a1a2e,
+        )
+        for cls_name, cls in CLASSES.items():
+            embed.add_field(
+                name=f"{cls['emoji']} {cls_name}",
+                value=(
+                    f"-# ❤️ {cls['hp']}  ⚡ {cls['stamina']}  💜 {cls['furioku_max']}  🎯 {cls['dmg_mod']}×\n"
+                    f"🛡️ _{cls['passive']}_\n"
+                    f"✨ **{cls['basic_name']}** — {cls['basic_desc']}\n"
+                    f"💥 **{cls['ult_name']}** — {cls['ult_desc']}"
+                ),
+                inline=False,
+            )
+        embed.set_footer(text="⭐ Aurionis  ·  /duel challenge @hráč pro výzvu")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @duel_group.command(name="leaderboard", description="Žebříček nejlepších duelistů")
     async def duel_leaderboard(self, interaction: discord.Interaction):
         scores = _load_duel_scores()
@@ -1739,12 +2120,14 @@ class DuelCog(commands.Cog):
             wins   = s.get("wins", 0)
             losses = s.get("losses", 0)
             profit = s.get("profit", 0)
+            streak = s.get("streak", 0)
             total  = wins + losses
             ratio  = f"{round(wins/total*100)} %" if total else "—"
-            profit_str = (f"+{profit}" if profit > 0 else str(profit)) if profit else "—"
+            profit_str  = (f"+{profit}" if profit > 0 else str(profit)) if profit else "—"
+            streak_str  = f"  ·  🔥 {streak} v řadě" if streak >= 2 else ""
             lines.append(
                 f"{medals[i]} **{name}**\n"
-                f"┣ 🏆 {wins}V / {losses}P  ·  {ratio} winrate\n"
+                f"┣ 🏆 {wins}V / {losses}P  ·  {ratio} winrate{streak_str}\n"
                 f"┗ 💰 Profit: **{profit_str}** {COIN if profit else ''}"
             )
 

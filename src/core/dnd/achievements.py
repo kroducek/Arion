@@ -47,6 +47,18 @@ ACHIEVEMENTS_DEF: dict[str, dict] = {
         "auto":        True,
         "rarity":      "Common",
     },
+    "Křest krví": {
+        "emoji":       "⚔️",
+        "description": "Vyhrál jsi svůj první duel v aréně.",
+        "auto":        True,
+        "rarity":      "Common",
+    },
+    "Neporazitelný": {
+        "emoji":       "🏆",
+        "description": "Vyhrál jsi 10 duelů v řadě bez jediné prohry.",
+        "auto":        True,
+        "rarity":      "Legendary",
+    },
 }
 
 RARITY_COLOR = {
