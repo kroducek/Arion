@@ -1205,7 +1205,8 @@ class PerkSelectionView(discord.ui.View):
         for perk_id, perk in perks.items():
             if perk_id in blocked:
                 continue
-            if perk.get("learnable") or perk_id in ["fire_magic_1", "ice_magic_1", "healing_magic_1"]:
+            is_tier_one = perk_id.endswith("_1") or perk_id == "magicke_citeni"
+            if is_tier_one and (perk.get("learnable") or perk_id in ["fire_magic_1", "ice_magic_1", "healing_magic_1"]):
                 perk_list.append((perk_id, perk.get("name", perk_id)))
 
         return perk_list
@@ -1366,9 +1367,7 @@ class BulletinBoardView(discord.ui.View):
                 "Pod úkoly visí ručně psaný list, "
                 "jiný papír, jiný rukopis. Nadpis říká:\n\n"
                 "**✨ Turnaj Hvězdy — postupující do 2. kola**\n\n"
-                "*Hao · Darryn · Gabriel*\n\n"
-                "-# *Nikdo, koho bys měl znát. A přesto: proč ti ta jména "
-                "přijdou tak povědomá?*"
+                "*Pergamen je zatím prázdný. Nikdo ještě nepostoupil.*"
             ),
             color=0x2c3e50,
         )
@@ -1564,8 +1563,8 @@ class CharismaRollView(discord.ui.View):
                 f"Hodil/a jsi **{roll}** — přirozená dvacítka.\n\n"
                 "Zvládneš situaci s překvapivou elegancí. "
                 "Muž s rohy se zastaví, přeměří tě — pak se krátce zasměje.\n\n"
-                "***\"První den v práci co? "
-                "Hao je moc silný.. nevím jestli má cenu se do toho turnaje vůbec hlásit.\"***\n\n"
+                "***\"První den v práci, co? "
+                "Myslím si, že to vyhraje rank 1 Hao.\"***\n\n"
                 "*Odejde. Ani se neohlédne.*\n\n"
                 f"{arion_note}"
             )
@@ -1767,14 +1766,6 @@ class FinalEnterView(discord.ui.View):
                 except Exception as e:
                     print(f"[onboard] Nepodařilo se poslat uvítání do hub kanálu: {e}")
 
-        # Achievement se udělí až po oznámení v hubu, aby byl opravdu závěrečnou odměnou.
-        try:
-            from src.core.dnd.achievements import grant_achievement, announce_achievement
-            if grant_achievement(interaction.user.id, "Vítej v Aurionisu"):
-                await announce_achievement(interaction.user, interaction.channel, "Vítej v Aurionisu")
-        except Exception as e:
-            print(f"[onboard] Nepodařilo se udělit tutorial achievement: {e}")
-
         # ── Přidej hráče do chat kanálu (vidí + píší) ─────────────────────
         chat_channel_id = DEST_CHAT_CHANNEL_IDS.get(self.dest_key, 0)
         if chat_channel_id:
@@ -1817,6 +1808,14 @@ class FinalEnterView(discord.ui.View):
                 json.dump(diaries, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"[onboard] Nepodařilo se zapsat do deníku: {e}")
+
+        # Achievement se udělí úplně nakonec, až po uvítání v hubu i městském chatu.
+        try:
+            from src.core.dnd.achievements import grant_achievement, announce_achievement
+            if grant_achievement(interaction.user.id, "Vítej v Aurionisu"):
+                await announce_achievement(interaction.user, interaction.channel, "Vítej v Aurionisu")
+        except Exception as e:
+            print(f"[onboard] Nepodařilo se udělit tutorial achievement: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
