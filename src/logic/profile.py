@@ -15,13 +15,11 @@ def load_data():
     return load_json(DATA_FILE)
 
 def load_economy():
+    """Load economy data (single source of truth)."""
     return load_json(ECONOMY_FILE)
 
 def save_data(data):
     save_json(DATA_FILE, data)
-
-def load_economy_data():
-    return load_json(ECONOMY_FILE)
 
 def save_economy(data):
     save_json(ECONOMY_FILE, data)

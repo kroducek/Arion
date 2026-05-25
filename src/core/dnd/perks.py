@@ -8,6 +8,7 @@ from datetime import date
 
 from src.utils.paths import PERKS, PLAYER_PERKS
 from src.utils.audit import log_action
+from src.utils.json_utils import load_json, save_json
 
 ARION_NAME = "Aurionis"
 
@@ -877,6 +878,39 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_uses": 0,
         "cooldown_type": None,
     },
+    "fire_magic_1": {
+        "name": "Ohnivá magie I.",
+        "group": "Magie",
+        "passive": True,
+        "unique": False,
+        "learnable": True,
+        "desc": "Základní ovládání ohnivé magie. Umíš sesílat jednoduché ognivé kouzla.",
+        "subdesc": None,
+        "cooldown_uses": 0,
+        "cooldown_type": None,
+    },
+    "ice_magic_1": {
+        "name": "Ledová magie I.",
+        "group": "Magie",
+        "passive": True,
+        "unique": False,
+        "learnable": True,
+        "desc": "Základní ovládání ledové magie. Umíš sesílat jednoduché mrazivé kouzla.",
+        "subdesc": None,
+        "cooldown_uses": 0,
+        "cooldown_type": None,
+    },
+    "healing_magic_1": {
+        "name": "Uzdravovací magie I.",
+        "group": "Magie",
+        "passive": True,
+        "unique": False,
+        "learnable": True,
+        "desc": "Základní ovládání uzdravovací magie. Umíš léčit zranění svou manou.",
+        "subdesc": None,
+        "cooldown_uses": 0,
+        "cooldown_type": None,
+    },
     # ── Unikátní (nejsou v náhodném poolu) ───────────────────────────────────
     "restart": {
         "name": "Restart",
@@ -926,6 +960,7 @@ _SEED_ROLL_TAGS: dict[str, list[str]] = {
     "heavy_armor_1":   ["STR"], "heavy_armor_2":  ["STR"], "heavy_armor_3":  ["STR"],
     "dual_wielding_1": ["DEX"], "dual_wielding_2":["DEX"], "dual_wielding_3":["DEX"],
     "archery_1":       ["DEX"], "archery_2":      ["DEX"], "archery_3":      ["DEX"],
+    "fire_magic_1":    ["INT"], "ice_magic_1":    ["INT"], "healing_magic_1":["WIS"],
 }
 
 _SEED_BONUS: dict[str, int] = {
@@ -949,35 +984,27 @@ _SEED_BONUS: dict[str, int] = {
     "heavy_armor_1": 1,   "heavy_armor_2": 2,    "heavy_armor_3": 3,
     "dual_wielding_1": 1, "dual_wielding_2": 2,  "dual_wielding_3": 3,
     "archery_1": 1,       "archery_2": 2,        "archery_3": 3,
+    "fire_magic_1": 1,    "ice_magic_1": 1,      "healing_magic_1": 1,
+}
 }
 
 # ── Storage ───────────────────────────────────────────────────────────────────
 
 def load_perks() -> dict:
-    if not os.path.exists(PERKS):
-        return {}
-    try:
-        with open(PERKS, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    """Thread-safe load perks database."""
+    return load_json(PERKS, default={})
 
 def save_perks(data: dict):
-    with open(PERKS, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """Thread-safe save perks database."""
+    save_json(PERKS, data)
 
 def load_player_perks() -> dict:
-    if not os.path.exists(PLAYER_PERKS):
-        return {}
-    try:
-        with open(PLAYER_PERKS, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    """Thread-safe load player perks."""
+    return load_json(PLAYER_PERKS, default={})
 
 def save_player_perks(data: dict):
-    with open(PLAYER_PERKS, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """Thread-safe save player perks."""
+    save_json(PLAYER_PERKS, data)
 
 def _get_player(uid_str: str, data: dict) -> dict:
     data.setdefault(uid_str, {"perks": [], "cooldowns": {}, "progress": {}})

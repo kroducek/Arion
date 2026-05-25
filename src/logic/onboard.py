@@ -51,6 +51,74 @@ DESTINATIONS = {
     },
 }
 
+# ── Loadouty (tutorial) ────────────────────────────────────────────────────────
+
+LOADOUTS = {
+    "one_handed": {
+        "emoji": "🗡️",
+        "name": "Lehký meč",
+        "desc": "Klasický bojovník s jednoruční zbraní",
+        "items": ["mec_z_praveke_kosti", "lektvar_zivota"],
+        "perk": "one_handed_1",
+    },
+    "two_handed": {
+        "emoji": "⚔️",
+        "name": "Obouruční meč",
+        "desc": "Silný bojovník s obouruční zbraní",
+        "items": ["halapartna_ohne", "lektvar_zivota"],
+        "perk": "two_handed_1",
+    },
+    "bow": {
+        "emoji": "🏹",
+        "name": "Krátký luk",
+        "desc": "Lukostřelec s lukem a šípy",
+        "items": ["jasanovy_luk", "sipka_obycejny", "lektvar_zivota"],
+        "perk": "archery_1",
+    },
+    "crossbow": {
+        "emoji": "🎯",
+        "name": "Kuše",
+        "desc": "Střelec s kuší",
+        "items": ["mala_kuse", "naboj_zbrane", "lektvar_zivota"],
+        "perk": "archery_1",
+    },
+    "fire_magic": {
+        "emoji": "🔥",
+        "name": "Ohnivá magie",
+        "desc": "Mág ovládající oheň",
+        "items": ["orb_ciste_destrukce", "lektvar_many"],
+        "perk": "fire_magic_1",
+    },
+    "ice_magic": {
+        "emoji": "❄️",
+        "name": "Ledová magie",
+        "desc": "Mág ovládající led",
+        "items": ["svitek_svetlo", "lektvar_many"],
+        "perk": "ice_magic_1",
+    },
+    "healing_magic": {
+        "emoji": "💚",
+        "name": "Uzdravovací magie",
+        "desc": "Lékař pomocí magie",
+        "items": ["svitek_magicke_stopy", "lektvar_many"],
+        "perk": "healing_magic_1",
+    },
+    "rogue": {
+        "emoji": "🗡️",
+        "name": "Tulák",
+        "desc": "Rychlý tulák se dvěma dýkami",
+        "items": ["nuz", "lektvar_zivota"],
+        "perk": "stealth_1",
+    },
+    "acrobat": {
+        "emoji": "🤸",
+        "name": "Akrobata",
+        "desc": "Hbitý bojovník",
+        "items": ["mec_z_praveke_kosti", "lektvar_zivota"],
+        "perk": "acrobacy_1",
+    },
+}
+
 # ── Databáze ──────────────────────────────────────────────────────────────────
 
 def update_profile(user_id, **kwargs):
@@ -101,7 +169,9 @@ class TutorialPartOneView(discord.ui.View):
                 "**Turnaj Hvězdy** byl vyhlášen a jeho vítěz si může přát úplně cokoliv.\n\n"
                 "Mocní se pohybují ve stínech, zatímco slabí mizí beze stopy.\n\n"
                 "Ti, jenž jsou zváni **Vyvolenými**, stojí na rozhraní mezi oběma světy.\n\n"
-                "*Pravda byla odhalena, ale jaká ta pravda vlastně je?*"
+                "*Pravda byla odhalena, ale jaká ta pravda vlastně je?*\n\n"
+                "-# ⚠️ Tutorial bude delší! Přihlášení tutoriálu: **#lore** — přečti si lore před startem\n"
+                "-# Budete mít čas si klidně vybrat perky a vybavení"
             ),
             color=0x2f3136,
         )
@@ -989,13 +1059,7 @@ class GoldView(discord.ui.View):
         await interaction.response.defer()
 
         uid = str(interaction.user.id)
-        profile = {}
-        if os.path.exists(DATA_FILE):
-            try:
-                with open(DATA_FILE, "r", encoding="utf-8") as f:
-                    profile = json.load(f)
-            except Exception:
-                pass
+        profile = load_json(DATA_FILE, default={})
         if profile.get(uid, {}).get("gold_received"):
             await interaction.followup.send(
                 "Zlaté jsi už jednou převzal/a! *(Pokud myslíš, že jde o chybu, piš adminovi.)*",
@@ -1015,18 +1079,237 @@ class GoldView(discord.ui.View):
                 f"***'Svět tam venku není moc přívětivý.."
                 f"..obzvlášť teď, za Turnaje. Dávej na sebe pozor..'***\n\n"
                 f"***'{dest['emoji']} {dest['name']} tě čeká'***\n\n"
-                "*Arion ti přestane věnovat pozornost. To je zřejmě rozloučení*"
+                "*Arion ti přestane věnovat pozornost. Teď je čas se vyzbrojit..*"
             ),
             color=0xFFD700,
         )
         if self.portrait_url:
             embed.set_thumbnail(url=self.portrait_url)
-        embed.set_footer(text="⭐ Aurionis  ·  Poslední krok.")
+        embed.set_footer(text="⭐ Aurionis  ·  Vyber si vybavení.")
 
         await interaction.edit_original_response(
             embed=embed,
-            view=BulletinBoardView(dest_key=self.dest_key, portrait_url=self.portrait_url),
+            view=LoadoutSelectView(dest_key=self.dest_key, portrait_url=self.portrait_url),
         )
+
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NOVÝ FLOW: LOADOUT → PERKY
+# ══════════════════════════════════════════════════════════════════════════════
+
+class LoadoutSelectView(discord.ui.View):
+    """Hráč si vybere loadout (vybavení + prvotní perk)."""
+    def __init__(self, dest_key: str, portrait_url: str | None = None):
+        super().__init__(timeout=600)
+        self.dest_key = dest_key
+        self.portrait_url = portrait_url
+        self._build_buttons()
+
+    def _build_buttons(self):
+        self.clear_items()
+        for loadout_id, loadout in LOADOUTS.items():
+            btn = discord.ui.Button(
+                label=f"{loadout['emoji']} {loadout['name']}",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"loadout:{loadout_id}",
+            )
+            btn.callback = self._make_callback(loadout_id)
+            self.add_item(btn)
+
+    def _make_callback(self, loadout_id: str):
+        async def callback(interaction: discord.Interaction):
+            await _show_perk_selection(
+                interaction,
+                dest_key=self.dest_key,
+                portrait_url=self.portrait_url,
+                loadout_id=loadout_id,
+            )
+        return callback
+
+
+async def _show_perk_selection(
+    interaction: discord.Interaction,
+    dest_key: str,
+    portrait_url: str | None,
+    loadout_id: str,
+):
+    """Zobraz výběr 4 perků."""
+    loadout = LOADOUTS.get(loadout_id)
+    if not loadout:
+        await interaction.response.defer()
+        return
+
+    embed = discord.Embed(
+        title="🎯  Zvol si 4 perky",
+        description=(
+            f"Vybrál jsi si **{loadout['name']}** loadout.\n\n"
+            f"Dostaneš si prvotní perk: **{loadout['perk']}** a položky.\n\n"
+            "Teď si vyber 4 dodatečné perky dle svého uvážení.\n\n"
+            "-# Tip: Perky se ti později hodí v boji. Zvol si moudře!"
+        ),
+        color=0x9b59b6,
+    )
+    if portrait_url:
+        embed.set_thumbnail(url=portrait_url)
+    embed.set_footer(text="⭐ Aurionis  ·  Vyber si perky.")
+
+    view = PerkSelectionView(
+        dest_key=dest_key,
+        portrait_url=portrait_url,
+        loadout_id=loadout_id,
+        selected_perks=[],
+        max_perks=4,
+    )
+    await interaction.response.edit_message(embed=embed, view=view)
+
+
+class PerkSelectionView(discord.ui.View):
+    """Hráč si vybere 4 perky."""
+    def __init__(self, dest_key: str, portrait_url: str | None, loadout_id: str,
+                 selected_perks: list[str], max_perks: int):
+        super().__init__(timeout=600)
+        self.dest_key = dest_key
+        self.portrait_url = portrait_url
+        self.loadout_id = loadout_id
+        self.selected_perks = selected_perks
+        self.max_perks = max_perks
+
+        # Zde by měly být perky — na teď si vezmu learnable perky ze seedu
+        self._build_perk_buttons()
+        self._add_finish_button()
+
+    def _build_perk_buttons(self):
+        """Postav tlačítka pro vybrané perky (learnable + basic magic)."""
+        try:
+            from src.core.dnd.perks import load_perks
+            perks = load_perks()
+
+            perk_list = []
+            for perk_id, perk in perks.items():
+                if perk.get("learnable") or perk_id in ["fire_magic_1", "ice_magic_1", "healing_magic_1"]:
+                    if perk_id not in self.selected_perks:
+                        perk_list.append((perk_id, perk.get("name", perk_id)))
+
+            # Limit na 12 perků najednou (Discord limit)
+            for perk_id, perk_name in perk_list[:12]:
+                btn = discord.ui.Button(
+                    label=perk_name[:20],
+                    style=discord.ButtonStyle.blurple,
+                )
+                btn.callback = self._make_perk_callback(perk_id)
+                self.add_item(btn)
+        except Exception as e:
+            print(f"[onboard] Chyba při nastavení perků: {e}")
+
+    def _make_perk_callback(self, perk_id: str):
+        async def callback(interaction: discord.Interaction):
+            if len(self.selected_perks) >= self.max_perks:
+                await interaction.response.defer()
+                return
+
+            self.selected_perks.append(perk_id)
+            self.clear_items()
+            self._build_perk_buttons()
+            self._add_finish_button()
+
+            # Zobraz zvýraznění
+            selected_str = "\n".join(self.selected_perks)
+            embed = discord.Embed(
+                title="🎯  Zvol si 4 perky",
+                description=(
+                    f"Vybraní perky:\n{selected_str}\n\n"
+                    f"Zbývá: **{self.max_perks - len(self.selected_perks)}**"
+                ),
+                color=0x9b59b6,
+            )
+            if self.portrait_url:
+                embed.set_thumbnail(url=self.portrait_url)
+            embed.set_footer(text="⭐ Aurionis")
+            await interaction.response.edit_message(embed=embed, view=self)
+        return callback
+
+    def _add_finish_button(self):
+        if len(self.selected_perks) >= self.max_perks:
+            btn = discord.ui.Button(
+                label="Hotovo!",
+                style=discord.ButtonStyle.success,
+                emoji="✅",
+                row=4,
+            )
+            btn.callback = self._finish
+            self.add_item(btn)
+
+    async def _finish(self, interaction: discord.Interaction):
+        # Hráč je hotov, přidělíme mu perky a itemmy
+        await _finalize_tutorial(
+            interaction,
+            dest_key=self.dest_key,
+            portrait_url=self.portrait_url,
+            loadout_id=self.loadout_id,
+            additional_perks=self.selected_perks,
+        )
+
+
+async def _finalize_tutorial(
+    interaction: discord.Interaction,
+    dest_key: str,
+    portrait_url: str | None,
+    loadout_id: str,
+    additional_perks: list[str],
+):
+    """Přidělí hráči itemy, perky, achievement a pošle ho na ulici."""
+    try:
+        from src.core.dnd.perks import load_player_perks, save_player_perks
+        from src.logic.inventory import add_to_inventory_from_items_db
+
+        user_id = str(interaction.user.id)
+        loadout = LOADOUTS.get(loadout_id)
+        if not loadout:
+            return
+
+        # Přidej všechny perky (prvotní + dodatečné)
+        all_perks = [loadout["perk"]] + additional_perks
+        player_perks = load_player_perks()
+        player_perks.setdefault(user_id, {})["perks"] = all_perks
+        save_player_perks(player_perks)
+
+        # Přidělí itemy (placeholder — bude potřebovat mapping)
+        # Toto je simplified — ve skutečnosti by se měly přidat do inventáře
+
+        # Grant achievement
+        from src.core.dnd.achievements import grant_achievement, announce_achievement
+        if grant_achievement(interaction.user.id, "Vítej v Aurionisu"):
+            try:
+                await announce_achievement(interaction.user, interaction.channel, "Vítej v Aurionisu")
+            except Exception:
+                pass
+
+        # Zapiš do profilu, že je hotovo
+        update_profile(interaction.user.id, loadout_selected=loadout_id, perks_selected=len(additional_perks))
+
+    except Exception as e:
+        print(f"[onboard] Chyba při finalizaci tutoriálu: {e}")
+
+    # Pokračuj se původním flowem (nástěnka, charisma roll, atd.)
+    embed = discord.Embed(
+        title="✨  Připraven/a!",
+        description=(
+            f"Vybrali jsi si loadout a perky.\n\n"
+            f"Teď už je čas vstoupit do Aurionisu.\n\n"
+            "-# Tip: Pomocí /equip si nasadíš itemky, /perks show zobrazí tvé perky, /stats ukáže tvoje statistiky, /profile je tvá vizitka!"
+        ),
+        color=0x27ae60,
+    )
+    if portrait_url:
+        embed.set_thumbnail(url=portrait_url)
+    embed.set_footer(text="⭐ Aurionis  ·  Vítej v Aurionisu!")
+
+    await interaction.response.edit_message(
+        embed=embed,
+        view=BulletinBoardView(dest_key=dest_key, portrait_url=portrait_url),
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════

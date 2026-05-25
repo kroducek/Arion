@@ -11,19 +11,16 @@ from discord.ext import commands
 from discord import app_commands
 
 from src.utils.paths import TOURNAMENT as TOURNAMENT_FILE
+from src.utils.json_utils import load_json, save_json
 
 def _load_tournament() -> list:
-    if not os.path.exists(TOURNAMENT_FILE):
-        return []
-    try:
-        with open(TOURNAMENT_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return []
+    """Thread-safe load tournament data."""
+    data = load_json(TOURNAMENT_FILE, default=[])
+    return data if isinstance(data, list) else []
 
 def _save_tournament(data: list):
-    with open(TOURNAMENT_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    """Thread-safe save tournament data."""
+    save_json(TOURNAMENT_FILE, data)
 
 _CLOCK_EMOJIS = ["🕛","🕐","🕑","🕒","🕓","🕔","🕕","🕖","🕗","🕘","🕙","🕚"]
 

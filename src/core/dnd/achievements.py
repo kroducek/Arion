@@ -5,6 +5,7 @@ import json
 import os
 
 from src.utils.paths import ACHIEVEMENTS, ACHIEVEMENT_DATA
+from src.utils.json_utils import load_json, save_json
 
 ARION_NAME = "Aurionis"
 
@@ -59,6 +60,12 @@ ACHIEVEMENTS_DEF: dict[str, dict] = {
         "auto":        True,
         "rarity":      "Legendary",
     },
+    "Vítej v Aurionisu": {
+        "emoji":       "🌟",
+        "description": "Dokončil jsi tutorial a vstoupil/a do světa Aurionisu.",
+        "auto":        False,
+        "rarity":      "Common",
+    },
 }
 
 RARITY_COLOR = {
@@ -71,30 +78,20 @@ RARITY_COLOR = {
 # ── Storage ───────────────────────────────────────────────────────────────────
 
 def load_achievements() -> dict:
-    if not os.path.exists(ACHIEVEMENTS):
-        return {}
-    try:
-        with open(ACHIEVEMENTS, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    """Thread-safe load achievements."""
+    return load_json(ACHIEVEMENTS, default={})
 
 def save_achievements(data: dict):
-    with open(ACHIEVEMENTS, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """Thread-safe save achievements."""
+    save_json(ACHIEVEMENTS, data)
 
 def load_ach_data() -> dict:
-    if not os.path.exists(ACHIEVEMENT_DATA):
-        return {}
-    try:
-        with open(ACHIEVEMENT_DATA, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    """Thread-safe load achievement tracking data."""
+    return load_json(ACHIEVEMENT_DATA, default={})
 
 def save_ach_data(data: dict):
-    with open(ACHIEVEMENT_DATA, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """Thread-safe save achievement tracking data."""
+    save_json(ACHIEVEMENT_DATA, data)
 
 def has_achievement(user_id: int, name: str) -> bool:
     return name in load_achievements().get(str(user_id), [])

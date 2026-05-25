@@ -13,7 +13,9 @@ if not TOKEN:
     exit(1)
 
 # ====== LOGGING ======
-logging.basicConfig(level=logging.INFO)
+from src.utils.logger import configure_logging
+configure_logging("ArionDND")
+logger = logging.getLogger("ArionDND")
 
 # ====== CONFIG Z ENV PROMĚNNÝCH ======
 config = {
@@ -103,19 +105,26 @@ class ArionDND(commands.Bot):
         for cog in DND_COGS:
             try:
                 await self.load_extension(cog)
+                logger.info(f'✅ {cog} načten.')
                 print(f'   ✅ {cog} načten.')
-            except Exception:
-                logging.exception(f'[main_dnd] {cog} selhal')
+            except Exception as e:
+                logger.exception(f'❌ {cog} selhal: {e}')
                 print(f'   ❌ {cog} selhal — viz log výše.')
 
         from src.logic.onboard import TutorialWarningView
         self.add_view(TutorialWarningView())
 
         print("🔄 Synchronizuji slash commandy...")
-        synced = await self.tree.sync()
-        print(f"✅ Synced {len(synced)} commandů.")
+        try:
+            synced = await self.tree.sync()
+            logger.info(f"✅ Synced {len(synced)} commandů.")
+            print(f"✅ Synced {len(synced)} commandů.")
+        except Exception as e:
+            logger.error(f"Failed to sync commands: {e}")
+            print(f"⚠️ Command sync failed: {e}")
 
     async def on_ready(self):
+        logger.info(f'⚔️ ArionDND je online jako {self.user}')
         print(f'⚔️ ArionDND je online jako {self.user}')
 
 # ====== RUN ======

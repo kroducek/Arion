@@ -31,12 +31,13 @@ MAX_STAT = 20
 # DATOVÁ VRSTVA
 # ══════════════════════════════════════════════════════════════════════════════
 
+from src.utils.json_utils import load_json
+
 def _load_profile(user_id: int) -> dict:
-    if not os.path.exists(DATA_FILE):
-        return {}
+    """Bezpečně načte profil hráče."""
     try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f).get(str(user_id), {})
+        data = load_json(DATA_FILE, default={})
+        return data.get(str(user_id), {})
     except Exception:
         return {}
 
@@ -62,15 +63,11 @@ _PERK_EMOJI = {
 def _get_roll_perks(user_id: int, stats: list[str]) -> list[dict]:
     """Vrátí hráčovy perky, které mají alespoň jeden ze statů v roll_tags."""
     try:
-        with open(PERKS_FILE, "r", encoding="utf-8") as f:
-            all_perks = json.load(f)
+        all_perks = load_json(PERKS_FILE, default={})
+        player_data = load_json(PLAYER_PERKS_FILE, default={})
     except Exception:
         return []
-    try:
-        with open(PLAYER_PERKS_FILE, "r", encoding="utf-8") as f:
-            player_data = json.load(f)
-    except Exception:
-        return []
+    
     owned_ids = player_data.get(str(user_id), {}).get("perks", [])
     seen: set[str] = set()
     result = []

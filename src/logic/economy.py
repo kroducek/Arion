@@ -12,14 +12,12 @@ COIN         = "<:goldcoin:1490171741237018795>"
 
 # ── Datová vrstva ──────────────────────────────────────────────────────────────
 
-def _load(path: str, default=None):
-    result = load_json(path)
-    if result is None or (not result and default is not None):
-        return default() if callable(default) else (default if default is not None else {})
-    return result
+def _load_economy() -> dict:
+    """Load economy data with fallback."""
+    return load_json(ECONOMY_FILE, default={})
 
-def _save(path: str, data):
-    save_json(path, data)
+def _save_economy(data: dict) -> None:
+    save_json(ECONOMY_FILE, data)
 
 
 # ── Shops datová vrstva ───────────────────────────────────────────────────────
@@ -107,7 +105,7 @@ class ShopView(discord.ui.View):
             item    = items[item_index]
             price   = item["price"]
             uid     = str(interaction.user.id)
-            economy = _load(ECONOMY_FILE, dict)
+            economy = _load_economy()
             balance = economy.get(uid, 0)
             if balance < price:
                 return await interaction.response.send_message(
@@ -115,7 +113,7 @@ class ShopView(discord.ui.View):
                     ephemeral=True,
                 )
             economy[uid] = balance - price
-            _save(ECONOMY_FILE, economy)
+            _save_economy(economy)
 
             # Přidej item do inventáře hráče
             profiles  = load_json(PROFILES_FILE, default={})
@@ -193,7 +191,7 @@ class Economy(commands.Cog):
 
     @app_commands.command(name="g", description="Zobrazí tvůj počet zlaťáků")
     async def g(self, interaction: discord.Interaction):
-        economy = _load(ECONOMY_FILE, dict)
+        economy = _load_economy()
         balance = economy.get(str(interaction.user.id), 0)
         await interaction.response.send_message(
             f"{interaction.user.mention}, tvůj stav konta: **{balance}** {COIN}"
@@ -210,7 +208,7 @@ class Economy(commands.Cog):
         if member.bot:
             return await interaction.response.send_message("Botům zlaťáky posílat nelze.", ephemeral=True)
 
-        economy     = _load(ECONOMY_FILE, dict)
+        economy     = _load_economy()
         sender_id   = str(interaction.user.id)
         receiver_id = str(member.id)
         sender_bal  = economy.get(sender_id, 0)
@@ -222,7 +220,7 @@ class Economy(commands.Cog):
 
         economy[sender_id]   = sender_bal - amount
         economy[receiver_id] = economy.get(receiver_id, 0) + amount
-        _save(ECONOMY_FILE, economy)
+        _save_economy(economy)
 
         await interaction.response.send_message(
             f"Úspěšně jsi poslal **{amount}** {COIN} hráči {member.mention}."
@@ -238,10 +236,10 @@ class Economy(commands.Cog):
         if member.bot:
             return await interaction.response.send_message("Botům zlaťáky přidávat nelze.", ephemeral=True)
 
-        economy = _load(ECONOMY_FILE, dict)
+        economy = _load_economy()
         uid     = str(member.id)
         economy[uid] = economy.get(uid, 0) + amount
-        _save(ECONOMY_FILE, economy)
+        _save_economy(economy)
 
         await interaction.response.send_message(
             f"✅ Přidáno **{amount}** {COIN} hráči {member.mention}. (Celkem: {economy[uid]})"
@@ -264,13 +262,13 @@ class Economy(commands.Cog):
                 "Zadej kladné číslo (nebo 0 pro reset na nulu)!", ephemeral=True
             )
 
-        economy = _load(ECONOMY_FILE, dict)
+        economy = _load_economy()
         uid     = str(member.id)
         current = economy.get(uid, 0)
 
         if amount == 0:
             economy[uid] = 0
-            _save(ECONOMY_FILE, economy)
+            _save_economy(economy)
             return await interaction.response.send_message(
                 f"🗑️ Hráči {member.mention} bylo odebráno všech **{current}** {COIN}. Konto je prázdné."
             )
@@ -278,7 +276,7 @@ class Economy(commands.Cog):
         if minus:
             # Povolíme záporný zůstatek
             economy[uid] = current - amount
-            _save(ECONOMY_FILE, economy)
+            _save_economy(economy)
             new_bal = economy[uid]
             bal_str = f"**{new_bal}** {COIN}" if new_bal >= 0 else f"**{new_bal}** {COIN}  *(dluh)*"
             await interaction.response.send_message(
@@ -292,7 +290,7 @@ class Economy(commands.Cog):
                 )
             actual       = min(amount, current)
             economy[uid] = current - actual
-            _save(ECONOMY_FILE, economy)
+            _save_economy(economy)
             msg = f"🗑️ Odebráno **{actual}** {COIN} hráči {member.mention}. (Zbývá: {economy[uid]})"
             if actual < amount:
                 msg += f"\n-# *(Hráč měl jen {current}, odebráno maximum. Použij `minus: Ano` pro dluh.)*"
@@ -302,7 +300,7 @@ class Economy(commands.Cog):
 
     @app_commands.command(name="gleaderboard", description="Top 10 nejbohatších hráčů serveru")
     async def gleaderboard(self, interaction: discord.Interaction):
-        economy = _load(ECONOMY_FILE, dict)
+        economy = _load_economy()
         if not economy:
             return await interaction.response.send_message(
                 "Zatím tu nikdo žádné zlaťáky nemá.", ephemeral=True

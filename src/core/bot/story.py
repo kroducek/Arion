@@ -9,6 +9,7 @@ from datetime import datetime
 
 # ── Konfigurace ──────────────────────────────────────────────────────────────
 from src.utils.paths import STORY_LIB as LIBRARY_FILE, STORY_SAVE as SAVE_FILE
+from src.utils.json_utils import load_json, save_json
 
 PLOT_TWISTS = [
     "gumová kachnička", "motorová pila", "záchodové prkénko", "plameňák", "ponožky v sandálech",
@@ -31,12 +32,12 @@ FALLBACK_NOUNS = [
 # ── Pomocné funkce ────────────────────────────────────────────────────────────
 
 def load_library() -> list:
-    if os.path.exists(LIBRARY_FILE):
-        with open(LIBRARY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
+    """Thread-safe load story library."""
+    data = load_json(LIBRARY_FILE, default=[])
+    return data if isinstance(data, list) else []
 
 def save_to_library(topic: str, players: list, sentences: list):
+    """Thread-safe save story to library."""
     library = load_library()
     library.append({
         "topic": topic,
@@ -44,19 +45,15 @@ def save_to_library(topic: str, players: list, sentences: list):
         "story": " ".join(sentences),
         "date": datetime.now().strftime("%d.%m.%Y %H:%M")
     })
-    with open(LIBRARY_FILE, "w", encoding="utf-8") as f:
-        json.dump(library, f, ensure_ascii=False, indent=2)
+    save_json(LIBRARY_FILE, library)
 
 
 def save_game_state(channel_id: int, game: dict):
-    """Uloží stav hry do souboru (pojistka při pádu bota)."""
-    saves = {}
-    if os.path.exists(SAVE_FILE):
-        try:
-            with open(SAVE_FILE, "r", encoding="utf-8") as f:
-                saves = json.load(f)
-        except:
-            saves = {}
+    """Uloží stav hry do souboru (pojistka při pádu bota). Thread-safe."""
+    saves = load_json(SAVE_FILE, default={})
+    if not isinstance(saves, dict):
+        saves = {}
+    
     # Ulozit jen serializovatelna data (bez discord objektu)
     saves[str(channel_id)] = {
         "topic": game["topic"],
@@ -69,20 +66,16 @@ def save_game_state(channel_id: int, game: dict):
         "butterfly_triggered": game.get("butterfly_triggered", False),
         "flashback_done": game.get("flashback_done", False),
     }
-    with open(SAVE_FILE, "w", encoding="utf-8") as f:
-        json.dump(saves, f, ensure_ascii=False, indent=2)
+    save_json(SAVE_FILE, saves)
 
 def delete_game_save(channel_id: int):
-    if not os.path.exists(SAVE_FILE):
-        return
-    try:
-        with open(SAVE_FILE, "r", encoding="utf-8") as f:
-            saves = json.load(f)
-        saves.pop(str(channel_id), None)
-        with open(SAVE_FILE, "w", encoding="utf-8") as f:
-            json.dump(saves, f, ensure_ascii=False, indent=2)
-    except:
-        pass
+    """Thread-safe delete game save."""
+    saves = load_json(SAVE_FILE, default={})
+    if not isinstance(saves, dict):
+        saves = {}
+    if str(channel_id) in saves:
+        del saves[str(channel_id)]
+        save_json(SAVE_FILE, saves)
 
 def chunk_text(text: str, size: int = 4000) -> list[str]:
     chunks = []
