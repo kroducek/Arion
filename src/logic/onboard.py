@@ -31,21 +31,21 @@ DESTINATIONS = {
     "lumenie": {
         "emoji": "🏰",
         "name":  "Lumenie",
-        "desc":  "Město začátků. Každý slavný dobrodruh napsal první řádek svého příběhu zrovna tady. Dominuje mu **katedrála světla** a kamenný most přes řeku **Auriel**, symbol naděje a řádu. Domov nejvyššího paladina **Reinharda** a jeho bratrstva paladinů a rytířů. Lumenie nyní prochází krizí..",
+        "desc":  "Město začátků. Každý slavný dobrodruh napsal první řádek svého příběhu zrovna tady. Dominuje mu **katedrála světla** a kamenný most přes řeku **Auriel**, symbol naděje a řádu. Domov nejvyššího paladina **Reinharda** a jeho bratrstva paladinů a rytířů. Lumenie nyní prochází krizí.",
         "color": 0x3498db,
         "image": "https://media.discordapp.net/attachments/1484572118267068598/1484572933023334621/Copilot_20260320_145920.png?ex=69beb7c9&is=69bd6649&hm=a624e462ff950ed84f2542777c22d63ca5710c50834113b85afbc532176cc430&=&format=webp&quality=lossless&width=822&height=548",
     },
     "aquion": {
         "emoji": "🌊",
         "name":  "Aquion",
-        "desc":  "Největší obchodní město Aurionisu, postavené na síti kanálů a plovoucích plošin. Říká se, že tady se dá koupit cokoliv.. i pravda, i lež. Klášter mágů vody střeží rovnováhu sil a prakticky řídí celou ekonomickou situaci Kalexie.",
+        "desc":  "Největší obchodní město Aurionisu, postavené na síti kanálů a plovoucích plošin. Říká se, že tady se dá koupit cokoliv: pravda i lež. Klášter mágů vody střeží rovnováhu sil a prakticky řídí celou ekonomickou situaci Kalexie.",
         "color": 0x1abc9c,
         "image": "https://media.discordapp.net/attachments/1484572118267068598/1484572857559285801/Copilot_20260320_150340.png?ex=69beb7b7&is=69bd6637&hm=80ace1e169079d9845326e567a5ded22e9d6bcf3dd3dc01a0b22c214864cbc40&=&format=webp&quality=lossless&width=822&height=548",
     },
     "draci_skala": {
         "emoji": "🏔️",
         "name":  "Dračí skála",
-        "desc":  "Mladé město vytesané do útesů vyhaslé sopky kde vládne **Alice Aurelion** — samozvaná královna s darem dračí řeči. Její draci krouží nad hradbami a každý nový příchozí si musí vybrat: věrně sloužit a nebo odejít. Alice nebyla viděna na veřejnosti od té doby co se ukázala v Aquionu.",
+        "desc":  "Mladé město vytesané do útesů vyhaslé sopky, kde vládne **Alice Aurelion** — samozvaná královna s darem dračí řeči. Její draci krouží nad hradbami a každý nový příchozí si musí vybrat: věrně sloužit, nebo odejít. Alice nebyla viděna na veřejnosti od chvíle, kdy se ukázala v Aquionu.",
         "color": 0xe74c3c,
         "image": "https://media.discordapp.net/attachments/1484572118267068598/1484573012585087057/Copilot_20260320_150049.png?ex=69beb7dc&is=69bd665c&hm=7a0e1d64b751d2b6476e900a3f8b2f2ade7b238bfcf5b662b2487eee7d775d05&=&format=webp&quality=lossless&width=822&height=548",
     },
@@ -135,6 +135,14 @@ def add_gold(user_id: int, amount: int):
     data[uid] = data.get(uid, 0) + amount
     save_json(ECONOMY_FILE, data)
 
+def add_registered_item_to_profile(profile: dict, item_id: str, qty: int = 1) -> None:
+    inventory = profile.setdefault("inventory", [])
+    for entry in inventory:
+        if entry.get("type") == "registered" and entry.get("id") == item_id:
+            entry["qty"] = entry.get("qty", 1) + qty
+            return
+    inventory.append({"type": "registered", "id": item_id, "qty": qty})
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -145,7 +153,7 @@ class TutorialPartOneView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=600)
 
-    @discord.ui.button(label="Naslouchat hlasu❓", style=discord.ButtonStyle.primary, emoji="✨")
+    @discord.ui.button(label="Naslouchat hlasu", style=discord.ButtonStyle.primary, emoji="✨")
     async def listen(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Ochrana — hráč s dokončeným profilem nemůže spustit tutorial znovu
         uid = str(interaction.user.id)
@@ -168,9 +176,9 @@ class TutorialPartOneView(discord.ui.View):
                 "Svět se mění pod tíhou nových zkoušek.\n\n"
                 "**Turnaj Hvězdy** byl vyhlášen a jeho vítěz si může přát úplně cokoliv.\n\n"
                 "Mocní se pohybují ve stínech, zatímco slabí mizí beze stopy.\n\n"
-                "Ti, jenž jsou zváni **Vyvolenými**, stojí na rozhraní mezi oběma světy.\n\n"
+                "Ti, kdo jsou zváni **Vyvolenými**, stojí na rozhraní mezi oběma světy.\n\n"
                 "*Pravda byla odhalena, ale jaká ta pravda vlastně je?*\n\n"
-                "-# ⚠️ Tutorial bude delší! Přihlášení tutoriálu: **#lore** — přečti si lore před startem\n"
+                "-# ⚠️ Tutorial bude delší! Před startem si přečti lore v **#lore**.\n"
                 "-# Budete mít čas si klidně vybrat perky a vybavení"
             ),
             color=0x2f3136,
@@ -219,21 +227,21 @@ class RecapView(discord.ui.View):
             1: discord.Embed(
                 title="Kapitola I 👑 Rozdělená koruna",
                 description=(
-                    "**Alice Aurelion** přišla s nárokem, který nikdo nečekal.. krev starého rodu,"
-                    "dar dračí řeči a legitimní právo na trůn Kalexie a vlastně i všech ostatních říší\n\n"
-                    "**Král Talias** ji odmítl uznat, označil ji za lhářku a podvodnici. Nyní shromažďuje vazaly a zbraně."
-                    "Aurionis se ocitl na hraně občanské války a nad vším visí stín **Turnaje Hvězdy** kde si vítěz může přát cokoliv"
+                    "**Alice Aurelion** přišla s nárokem, který nikdo nečekal: krev starého rodu, "
+                    "dar dračí řeči a legitimní právo na trůn Kalexie, vlastně i všech ostatních říší.\n\n"
+                    "**Král Talias** ji odmítl uznat, označil ji za lhářku a podvodnici. Nyní shromažďuje vazaly a zbraně. "
+                    "Aurionis se ocitl na hraně občanské války a nad vším visí stín **Turnaje Hvězdy**, kde si vítěz může přát cokoliv."
                 ),
                 color=0xe74c3c,
             ),
             2: discord.Embed(
                 title="Kapitola II 🛡️ Zrazená přísaha",
                 description=(
-                    "**Reinhard**, nejvyšší paladin, symbol cti a řádu odložil insignii.."
-                    "Ochránce Kalexie a vstoupil do Turnaje Hvězdy sám za sebe\n\n"
-                    "*'Stanu se králem hvězdy pro vás všechny'*\n\n"
+                    "**Reinhard**, nejvyšší paladin a symbol cti a řádu, odložil insignii "
+                    "ochránce Kalexie a vstoupil do Turnaje Hvězdy sám za sebe.\n\n"
+                    "*'Stanu se králem Hvězdy pro vás všechny.'*\n\n"
                     "Za ním zůstala prázdnota, obrana Kalexie se zhroutila a ti, kdo mu "
-                    "věřili zůstali bez odpovědí. Talias zuří, je pro něj stejným samozvancem jako Alice"
+                    "věřili, zůstali bez odpovědí. Talias zuří, je pro něj stejným samozvancem jako Alice."
                 ),
                 color=0x3498db,
             ),
@@ -241,10 +249,10 @@ class RecapView(discord.ui.View):
                 title="Kapitola III 🎭 Vládce stínů",
                 description=(
                     "Muž beze jména, kterému všichni říkají **Vládce stínů**, ovládá sílu zvanou "
-                    "esenciální očistění, ta dokáže vzít schopnosti, identitu i smysl existence\n\n"
-                    "Během jediné noci v Lumenii přišli tisíce upírů o svou podstatu a"
-                    "město je nyní plné uprchlíků, kteří ani nevědí kým jsou vlastně jsou"
-                    "a nikdo neví kde Vládce udeří příště.. První byla Lumenie, pak Aquion.."
+                    "esenciální očištění. Ta dokáže vzít schopnosti, identitu i smysl existence.\n\n"
+                    "Během jediné noci v Lumenii přišly tisíce upírů o svou podstatu a "
+                    "město je nyní plné uprchlíků, kteří ani nevědí, kým vlastně jsou. "
+                    "Nikdo neví, kde Vládce udeří příště. První byla Lumenie, pak Aquion."
                 ),
                 color=0x2c3e50,
             ),
@@ -280,8 +288,8 @@ def _destination_embed() -> discord.Embed:
     embed = discord.Embed(
         title="🌍  Kde se probudíš?",
         description=(
-            "Světlo tě táhne třemi různými směry najednou, z každého směru cítíš úplně jinou energii "
-            "Každé místo tě čeká.. ale ty si můžeš vybrat jen jednu cestu\n\n"
+            "Světlo tě táhne třemi různými směry najednou. Z každého směru cítíš úplně jinou energii. "
+            "Každé místo tě čeká, ale ty si můžeš vybrat jen jednu cestu.\n\n"
             "Vyber svoji destinaci:"
         ),
         color=0xFFD700,
@@ -499,9 +507,9 @@ class NameRegistrationModal(discord.ui.Modal, title="Jak se jmenuješ?"):
             description=(
                 f"***'{new_name}.'***\n\n"
                 "Arion to zopakuje nahlas a pomalu jako by zkoušela jak tvé jméno zní ve vzduchu. "
-                "Arion se zamračí a prohlží si tě vemi důkladně\n\n"
-                "Ale pak se něco změní\n\n"
-                "Rozběhne se přímo proti tobě"
+                "Zamračí se a prohlíží si tě velmi důkladně.\n\n"
+                "Pak se něco změní.\n\n"
+                "Rozběhne se přímo proti tobě."
             ),
             color=0x3498db,
         )
@@ -527,7 +535,7 @@ class ArionLeapView(discord.ui.View):
         self.dest_key  = dest_key
         self.char_name = char_name
 
-    @discord.ui.button(label="Zahodit Arion  /check", style=discord.ButtonStyle.danger, emoji="💪")
+    @discord.ui.button(label="Setřást Arion  /check", style=discord.ButtonStyle.danger, emoji="💪")
     async def throw_arion(self, interaction: discord.Interaction, button: discord.ui.Button):
         roll = random.randint(1, 20)
 
@@ -639,8 +647,8 @@ class ArionHmView(discord.ui.View):
             title="🐱  ..Ale nic.",
             description=(
                 "Arion zvedne hlavu a její výraz se vrátí do normálu "
-                "nebo aspoň do toho co u ní normál je.\n\n"
-                "***'...Ale nic, vyvolený'***\n\n"
+                "nebo aspoň do toho, co u ní jako normál působí.\n\n"
+                "***'...Ale nic, vyvolený.'***\n\n"
                 "Otočí se a zamíří ke dveřím cechu. "
                 "Klobouk se na hlavě narovná sám od sebe.\n\n"
                 "***'Pojď dovnitř'***"
@@ -669,11 +677,11 @@ class EnterGuildInsideView(discord.ui.View):
                 "o tom kdo zabil draka jako poslední. Častokrát slyšíš jméno Aurelion. "
                 "Někdo jiný spí na lavici s helmou přes obličej.\n\n"
                 "Arion přeskočí pult jedním plynulým pohybem a "
-                "přistane na druhé straně kde otevře tlustou, živoucí knihu\n\n"
-                "***'..Standardní procedura, přijmu tě mezi dobrodruhy'***\n\n"
+                "přistane na druhé straně, kde otevře tlustou, živoucí knihu.\n\n"
+                "***'..Standardní procedura. Přijmu tě mezi dobrodruhy.'***\n\n"
                 "Přejede tlapkou přes zvláštní destičku vedle knihy a ta se "
-                "rozsvítí modrou aurou jako by reagovala na dotyk\n\n"
-                "***'Tak se podíváme z jakého jsi těsta'***"
+                "rozsvítí modrou aurou, jako by reagovala na dotyk.\n\n"
+                "***'Tak se podíváme, z jakého jsi těsta.'***"
             ),
             color=0x2c3e50,
         )
@@ -806,12 +814,12 @@ class TutorialSPView(discord.ui.View):
                 await interaction.response.defer()
                 return
 
-            self.stats[stat] = self.stats.get(stat, 1) + 1
+            self.stats[stat] = self.stats.get(stat, 0) + 1
             self.sp_remaining -= 1
             self._build_buttons()
 
             stats_lines = "  ·  ".join(
-                f"**{s}** {self.stats.get(s, 1)}" for s in ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
+                f"**{s}** {self.stats.get(s, 0)}" for s in ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
             )
 
             if self.sp_remaining > 0:
@@ -936,7 +944,7 @@ async def _show_motivation_prompt(
             "Zbývá jen jedno prázdné místo ve spodní části\n\n"
             "*Pero se samo zdvihne nad stránku a začne zapisovat tvou odpověď*\n\n"
             "***'Proč vlastně chceš být dobrodruhem?'***\n\n"
-            "-# *Tohle pole uvidí každý kdo si průkaz prohlédne*"
+            "-# *Tohle pole uvidí každý, kdo si průkaz prohlédne.*"
         ),
         color=0x9b59b6,
     )
@@ -969,21 +977,21 @@ async def _show_guild_card(
 
     if portrait_url:
         portrait_text = (
-            "Arion vytvoří magické plátno a chvíli tě soustředěně pozoruje"
-            "A pak začne kreslit. Za pár vteřin je hotovo, spokojeně přikývne sama pro sebe.\n\n"
+            "Arion vytvoří magické plátno a chvíli tě soustředěně pozoruje. "
+            "Pak začne kreslit. Za pár vteřin je hotovo a spokojeně přikývne sama pro sebe.\n\n"
             "***'Moc hezké...'***\n\n"
         )
     else:
         portrait_text = (
             "Arion zavře knihu a jen mávne rukou\n\n"
-            "***'Jak chceš, tak se přiště zastav'***\n\n"
+            "***'Jak chceš, tak se příště zastav.'***\n\n"
         )
 
     # Stats text — vryje se do průkazu
     if stats:
         stats_line = "  ·  ".join(f"**{k}** {v}" for k, v in stats.items())
         stats_scene = (
-            f"\n\nVidíš jak se magicky na průkaz vyrývají čísla\n"
+            f"\n\nVidíš, jak se magicky na průkaz vyrývají čísla.\n"
             f"-# {stats_line}\n\n"
             f"*Co to znamená?*"
         )
@@ -998,8 +1006,8 @@ async def _show_guild_card(
             "***'Mňau.. Vstupní poplatek je sto zlatých...'***\n\n"
             "Arion si hluboce povzdychne, ale následně výraz změní v euforii\n\n"
             "***'...ale jsou temné časy a každý dobrodruh se počítá "
-            "...Takže tentokrát platíme my vám'***\n\n"
-            "Načmárá tvé jméno na nějaký formulář a pak ti podá váček přes pult"
+            "...takže tentokrát platíme my vám.'***\n\n"
+            "Načmárá tvé jméno na nějaký formulář a pak ti podá váček přes pult."
             + stats_scene
         ),
         color=0xFFD700,
@@ -1025,11 +1033,11 @@ class StatsDialogView(discord.ui.View):
         embed = discord.Embed(
             title="🐱  Magický sken",
             description=(
-                "Arion se přehoupne přes pult a kouká na čísla na tvým průkazu\n\n"
-                "***'Magický sken dokáže z části odhadnout tvou přirozenou sílu "
-                "a převést ji na konkrétní čísla..'***\n\n"
+                "Arion se přehoupne přes pult a kouká na čísla na tvém průkazu.\n\n"
+                "***'Magický sken dokáže zčásti odhadnout tvou přirozenou sílu "
+                "a převést ji na konkrétní čísla.'***\n\n"
                 "***'Přirozená síla?..'***\n\n"
-                "***'Můžeš se od toho odrazit a vědět v čem se chceš zlepšit'***"
+                "***'Můžeš se od toho odrazit a vědět, v čem se chceš zlepšit.'***"
             ),
             color=0x9b59b6,
         )
@@ -1076,10 +1084,10 @@ class GoldView(discord.ui.View):
                 "Zlaté uvnitř cinkají velmi přesvědčivě\n\n"
                 f"**+100** {COIN} připsáno na tvé konto\n\n"
                 "Ještě než tě nechá odejít tak prohodí\n\n"
-                f"***'Svět tam venku není moc přívětivý.."
-                f"..obzvlášť teď, za Turnaje. Dávej na sebe pozor..'***\n\n"
+                f"***'Svět tam venku není moc přívětivý.. "
+                f"obzvlášť teď, za Turnaje. Dávej na sebe pozor.'***\n\n"
                 f"***'{dest['emoji']} {dest['name']} tě čeká'***\n\n"
-                "*Arion ti přestane věnovat pozornost. Teď je čas se vyzbrojit..*"
+                "*Arion ti přestane věnovat pozornost. Teď je čas se vyzbrojit.*"
             ),
             color=0xFFD700,
         )
@@ -1144,8 +1152,8 @@ async def _show_perk_selection(
     embed = discord.Embed(
         title="🎯  Zvol si 4 perky",
         description=(
-            f"Vybrál jsi si **{loadout['name']}** loadout.\n\n"
-            f"Dostaneš si prvotní perk: **{loadout['perk']}** a položky.\n\n"
+            f"Vybral/a sis loadout **{loadout['name']}**.\n\n"
+            f"Dostaneš prvotní perk: **{loadout['perk']}** a startovní položky.\n\n"
             "Teď si vyber 4 dodatečné perky dle svého uvážení.\n\n"
             "-# Tip: Perky se ti později hodí v boji. Zvol si moudře!"
         ),
@@ -1176,59 +1184,84 @@ class PerkSelectionView(discord.ui.View):
         self.selected_perks = selected_perks
         self.max_perks = max_perks
 
-        # Zde by měly být perky — na teď si vezmu learnable perky ze seedu
-        self._build_perk_buttons()
+        self._build_perk_picker()
         self._add_finish_button()
 
-    def _build_perk_buttons(self):
-        """Postav tlačítka pro vybrané perky (learnable + basic magic)."""
+    def _available_perks(self) -> list[tuple[str, str]]:
+        """Vrať perky dostupné pro tutorialový výběr."""
         try:
             from src.core.dnd.perks import load_perks
             perks = load_perks()
-
-            perk_list = []
-            for perk_id, perk in perks.items():
-                if perk.get("learnable") or perk_id in ["fire_magic_1", "ice_magic_1", "healing_magic_1"]:
-                    if perk_id not in self.selected_perks:
-                        perk_list.append((perk_id, perk.get("name", perk_id)))
-
-            # Limit na 12 perků najednou (Discord limit)
-            for perk_id, perk_name in perk_list[:12]:
-                btn = discord.ui.Button(
-                    label=perk_name[:20],
-                    style=discord.ButtonStyle.blurple,
-                )
-                btn.callback = self._make_perk_callback(perk_id)
-                self.add_item(btn)
         except Exception as e:
-            print(f"[onboard] Chyba při nastavení perků: {e}")
+            print(f"[onboard] Chyba při načtení perků: {e}")
+            perks = {}
 
-    def _make_perk_callback(self, perk_id: str):
-        async def callback(interaction: discord.Interaction):
-            if len(self.selected_perks) >= self.max_perks:
-                await interaction.response.defer()
-                return
+        perk_list = []
+        blocked = set(self.selected_perks)
+        loadout = LOADOUTS.get(self.loadout_id, {})
+        if loadout.get("perk"):
+            blocked.add(loadout["perk"])
 
-            self.selected_perks.append(perk_id)
-            self.clear_items()
-            self._build_perk_buttons()
-            self._add_finish_button()
+        for perk_id, perk in perks.items():
+            if perk_id in blocked:
+                continue
+            if perk.get("learnable") or perk_id in ["fire_magic_1", "ice_magic_1", "healing_magic_1"]:
+                perk_list.append((perk_id, perk.get("name", perk_id)))
 
-            # Zobraz zvýraznění
-            selected_str = "\n".join(self.selected_perks)
-            embed = discord.Embed(
-                title="🎯  Zvol si 4 perky",
-                description=(
-                    f"Vybraní perky:\n{selected_str}\n\n"
-                    f"Zbývá: **{self.max_perks - len(self.selected_perks)}**"
-                ),
-                color=0x9b59b6,
+        return perk_list
+
+    def _build_perk_picker(self):
+        remaining = self.max_perks - len(self.selected_perks)
+        if remaining <= 0:
+            return
+
+        perk_list = self._available_perks()
+        if not perk_list:
+            btn = discord.ui.Button(
+                label="Perky se nepodařilo načíst",
+                style=discord.ButtonStyle.danger,
+                disabled=True,
             )
-            if self.portrait_url:
-                embed.set_thumbnail(url=self.portrait_url)
-            embed.set_footer(text="⭐ Aurionis")
-            await interaction.response.edit_message(embed=embed, view=self)
-        return callback
+            self.add_item(btn)
+            return
+
+        options = [
+            discord.SelectOption(label=perk_name[:100], value=perk_id)
+            for perk_id, perk_name in perk_list[:25]
+        ]
+        picker = discord.ui.Select(
+            placeholder=f"Vyber zbývající perky ({remaining})",
+            min_values=1,
+            max_values=min(remaining, len(options)),
+            options=options,
+            row=0,
+        )
+        picker.callback = self._select_perks
+        self.add_item(picker)
+
+    async def _select_perks(self, interaction: discord.Interaction):
+        remaining = self.max_perks - len(self.selected_perks)
+        for perk_id in interaction.data.get("values", [])[:remaining]:
+            if perk_id not in self.selected_perks:
+                self.selected_perks.append(perk_id)
+
+        self.clear_items()
+        self._build_perk_picker()
+        self._add_finish_button()
+
+        selected_str = "\n".join(f"- `{perk_id}`" for perk_id in self.selected_perks) or "*Zatím nic*"
+        embed = discord.Embed(
+            title="🎯  Zvol si 4 perky",
+            description=(
+                f"Vybrané perky:\n{selected_str}\n\n"
+                f"Zbývá: **{self.max_perks - len(self.selected_perks)}**"
+            ),
+            color=0x9b59b6,
+        )
+        if self.portrait_url:
+            embed.set_thumbnail(url=self.portrait_url)
+        embed.set_footer(text="⭐ Aurionis")
+        await interaction.response.edit_message(embed=embed, view=self)
 
     def _add_finish_button(self):
         if len(self.selected_perks) >= self.max_perks:
@@ -1242,7 +1275,7 @@ class PerkSelectionView(discord.ui.View):
             self.add_item(btn)
 
     async def _finish(self, interaction: discord.Interaction):
-        # Hráč je hotov, přidělíme mu perky a itemmy
+        # Hráč je hotov, přidělíme mu perky a itemy.
         await _finalize_tutorial(
             interaction,
             dest_key=self.dest_key,
@@ -1259,10 +1292,9 @@ async def _finalize_tutorial(
     loadout_id: str,
     additional_perks: list[str],
 ):
-    """Přidělí hráči itemy, perky, achievement a pošle ho na ulici."""
+    """Přidělí hráči itemy, perky a pokračuje do závěru tutorialu."""
     try:
         from src.core.dnd.perks import load_player_perks, save_player_perks
-        from src.logic.inventory import add_to_inventory_from_items_db
 
         user_id = str(interaction.user.id)
         loadout = LOADOUTS.get(loadout_id)
@@ -1272,19 +1304,17 @@ async def _finalize_tutorial(
         # Přidej všechny perky (prvotní + dodatečné)
         all_perks = [loadout["perk"]] + additional_perks
         player_perks = load_player_perks()
-        player_perks.setdefault(user_id, {})["perks"] = all_perks
+        player = player_perks.setdefault(user_id, {"perks": [], "cooldowns": {}, "progress": {}})
+        player["perks"] = all_perks
+        player.setdefault("cooldowns", {})
+        player.setdefault("progress", {})
         save_player_perks(player_perks)
 
-        # Přidělí itemy (placeholder — bude potřebovat mapping)
-        # Toto je simplified — ve skutečnosti by se měly přidat do inventáře
-
-        # Grant achievement
-        from src.core.dnd.achievements import grant_achievement, announce_achievement
-        if grant_achievement(interaction.user.id, "Vítej v Aurionisu"):
-            try:
-                await announce_achievement(interaction.user, interaction.channel, "Vítej v Aurionisu")
-            except Exception:
-                pass
+        profiles = load_json(DATA_FILE, default={})
+        profile = profiles.setdefault(user_id, {"rank": "F3"})
+        for item_id in loadout.get("items", []):
+            add_registered_item_to_profile(profile, item_id)
+        save_json(DATA_FILE, profiles)
 
         # Zapiš do profilu, že je hotovo
         update_profile(interaction.user.id, loadout_selected=loadout_id, perks_selected=len(additional_perks))
@@ -1296,9 +1326,9 @@ async def _finalize_tutorial(
     embed = discord.Embed(
         title="✨  Připraven/a!",
         description=(
-            f"Vybrali jsi si loadout a perky.\n\n"
+            f"Vybral/a sis loadout a perky.\n\n"
             f"Teď už je čas vstoupit do Aurionisu.\n\n"
-            "-# Tip: Pomocí /equip si nasadíš itemky, /perks show zobrazí tvé perky, /stats ukáže tvoje statistiky, /profile je tvá vizitka!"
+            "-# Tip: Pomocí /equip si nasadíš vybavení, /perks show zobrazí tvé perky, /stats ukáže tvoje statistiky a /profile je tvá vizitka!"
         ),
         color=0x27ae60,
     )
@@ -1330,14 +1360,14 @@ class BulletinBoardView(discord.ui.View):
             description=(
                 "Zastavíš se u vývěsky u dveří.\n\n"
                 "Visí tu různé zakázky.. vybírání odměn, eskorty, průzkum "
-                "a každý má vedle sebe cechovní pečeť s označením minimálního ranku."
+                "a každý má vedle sebe cechovní pečeť s označením minimálního ranku. "
                 "**Žádný není pro F3...**\n\n"
                 "*Jasně. Musíš si nejdřív dobudovat jméno..*\n\n"
                 "Pod úkoly visí ručně psaný list, "
                 "jiný papír, jiný rukopis. Nadpis říká:\n\n"
                 "**✨ Turnaj Hvězdy — postupující do 2. kola**\n\n"
                 "*Hao · Darryn · Gabriel*\n\n"
-                "-# *Nikdo koho bys měl znát. A přesto proč ti ta jména "
+                "-# *Nikdo, koho bys měl znát. A přesto: proč ti ta jména "
                 "přijdou tak povědomá?*"
             ),
             color=0x2c3e50,
@@ -1415,7 +1445,7 @@ class MemoryCheckView(discord.ui.View):
             "***'..Paměť se ti vrací. Pomalu... ale vrací.'***"
         )
         outcome_desc = (
-            "Soustředíš se a z hluboka se nadechneš.\n\n"
+            "Soustředíš se a zhluboka se nadechneš.\n\n"
             "Na vteřinu se obraz zostří.\n\n"
             "*Muž v masce.. Šašek.. stojí blíž než v první vizi, vidíš ho zřetelněji.*\n\n"
             "*Maska nedává najevo žádné emoce. Ani úsměv, ani hněv. Jen prázdnota.*\n\n"
@@ -1423,8 +1453,8 @@ class MemoryCheckView(discord.ui.View):
             "*Ostrov. Malý a izolovaný. Cítíš sůl a vítr..*\n\n"
             "*A pak ten hlas, klidný jako rozsudek:*\n\n"
             "**\"Dávej pozor\"**\n\n"
-            "*Jméno se ti nevybaví, ani místo se ti nevybaví.*\n"
-            "*Ale víš, že to není poprvé co jsi ho viděl/a.*\n\n"
+            "*Jméno se ti nevybaví. Ani místo.*\n"
+            "*Ale víš, že to není poprvé, co jsi ho viděl/a.*\n\n"
             f"{arion_line}"
         )
 
@@ -1479,7 +1509,7 @@ class CollisionTransitionView(discord.ui.View):
             "Nebo.. skoro nikdo...\n\n"
             "Ramenem narazíš do mohutného muže, "
             "který právě míjí dveře. Ohlédne se. "
-            "Na hlavě má démonní rohy a na tebe se "
+            "Na hlavě má démonické rohy a na tebe se "
             "valí pivo z právě vyleveného džbánu."
         )
         embed = discord.Embed(
@@ -1618,16 +1648,16 @@ DEST_CHAT_CHANNEL_IDS = {
 }
 
 _HUB_FOOTER = (
-    "\n\n-# <:arion:1477303464781680772> Domluv se v chatu kde se napojíš na příběh — "
-    "nový hráč začíná ve skupině "
-    "Metagaming tu neprováděj "
-    "**Dont dare a devil**"
+    "\n\n-# <:arion:1477303464781680772> Domluv se v chatu, kde se napojíš na příběh. "
+    "Nový hráč začíná ve skupině. "
+    "Metagaming tu neprováděj. "
+    "**Don't dare a devil.**"
 )
 
 DEST_HUB_WELCOME = {
-    "lumenie":     f'*„Lumenie"* — řekneš si pro sebe Všechno ti připadá zvláštní{_HUB_FOOTER}',
-    "aquion":      f'*„Aquion"* — řekneš si pro sebe Všechno ti připadá zvláštní{_HUB_FOOTER}',
-    "draci_skala": f'*„Dračí skála"* — řekneš si pro sebe Všechno ti připadá zvláštní{_HUB_FOOTER}',
+    "lumenie":     f'*„Lumenie.“* řekneš si pro sebe. Všechno ti připadá zvláštní.{_HUB_FOOTER}',
+    "aquion":      f'*„Aquion.“* řekneš si pro sebe. Všechno ti připadá zvláštní.{_HUB_FOOTER}',
+    "draci_skala": f'*„Dračí skála.“* řekneš si pro sebe. Všechno ti připadá zvláštní.{_HUB_FOOTER}',
 }
 
 class FinalEnterView(discord.ui.View):
@@ -1737,6 +1767,14 @@ class FinalEnterView(discord.ui.View):
                 except Exception as e:
                     print(f"[onboard] Nepodařilo se poslat uvítání do hub kanálu: {e}")
 
+        # Achievement se udělí až po oznámení v hubu, aby byl opravdu závěrečnou odměnou.
+        try:
+            from src.core.dnd.achievements import grant_achievement, announce_achievement
+            if grant_achievement(interaction.user.id, "Vítej v Aurionisu"):
+                await announce_achievement(interaction.user, interaction.channel, "Vítej v Aurionisu")
+        except Exception as e:
+            print(f"[onboard] Nepodařilo se udělit tutorial achievement: {e}")
+
         # ── Přidej hráče do chat kanálu (vidí + píší) ─────────────────────
         chat_channel_id = DEST_CHAT_CHANNEL_IDS.get(self.dest_key, 0)
         if chat_channel_id:
@@ -1798,32 +1836,32 @@ class ArrivalStreetView(discord.ui.View):
         if self.dest_key == "lumenie":
             street_desc = (
                 "Světlo se rozpustí a ty stojíš na dlážděné ulici.\n\n"
-                "Modré lampy osvětlují cestu.. zatímco "
+                "Modré lampy osvětlují cestu, zatímco "
                 "vzduch voní po svíčkách a starém kameni. "
-                "V dálce se tyčí **katedrála světla**, její věž je majestátní"
+                "V dálce se tyčí **katedrála světla**, její věž je majestátní. "
                 "Po **mostě přes řeku Auriel** proudí davy "
                 "obchodníků, poutníků i bojovníků s cechovní pečetí.\n\n"
-                "*Tohle je místo kde každý slavný dobrodruh napsal první řádek svého příběhu.*\n\n"
-                "*A ty právě píšeš ten svůj*"
+                "*Tohle je místo, kde každý slavný dobrodruh napsal první řádek svého příběhu.*\n\n"
+                "*A ty právě píšeš ten svůj.*"
             )
         elif self.dest_key == "aquion":
             street_desc = (
                 "Světlo zmizí a pod nohama zaskřípe dřevo mola.\n\n"
                 "V Aquionu je klid, ale když se zaposloucháš, "
                 "slyšíš rušnou tržnici z dálky. "
-                "Kanály se třpytí v odrazu světýlek, zatímco opodál"
+                "Kanály se třpytí v odrazu světýlek, zatímco opodál "
                 "se tyčí **klášter mágů vody**.\n\n"
                 "*Říká se, že tady se dá koupit cokoliv. I pravda. I lež.*\n\n"
-                "*Záleží jen na tom, co si dovolíš hledat a kolik máš zrovna zlaťáků..*"
+                "*Záleží jen na tom, co si dovolíš hledat a kolik máš zrovna zlaťáků.*"
             )
         elif self.dest_key == "draci_skala":
             street_desc = (
                 "Světlo povolí a ostrý horský vzduch tě přivítá jako facka.\n\n"
-                "Furt se tady pracuje, kamenné ulice ještě nemají ani jména "
+                "Pořád se tady pracuje, kamenné ulice ještě nemají ani jména "
                 "a prochází tu spousta ozbrojených jedinců. "
                 "Vysoko nad hradbami lítá drak, střeží pevnost, zatímco "
                 "dole roste město, které se teprve učí být městem.\n\n"
-                "*Každý ví kdo tu vládne.*\n\n"
+                "*Každý ví, kdo tu vládne.*\n\n"
                 "*A teď jsi tu i ty. Náhoda? Nebo ne?*"
             )
         else:
@@ -1855,8 +1893,8 @@ class FirstStepView(discord.ui.View):
         embed = discord.Embed(
             title="✨  Aurionis čeká",
             description=(
-                "Uděláš první krok\n\n"
-                "Příběh se začíná psát a tentokrát jsi v něm ty"
+                "Uděláš první krok.\n\n"
+                "Příběh se začíná psát a tentokrát jsi v něm ty."
             ),
             color=0xFFD700,
         )
@@ -1880,8 +1918,8 @@ class TutorialWarningView(discord.ui.View):
         embed = discord.Embed(
             title="✨ Volání Hvězdy",
             description=(
-                "*Ticho a prázdno.. jsi ve své mysli a nebo putuješ nekonečným vesmírem?*\n\n"
-                "Přemítáš o tom co je pro tebe realita a pak tě oslepí jasné světlo.\n\n"
+                "*Ticho a prázdno.. jsi ve své mysli, nebo putuješ nekonečným vesmírem?*\n\n"
+                "Přemítáš o tom, co je pro tebe realita, a pak tě oslepí jasné světlo.\n\n"
                 "**'Zdravím tě, Vyvolený...'**"
             ),
             color=0xFFD700,
@@ -1894,7 +1932,7 @@ class TutorialWarningView(discord.ui.View):
         embed = discord.Embed(
             title="📜  Existující postava",
             description=(
-                "Pokud přicházíš z jiného Aurionis projektu a máš hotovou postavu, "
+                "Pokud přicházíš z jiného projektu Aurionis a máš hotovou postavu, "
                 "napiš administrátorovi — ten ti postavu přesune.\n\n"
                 "*Tutorial pro tebe není potřeba.*"
             ),

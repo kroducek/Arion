@@ -986,7 +986,6 @@ _SEED_BONUS: dict[str, int] = {
     "archery_1": 1,       "archery_2": 2,        "archery_3": 3,
     "fire_magic_1": 1,    "ice_magic_1": 1,      "healing_magic_1": 1,
 }
-}
 
 # ── Storage ───────────────────────────────────────────────────────────────────
 

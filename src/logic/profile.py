@@ -799,7 +799,9 @@ class Profile(commands.Cog):
         ROLE_DOBRODRUH_F3_ID = 1476056192643104768
 
         data    = load_data()
-        economy = load_economy_data()
+        economy = load_economy()
+        player_perks = load_json(PLAYER_PERKS, default={})
+        achievements = load_json(ACHIEVEMENTS, default={})
 
         results = []
         for member in members:
@@ -813,6 +815,16 @@ class Profile(commands.Cog):
             if uid in economy:
                 del economy[uid]
                 changes.append("zlaté resetovány")
+
+            if uid in player_perks:
+                del player_perks[uid]
+                changes.append("perky resetovány")
+
+            if uid in achievements and "Vítej v Aurionisu" in achievements[uid]:
+                achievements[uid].remove("Vítej v Aurionisu")
+                if not achievements[uid]:
+                    del achievements[uid]
+                changes.append("tutorial achievement odebrán")
 
             roles_to_remove = []
             for role in member.roles:
@@ -830,6 +842,8 @@ class Profile(commands.Cog):
 
         save_data(data)
         save_economy(economy)
+        save_json(PLAYER_PERKS, player_perks)
+        save_json(ACHIEVEMENTS, achievements)
 
         embed = discord.Embed(
             title="🔄  Tutorial Reset",
