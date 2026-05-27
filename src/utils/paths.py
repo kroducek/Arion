@@ -3,12 +3,57 @@ Centrální definice cest k datovým souborům.
 Všechny cogy importují cesty odsud — nikdy nepoužívají holé stringy jako "profiles.json".
 """
 import os
+import json
+import shutil
 
 # Kořen projektu (ArionBot/)
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Složka s daty — přepíše se env var DATA_DIR (Railway volume: /data)
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(ROOT, "src", "database", "data"))
+DEFAULT_DATA_DIR = os.path.join(ROOT, "src", "database", "data")
+
+
+def sync_default_data_files() -> None:
+    """Zajistí, že v přepsaném DATA_DIR jsou defaultní JSON soubory a chybějící entry."""
+    if os.path.abspath(DATA_DIR) == os.path.abspath(DEFAULT_DATA_DIR):
+        return
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    for filename in os.listdir(DEFAULT_DATA_DIR):
+        src_path = os.path.join(DEFAULT_DATA_DIR, filename)
+        dst_path = os.path.join(DATA_DIR, filename)
+
+        if not os.path.isfile(src_path):
+            continue
+
+        if not os.path.exists(dst_path):
+            shutil.copy2(src_path, dst_path)
+            continue
+
+        if not filename.endswith(".json"):
+            continue
+
+        try:
+            with open(src_path, "r", encoding="utf-8") as f:
+                src_data = json.load(f)
+            with open(dst_path, "r", encoding="utf-8") as f:
+                dst_data = json.load(f)
+        except Exception:
+            continue
+
+        if not isinstance(src_data, dict) or not isinstance(dst_data, dict):
+            continue
+
+        changed = False
+        for key, value in src_data.items():
+            if key not in dst_data:
+                dst_data[key] = value
+                changed = True
+
+        if changed:
+            with open(dst_path, "w", encoding="utf-8") as f:
+                json.dump(dst_data, f, ensure_ascii=False, indent=2)
 
 
 def data(filename: str) -> str:

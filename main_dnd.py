@@ -52,6 +52,7 @@ if _data_dir_override:
     _paths.ACHIEVEMENT_DATA  = _paths.data("achievement_data.json")
 
 os.makedirs(_paths.DATA_DIR, exist_ok=True)
+_paths.sync_default_data_files()
 
 DND_COGS = [
     # D&D core

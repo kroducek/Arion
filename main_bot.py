@@ -47,6 +47,7 @@ if _data_dir_override:
     _paths.SHOP              = _paths.data("shop.json")
 
 os.makedirs(_paths.DATA_DIR, exist_ok=True)
+_paths.sync_default_data_files()
 
 BOT_COGS = [
     # Minihry & karty

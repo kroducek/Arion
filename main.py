@@ -62,6 +62,7 @@ if _data_dir_override:
     _paths.TUTORIAL_MSG     = _paths.data("tutorial_msg.json")
 
 os.makedirs(_paths.DATA_DIR, exist_ok=True)
+_paths.sync_default_data_files()
 
 class ArionBot(commands.Bot):
     def __init__(self):
