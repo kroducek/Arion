@@ -1461,6 +1461,97 @@ class PerksCog(commands.Cog):
             f"✅ Perk **{perk['name']}** přiřazen {member.mention}.", ephemeral=True
         )
 
+    @perk_group.command(name="add", description="Vytvoř nový perk pomocí slash příkazu (admin)")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(
+        perk_id="ID perku (např. fire_magic_1)",
+        name="Jméno perku",
+        description="Popis co perk dělá",
+        group="Skupina (Furioku, Magie, Pasivky, Temnota, Světlo, Základní, Výzbroj, Unikátní)",
+        passive="Je to pasivní perk? (true/false)",
+        unique="Je to unikátní? (true/false)",
+        equip="Lze vybavit? (true/false, default false)",
+        learnable="Lze učit (tier up)? (true/false, default false)",
+        cooldown_uses="Počet použití (default 0 pro pasivky)",
+        cooldown_type="Typ cooldownu: daily, weekly, combat, turn (default none)",
+    )
+    async def perk_add(
+        self,
+        interaction: discord.Interaction,
+        perk_id: str,
+        name: str,
+        description: str,
+        group: str,
+        passive: str,
+        unique: str,
+        equip: str = "false",
+        learnable: str = "false",
+        cooldown_uses: int = 0,
+        cooldown_type: str = "none",
+    ):
+        try:
+            # Zvaliduj group
+            valid_groups = ["Furioku", "Magie", "Pasivky", "Temnota", "Světlo", "Základní", "Výzbroj", "Unikátní"]
+            if group not in valid_groups:
+                await interaction.response.send_message(
+                    f"❌ Neznámá skupina: `{group}`. Platné: {', '.join(valid_groups)}", ephemeral=True
+                )
+                return
+
+            # Parse booleans
+            passive_bool = passive.lower() in ["true", "yes", "1"]
+            unique_bool = unique.lower() in ["true", "yes", "1"]
+            equip_bool = equip.lower() in ["true", "yes", "1"]
+            learnable_bool = learnable.lower() in ["true", "yes", "1"]
+            cooldown_type_final = cooldown_type if cooldown_type != "none" else None
+
+            perks = load_perks()
+            if perk_id in perks:
+                await interaction.response.send_message(
+                    f"❌ Perk `{perk_id}` již existuje.", ephemeral=True
+                )
+                return
+
+            perks[perk_id] = {
+                "name": name,
+                "group": group,
+                "passive": passive_bool,
+                "unique": unique_bool,
+                "desc": description,
+                "subdesc": None,
+                "cooldown_uses": cooldown_uses if not passive_bool else 0,
+                "cooldown_type": cooldown_type_final if not passive_bool else None,
+            }
+            if equip_bool:
+                perks[perk_id]["equip"] = True
+            if learnable_bool:
+                perks[perk_id]["learnable"] = True
+
+            save_perks(perks)
+            log_action("perk_add", interaction.user.display_name, "-", perk_id)
+
+            color = GROUP_COLOR.get(group, 0xFFD700)
+            gemoji = GROUP_EMOJI.get(group, "✨")
+            desc = f"### {gemoji} {name}\n{description}"
+            embed = discord.Embed(title="📚  Nový perk vytvořen", description=desc, color=color)
+            embed.add_field(name="ID", value=f"`{perk_id}`", inline=True)
+            embed.add_field(name="Pasivní?", value="Ano" if passive_bool else "Ne", inline=True)
+            embed.add_field(name="Unikátní?", value="Ano" if unique_bool else "Ne", inline=True)
+            if equip_bool:
+                embed.add_field(name="Lze vybavit?", value="Ano", inline=True)
+            if learnable_bool:
+                embed.add_field(name="Learnable?", value="Ano", inline=True)
+            if cooldown_uses and cooldown_type_final:
+                embed.add_field(name="Cooldown", value=f"{cooldown_uses}x {cooldown_type_final}", inline=True)
+            embed.set_footer(text=f"⭐ {ARION_NAME}  ·  Nový perk: {perk_id}")
+            await interaction.channel.send(embed=embed)
+            await interaction.response.send_message(f"✅ Perk **{name}** (`{perk_id}`) vytvořen.", ephemeral=True)
+
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ Chyba: ```\n{str(e)}\n```", ephemeral=True
+            )
+
     @perk_group.command(name="remove", description="Odeber perk hráči (admin)")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(perk_id="ID perku", member="Hráč")

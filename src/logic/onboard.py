@@ -58,63 +58,77 @@ LOADOUTS = {
         "emoji": "🗡️",
         "name": "Lehký meč",
         "desc": "Klasický bojovník s jednoruční zbraní",
-        "items": ["mec_z_praveke_kosti", "lektvar_zivota"],
+        "items": ["mec_z_praveke_kosti", "brasna", "kozena_tunika", "lektvar_zivota"],
         "perk": "one_handed_1",
     },
     "two_handed": {
         "emoji": "⚔️",
         "name": "Obouruční meč",
         "desc": "Silný bojovník s obouruční zbraní",
-        "items": ["halapartna_ohne", "lektvar_zivota"],
+        "items": ["halapartna_ohne", "brasna", "ocelovy_kyrys", "lektvar_zivota"],
         "perk": "two_handed_1",
     },
     "bow": {
         "emoji": "🏹",
         "name": "Krátký luk",
         "desc": "Lukostřelec s lukem a šípy",
-        "items": ["jasanovy_luk", "sipka_obycejny", "lektvar_zivota"],
+        "items": ["jasanovy_luk", "sipky_10x", "brasna", "kozena_tunika", "lektvar_zivota"],
         "perk": "archery_1",
     },
     "crossbow": {
         "emoji": "🎯",
         "name": "Kuše",
         "desc": "Střelec s kuší",
-        "items": ["mala_kuse", "naboj_zbrane", "lektvar_zivota"],
+        "items": ["mala_kuse", "sipky_10x", "brasna", "ocelovy_kyrys", "lektvar_zivota"],
         "perk": "archery_1",
+    },
+    "mage": {
+        "emoji": "🔮",
+        "name": "Mág",
+        "desc": "Čaroděj ovládající magii",
+        "items": ["magicka_hulka", "brasna", "magicka_roba", "lektvar_many"],
+        "perk": "fire_magic_1",
     },
     "fire_magic": {
         "emoji": "🔥",
         "name": "Ohnivá magie",
         "desc": "Mág ovládající oheň",
-        "items": ["orb_ciste_destrukce", "lektvar_many"],
+        "items": ["ogniva_runa", "brasna", "magicka_roba", "lektvar_many"],
         "perk": "fire_magic_1",
     },
     "ice_magic": {
         "emoji": "❄️",
         "name": "Ledová magie",
         "desc": "Mág ovládající led",
-        "items": ["svitek_svetlo", "lektvar_many"],
+        "items": ["ledova_runa", "brasna", "magicka_roba", "lektvar_many"],
         "perk": "ice_magic_1",
     },
     "healing_magic": {
         "emoji": "💚",
         "name": "Uzdravovací magie",
         "desc": "Lékař pomocí magie",
-        "items": ["svitek_magicke_stopy", "lektvar_many"],
+        "items": ["uzdravovaci_runa", "brasna", "magicka_roba", "lektvar_many"],
         "perk": "healing_magic_1",
     },
     "rogue": {
         "emoji": "🗡️",
         "name": "Tulák",
         "desc": "Rychlý tulák se dvěma dýkami",
-        "items": ["nuz", "lektvar_zivota"],
+        "items": ["nuz", "nuz", "brasna", "kozena_tunika", "lektvar_zivota"],
         "perk": "stealth_1",
+    },
+    "staff": {
+        "emoji": "🤖",
+        "name": "Bojovník s holí",
+        "desc": "Mních bojující s holí",
+        "items": ["bojova_hul", "brasna", "kozena_tunika", "lektvar_zivota"],
+        "perk": "unarmed_1",
     },
     "acrobat": {
         "emoji": "🤸",
         "name": "Akrobata",
         "desc": "Hbitý bojovník",
-        "items": ["mec_z_praveke_kosti", "lektvar_zivota"],
+        "items": ["mec_z_praveke_kosti", "brasna", "kozena_tunika", "lektvar_zivota"],
         "perk": "acrobacy_1",
     },
 }
@@ -1266,14 +1280,23 @@ class PerkSelectionView(discord.ui.View):
 
     def _add_finish_button(self):
         if len(self.selected_perks) >= self.max_perks:
-            btn = discord.ui.Button(
-                label="Hotovo!",
+            confirm_btn = discord.ui.Button(
+                label="Potvrdit výběr",
                 style=discord.ButtonStyle.success,
                 emoji="✅",
                 row=4,
             )
-            btn.callback = self._finish
-            self.add_item(btn)
+            confirm_btn.callback = self._finish
+            self.add_item(confirm_btn)
+            
+            reset_btn = discord.ui.Button(
+                label="Vybrat znovu",
+                style=discord.ButtonStyle.danger,
+                emoji="🔄",
+                row=4,
+            )
+            reset_btn.callback = self._reset_perks
+            self.add_item(reset_btn)
 
     async def _finish(self, interaction: discord.Interaction):
         # Hráč je hotov, přidělíme mu perky a itemy.
@@ -1284,6 +1307,26 @@ class PerkSelectionView(discord.ui.View):
             loadout_id=self.loadout_id,
             additional_perks=self.selected_perks,
         )
+
+    async def _reset_perks(self, interaction: discord.Interaction):
+        """Reset perk selection."""
+        self.selected_perks = []
+        self.clear_items()
+        self._build_perk_picker()
+        self._add_finish_button()
+        
+        embed = discord.Embed(
+            title="🎯  Zvol si 4 perky",
+            description=(
+                f"Výběr resetován. Vyber si nové perky:\n\n"
+                f"Zbývá: **{self.max_perks}**"
+            ),
+            color=0x9b59b6,
+        )
+        if self.portrait_url:
+            embed.set_thumbnail(url=self.portrait_url)
+        embed.set_footer(text="⭐ Aurionis  ·  Vyber si perky.")
+        await interaction.response.edit_message(embed=embed, view=self)
 
 
 async def _finalize_tutorial(
@@ -1810,10 +1853,20 @@ class FinalEnterView(discord.ui.View):
             print(f"[onboard] Nepodařilo se zapsat do deníku: {e}")
 
         # Achievement se udělí úplně nakonec, až po uvítání v hubu i městském chatu.
+        # Nový system: Achievement se jmenuje podle destinace, aby hráči věděli kam přišli.
         try:
             from src.core.dnd.achievements import grant_achievement, announce_achievement
-            if grant_achievement(interaction.user.id, "Vítej v Aurionisu"):
-                await announce_achievement(interaction.user, interaction.channel, "Vítej v Aurionisu")
+            
+            # Mapování destinací na achievement ID
+            dest_achievements = {
+                "lumenie":     "Lumenie: Nový příchod",
+                "aquion":      "Aquion: Nový příchod",
+                "draci_skala": "Dračí skála: Nový příchod",
+            }
+            
+            achievement_id = dest_achievements.get(self.dest_key, "Vítej v Aurionisu")
+            if grant_achievement(interaction.user.id, achievement_id):
+                await announce_achievement(interaction.user, interaction.channel, achievement_id)
         except Exception as e:
             print(f"[onboard] Nepodařilo se udělit tutorial achievement: {e}")
 
@@ -1997,6 +2050,64 @@ class Onboarding(commands.Cog):
             save_json(TUTORIAL_MSG_FILE, {"message_id": new_msg.id})
         except Exception:
             pass
+
+    @app_commands.command(name="admin-class-give", description="[ADMIN] Přidělí hráči startovní vybavení třídy")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(class_="Vyber třídu/loadout", player="Cíl hráče (prázdno = ty)")
+    async def admin_class_give(
+        self,
+        interaction: discord.Interaction,
+        class_: str,
+        player: discord.User = None,
+    ):
+        await self.admin_loadout_give(interaction, loadout=class_, player=player)
+
+    @app_commands.command(name="admin-loadout-give", description="[ADMIN] Přidělí hráči startovní vybavení třídy")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(loadout="Vybrat třídu/loadout", player="Cíl hráče (prázdno = ty)")
+    async def admin_loadout_give(
+        self,
+        interaction: discord.Interaction,
+        loadout: str,
+        player: discord.User = None,
+    ):
+        """Přidělí hráči startovní vybavení vybrané třídy."""
+        target_user = player or interaction.user
+        
+        if loadout not in LOADOUTS:
+            await interaction.response.send_message(
+                f"❌ Neznámý loadout: `{loadout}`\n"
+                f"Dostupné: {', '.join(LOADOUTS.keys())}",
+                ephemeral=True,
+            )
+            return
+        
+        try:
+            loadout_data = LOADOUTS[loadout]
+            profiles = load_json(DATA_FILE, default={})
+            profile = profiles.setdefault(str(target_user.id), {"rank": "F3"})
+            
+            for item_id in loadout_data.get("items", []):
+                add_registered_item_to_profile(profile, item_id, qty=1)
+            
+            save_json(DATA_FILE, profiles)
+            
+            embed = discord.Embed(
+                title="✅  Loadout přidělen",
+                description=(
+                    f"**{target_user.mention}** ({loadout}) nyní má:\n\n"
+                    + "\n".join(f"• {item_id}" for item_id in loadout_data.get("items", []))
+                ),
+                color=0x27ae60,
+            )
+            await interaction.response.send_message(embed=embed)
+        except Exception as e:
+            embed = discord.Embed(
+                title="❌  Chyba",
+                description=f"```\n{str(e)}\n```",
+                color=0xe74c3c,
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 async def setup(bot):
