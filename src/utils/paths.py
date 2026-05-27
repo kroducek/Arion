@@ -18,6 +18,8 @@ def sync_default_data_files() -> None:
     """Zajistí, že v přepsaném DATA_DIR jsou defaultní JSON soubory a chybějící entry."""
     if os.path.abspath(DATA_DIR) == os.path.abspath(DEFAULT_DATA_DIR):
         return
+    if not os.path.exists(DEFAULT_DATA_DIR):
+        return
     os.makedirs(DATA_DIR, exist_ok=True)
 
     for filename in os.listdir(DEFAULT_DATA_DIR):
