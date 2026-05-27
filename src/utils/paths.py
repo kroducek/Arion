@@ -58,6 +58,147 @@ def sync_default_data_files() -> None:
                 json.dump(dst_data, f, ensure_ascii=False, indent=2)
 
 
+# ── Definice systémových položek (musí být dostupné v každém prostředí) ────
+DEFAULT_ITEMS = {
+    "brasna": {
+        "name": "Brašna",
+        "category": "příslušenství",
+        "slot": "belt",
+        "stackable": False,
+        "consumable": False,
+        "desc": "Malá brašna na pás — zvyšuje nositele na inventáře"
+    },
+    "kozena_tunika": {
+        "name": "Kožená tunika",
+        "category": "armor",
+        "slot": "chest",
+        "stackable": False,
+        "consumable": False,
+        "def": 5,
+        "desc": "Jednoduchá kožená zbroj"
+    },
+    "ocelovy_kyrys": {
+        "name": "Ocelový kýrys",
+        "category": "armor",
+        "slot": "chest",
+        "stackable": False,
+        "consumable": False,
+        "def": 8,
+        "requires": {"STR": 3},
+        "desc": "Robustní ocelová zbroj"
+    },
+    "magicka_roba": {
+        "name": "Magická roba",
+        "category": "armor",
+        "slot": "chest",
+        "stackable": False,
+        "consumable": False,
+        "def": 3,
+        "mana": 5,
+        "desc": "Roba plná kouzelné energie"
+    },
+    "bojova_hul": {
+        "name": "Bojová hůl",
+        "category": "zbraně",
+        "slot": "hand_l",
+        "hand_type": "two",
+        "stackable": False,
+        "consumable": False,
+        "atk": 14,
+        "desc": "Obouruční hůl bojového mnicha"
+    },
+    "magicka_hulka": {
+        "name": "Magická hůlka",
+        "category": "zbraně",
+        "slot": "hand_l",
+        "stackable": False,
+        "consumable": False,
+        "atk": 5,
+        "mana": 3,
+        "desc": "Hůlka pro seslávání kouzel"
+    },
+    "sipky_10x": {
+        "name": "Šípky (10x)",
+        "category": "náboje",
+        "slot": None,
+        "stackable": True,
+        "consumable": True,
+        "desc": "Balíček 10 obyčejných šípů"
+    },
+    "ogniva_runa": {
+        "name": "Ohnivá runa",
+        "category": "zbraně",
+        "slot": "hand_l",
+        "stackable": False,
+        "consumable": False,
+        "atk": 18,
+        "desc": "Runa ohnivé magie — 🔥"
+    },
+    "ledova_runa": {
+        "name": "Ledová runa",
+        "category": "zbraně",
+        "slot": "hand_l",
+        "stackable": False,
+        "consumable": False,
+        "atk": 18,
+        "desc": "Runa ledové magie — ❄️"
+    },
+    "uzdravovaci_runa": {
+        "name": "Uzdravovací runa",
+        "category": "zbraně",
+        "slot": "hand_l",
+        "stackable": False,
+        "consumable": False,
+        "atk": 0,
+        "desc": "Runa uzdravovací magie — 💚"
+    },
+    "lektvar_zivota": {
+        "name": "Léktvár života",
+        "category": "consumable",
+        "slot": None,
+        "stackable": True,
+        "consumable": True,
+        "desc": "Obnoví 10 HP"
+    },
+    "lektvar_many": {
+        "name": "Léktvár many",
+        "category": "consumable",
+        "slot": None,
+        "stackable": True,
+        "consumable": True,
+        "desc": "Obnoví 10 many"
+    },
+}
+
+
+def bootstrap_items() -> None:
+    """Zajistí, že items.json obsahuje všechny systémové položky potřebné pro loadouty."""
+    items_file = data("items.json")
+    os.makedirs(DATA_DIR, exist_ok=True)
+    
+    try:
+        if os.path.exists(items_file):
+            with open(items_file, "r", encoding="utf-8") as f:
+                items = json.load(f)
+        else:
+            items = {}
+    except Exception:
+        items = {}
+    
+    changed = False
+    for item_id, item_def in DEFAULT_ITEMS.items():
+        if item_id not in items:
+            items[item_id] = item_def
+            changed = True
+    
+    if changed or not os.path.exists(items_file):
+        try:
+            with open(items_file, "w", encoding="utf-8") as f:
+                json.dump(items, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+
 def data(filename: str) -> str:
     """Vrátí absolutní cestu k souboru ve složce database/data/."""
     return os.path.join(DATA_DIR, filename)

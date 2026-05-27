@@ -53,6 +53,7 @@ if _data_dir_override:
 
 os.makedirs(_paths.DATA_DIR, exist_ok=True)
 _paths.sync_default_data_files()
+_paths.bootstrap_items()
 
 DND_COGS = [
     # D&D core

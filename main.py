@@ -63,6 +63,7 @@ if _data_dir_override:
 
 os.makedirs(_paths.DATA_DIR, exist_ok=True)
 _paths.sync_default_data_files()
+_paths.bootstrap_items()
 
 class ArionBot(commands.Bot):
     def __init__(self):
