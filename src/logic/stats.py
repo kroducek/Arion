@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import json
 import os
-import random
+import logging
 
 # ══════════════════════════════════════════════════════════════════════════════
 # KONFIGURACE
@@ -11,6 +11,8 @@ import random
 
 from src.utils.paths import PROFILES as DATA_FILE
 from src.utils.json_utils import load_json, save_json
+
+logger = logging.getLogger("Stats")
 
 STAT_LABELS = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
 
@@ -174,9 +176,9 @@ _SP_EMOJI = {"STR": "💪", "DEX": "🤸", "INS": "👁️", "INT": "🧠", "CHA
 
 
 class SpendSPView(discord.ui.View):
-    """Ephemeral view — 6 tlačítek, jedno na stat."""
+    """Interaktivní view pro rozdělování SP — 6 tlačítek, jedno na stat."""
 
-    def __init__(self, user_id: int, sp_to_spend: int):
+    def __init__(self, user_id: int):
         super().__init__(timeout=300)
         self.user_id = user_id
         for stat in STAT_LABELS:
@@ -190,35 +192,72 @@ class SpendSPView(discord.ui.View):
 
     def _make_cb(self, stat: str):
         async def cb(interaction: discord.Interaction):
-            if interaction.user.id != self.user_id:
-                await interaction.response.send_message("Toto není tvůj výběr.", ephemeral=True)
-                return
-            data = _load()
-            uid  = str(self.user_id)
-            p    = _profile(data, uid)
-            if p["sp"] <= 0:
-                await interaction.response.edit_message(
-                    content="Nemáš žádné volné SP.", embed=None, view=None
+            try:
+                # Kontrola oprávnění
+                if interaction.user.id != self.user_id:
+                    await interaction.response.send_message(
+                        "❌ Toto není tvůj výběr.", 
+                        ephemeral=True
+                    )
+                    return
+
+                # Načtení dat
+                data = _load()
+                uid  = str(self.user_id)
+                p    = _profile(data, uid)
+
+                # Kontrola SP
+                if p["sp"] <= 0:
+                    await interaction.response.send_message(
+                        "❌ Nemáš žádné volné SP.",
+                        ephemeral=True
+                    )
+                    return
+
+                # Útrata SP
+                p["sp"]          -= 1
+                p["stats"][stat]  = p["stats"].get(stat, 1) + 1
+                _save(data)
+                
+                remaining = p["sp"]
+                new_val   = p["stats"][stat]
+
+                # Vytvoření embedu
+                embed = discord.Embed(
+                    title="⚡ Skill Point utracen",
+                    description=(
+                        f"{_SP_EMOJI.get(stat, '')} **{stat}** zvýšen na **{new_val}**\n\n"
+                        f"Zbývající SP: **{remaining}**"
+                        + ("\n\n✅ *Vyber další stat.*" if remaining > 0 else "\n\n✅ *Všechny SP rozděleny!*")
+                    ),
+                    color=0x9b59b6,
                 )
-                return
-            p["sp"]          -= 1
-            p["stats"][stat]  = p["stats"].get(stat, 1) + 1
-            _save(data)
-            remaining = p["sp"]
-            new_val   = p["stats"][stat]
-            embed = discord.Embed(
-                title="⚡  Skill Point utracen",
-                description=(
-                    f"{_SP_EMOJI.get(stat, '')} **{stat}** zvýšen na **{new_val}**.\n\n"
-                    f"Zbývající SP: **{remaining}**"
-                    + ("\n\n*Vyber další stat.*" if remaining > 0 else "\n\n*Všechny SP rozděleny.*")
-                ),
-                color=0x9b59b6,
-            )
-            await interaction.response.edit_message(
-                embed=embed,
-                view=SpendSPView(self.user_id, remaining) if remaining > 0 else None,
-            )
+
+                # Odpověď s novou view (pokud zbývají SP)
+                if remaining > 0:
+                    await interaction.response.edit_message(
+                        embed=embed,
+                        view=SpendSPView(self.user_id),
+                    )
+                else:
+                    # Poslední SP — nezobrazuj view
+                    await interaction.response.edit_message(
+                        embed=embed,
+                        view=None,
+                    )
+
+            except discord.errors.NotFound:
+                logger.warning(f"[SpendSPView] Message not found for user {self.user_id}")
+            except Exception as e:
+                logger.exception(f"[SpendSPView] Error in callback for stat {stat}: {e}")
+                try:
+                    await interaction.response.send_message(
+                        f"❌ Chyba: {str(e)[:100]}",
+                        ephemeral=True
+                    )
+                except:
+                    pass
+
         return cb
 
 
@@ -235,90 +274,112 @@ class Stats(commands.Cog):
     @app_commands.command(name="stats", description="Zobraz své staty, level a XP.")
     @app_commands.describe(member="Hráč (výchozí: ty)")
     async def stats_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
-        target = member or interaction.user
-        data   = _load()
-        p      = _profile(data, str(target.id))
+        try:
+            target = member or interaction.user
+            data   = _load()
+            p      = _profile(data, str(target.id))
 
-        level  = p["level"]
-        xp     = p["xp"]
-        cap    = get_xp_cap(level)
-        sp     = p["sp"]
-        luck   = p["luck"]
-        stats  = p.get("stats", {})
+            level  = p["level"]
+            xp     = p["xp"]
+            cap    = get_xp_cap(level)
+            sp     = p["sp"]
+            luck   = p["luck"]
+            stats  = p.get("stats", {})
 
-        xp_bar = f"{xp} / {cap} XP" if cap else f"{xp} XP (MAX LEVEL)"
+            xp_bar = f"{xp} / {cap} XP" if cap else f"{xp} XP (MAX LEVEL)"
 
-        stats_lines = "  ".join(f"**{s}** {stats.get(s, 1)}" for s in STAT_LABELS)
+            stats_lines = "  ".join(f"**{s}** {stats.get(s, 1)}" for s in STAT_LABELS)
 
-        embed = discord.Embed(
-            title=f"📊  {target.display_name}",
-            color=0x9b59b6,
-        )
-        embed.add_field(name="Level", value=f"**{level_label(level)}**", inline=True)
-        embed.add_field(name="XP",    value=xp_bar,                      inline=True)
-        if sp > 0:
-            embed.add_field(name="⚡ Volné SP", value=str(sp),            inline=True)
-        embed.add_field(name="Staty", value=stats_lines,                  inline=False)
-        embed.add_field(name="Štěstí (LUCK)", value=f"{luck}%",           inline=True)
-        embed.set_footer(text="⭐ Aurionis")
+            embed = discord.Embed(
+                title=f"📊 {target.display_name}",
+                color=0x9b59b6,
+            )
+            embed.add_field(name="Level", value=f"**{level_label(level)}**", inline=True)
+            embed.add_field(name="XP",    value=xp_bar,                      inline=True)
+            if sp > 0:
+                embed.add_field(name="⚡ Volné SP", value=str(sp),            inline=True)
+            embed.add_field(name="Staty", value=stats_lines,                  inline=False)
+            embed.add_field(name="Štěstí (LUCK)", value=f"{luck}%",           inline=True)
+            embed.set_footer(text="⭐ Aurionis")
 
-        await interaction.response.send_message(embed=embed, ephemeral=(member is None))
+            await interaction.response.send_message(embed=embed, ephemeral=(member is None))
+        except Exception as e:
+            logger.exception(f"[stats_cmd] Error: {e}")
+            await interaction.response.send_message(
+                f"❌ Chyba: {str(e)[:100]}",
+                ephemeral=True
+            )
 
     # ── /sp ───────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="sp", description="Rozděl své skill pointy.")
     async def sp_cmd(self, interaction: discord.Interaction):
-        data = _load()
-        p    = _profile(data, str(interaction.user.id))
-        sp   = p["sp"]
+        try:
+            data = _load()
+            p    = _profile(data, str(interaction.user.id))
+            sp   = p["sp"]
 
-        if sp <= 0:
-            await interaction.response.send_message(
-                "Nemáš žádné volné skill pointy.", ephemeral=True
+            if sp <= 0:
+                await interaction.response.send_message(
+                    "❌ Nemáš žádné volné skill pointy.", 
+                    ephemeral=True
+                )
+                return
+
+            embed = discord.Embed(
+                title="⚡ Skill Pointy",
+                description=(
+                    f"Máš **{sp}** volných SP.\n\n"
+                    "Klikni a vyber stat, který chceš zvýšit.\n"
+                    f"-# Dostupné staty: {', '.join(STAT_LABELS)}"
+                ),
+                color=0x9b59b6,
             )
-            return
-
-        embed = discord.Embed(
-            title="⚡  Skill Pointy",
-            description=(
-                f"Máš **{sp}** volných SP.\n\n"
-                "Klikni a vyber stat který chceš zvýšit.\n"
-                f"-# Dostupné staty: {', '.join(STAT_LABELS)}"
-            ),
-            color=0x9b59b6,
-        )
-        await interaction.response.send_message(
-            embed=embed,
-            view=SpendSPView(user_id=interaction.user.id, sp_to_spend=sp),
-            ephemeral=True,
-        )
+            await interaction.response.send_message(
+                embed=embed,
+                view=SpendSPView(user_id=interaction.user.id),
+                ephemeral=True,
+            )
+        except Exception as e:
+            logger.exception(f"[sp_cmd] Error: {e}")
+            await interaction.response.send_message(
+                f"❌ Chyba: {str(e)[:100]}",
+                ephemeral=True
+            )
 
     # ── /luck ─────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="luck", description="Zobraz svůj aktuální Luck.")
     @app_commands.describe(member="Hráč (výchozí: ty)")
     async def luck_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
-        target = member or interaction.user
-        data   = _load()
-        p      = _profile(data, str(target.id))
-        luck   = p["luck"]
+        try:
+            target = member or interaction.user
+            data   = _load()
+            p      = _profile(data, str(target.id))
+            luck   = p["luck"]
 
-        if luck >= 180:   desc = "🌟 Štěstěna se přímo usmívá"
-        elif luck >= 130: desc = "📈 Příznivé okolnosti"
-        elif luck >= 80:  desc = "⚖️ Stabilní vliv (Neutrální)"
-        elif luck >= 40:  desc = "📉 Nepříznivé interference"
-        else:             desc = "💀 Kritická nesouhra (Naprostá smůla)"
+            if luck >= 180:   desc = "🌟 Štěstěna se přímo usmívá"
+            elif luck >= 130: desc = "📈 Příznivé okolnosti"
+            elif luck >= 80:  desc = "⚖️ Stabilní vliv (Neutrální)"
+            elif luck >= 40:  desc = "📉 Nepříznivé interference"
+            else:             desc = "💀 Kritická nesouhra (Naprostá smůla)"
 
-        bar_filled = round(luck / 10)
-        bar = "█" * bar_filled + "░" * (20 - bar_filled)
+            bar_filled = round(luck / 10)
+            bar = "█" * bar_filled + "░" * (20 - bar_filled)
 
-        embed = discord.Embed(
-            title=f"🍀  Štěstí — {target.display_name}",
-            description=f"`{bar}` **{luck}%**\n\n{desc}",
-            color=0xf1c40f,
-        )
-        embed.set_footer(text="⭐ Aurionis")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+            embed = discord.Embed(
+                title=f"🍀 Štěstí — {target.display_name}",
+                description=f"`{bar}` **{luck}%**\n\n{desc}",
+                color=0xf1c40f,
+            )
+            embed.set_footer(text="⭐ Aurionis")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except Exception as e:
+            logger.exception(f"[luck_cmd] Error: {e}")
+            await interaction.response.send_message(
+                f"❌ Chyba: {str(e)[:100]}",
+                ephemeral=True
+            )
 
     # ── /admin-luck ───────────────────────────────────────────────────────────
 
@@ -341,18 +402,25 @@ class Stats(commands.Cog):
         operace: app_commands.Choice[str],
         hodnota: int,
     ):
-        if operace.value == "set":
-            set_luck(member.id, hodnota)
-            new_luck = max(0, min(200, hodnota))
-        elif operace.value == "add":
-            new_luck = modify_luck(member.id, hodnota)
-        else:
-            new_luck = modify_luck(member.id, -hodnota)
+        try:
+            if operace.value == "set":
+                set_luck(member.id, hodnota)
+                new_luck = max(0, min(200, hodnota))
+            elif operace.value == "add":
+                new_luck = modify_luck(member.id, hodnota)
+            else:
+                new_luck = modify_luck(member.id, -hodnota)
 
-        await interaction.response.send_message(
-            f"✅ Luck hráče {member.mention} nastaven na **{new_luck}%**.",
-            ephemeral=True,
-        )
+            await interaction.response.send_message(
+                f"✅ Luck hráče {member.mention} nastaven na **{new_luck}%**.",
+                ephemeral=True,
+            )
+        except Exception as e:
+            logger.exception(f"[admin_luck] Error: {e}")
+            await interaction.response.send_message(
+                f"❌ Chyba: {str(e)[:100]}",
+                ephemeral=True
+            )
 
     # ── /admin-xp ─────────────────────────────────────────────────────────────
 
@@ -360,53 +428,60 @@ class Stats(commands.Cog):
     @app_commands.describe(member="Hráč", amount="Množství XP (kladné = přidat, záporné = odebrat)")
     @app_commands.checks.has_permissions(administrator=True)
     async def admin_xp(self, interaction: discord.Interaction, member: discord.Member, amount: int):
-        if amount > 0:
-            result = add_xp(member.id, amount)
-            if result["leveled_up"]:
-                cap_str = f"/ {result['cap']}" if result["cap"] else "(MAX)"
-                embed = discord.Embed(
-                    title="⬆️  Level Up!",
-                    description=(
-                        f"{member.mention} dosáhl/a **{level_label(result['new_level'])}**!\n\n"
-                        f"XP: **{result['xp']}** {cap_str}\n"
-                        f"Získané SP: **{result['sp_gained']}**"
-                    ),
-                    color=0xf1c40f,
-                )
-                await interaction.response.send_message(embed=embed)
-                # Upozornit hráče ephemeral
-                try:
-                    await interaction.followup.send(
-                        content=member.mention,
-                        embed=discord.Embed(
-                            title="⬆️  Level Up!",
-                            description=(
-                                f"Dosáhl/a jsi **{level_label(result['new_level'])}**!\n\n"
-                                f"Získal/a jsi **{result['sp_gained']} SP** — rozděl je přes `/sp`."
-                            ),
-                            color=0xf1c40f,
+        try:
+            if amount > 0:
+                result = add_xp(member.id, amount)
+                if result["leveled_up"]:
+                    cap_str = f"/ {result['cap']}" if result["cap"] else "(MAX)"
+                    embed = discord.Embed(
+                        title="⬆️ Level Up!",
+                        description=(
+                            f"{member.mention} dosáhl/a **{level_label(result['new_level'])}**!\n\n"
+                            f"XP: **{result['xp']}** {cap_str}\n"
+                            f"Získané SP: **{result['sp_gained']}**"
                         ),
+                        color=0xf1c40f,
                     )
-                except Exception:
-                    pass
+                    await interaction.response.send_message(embed=embed)
+                    # Upozornit hráče
+                    try:
+                        await interaction.followup.send(
+                            content=member.mention,
+                            embed=discord.Embed(
+                                title="⬆️ Level Up!",
+                                description=(
+                                    f"Dosáhl/a jsi **{level_label(result['new_level'])}**!\n\n"
+                                    f"Získal/a jsi **{result['sp_gained']} SP** — rozděl je přes `/sp`."
+                                ),
+                                color=0xf1c40f,
+                            ),
+                        )
+                    except Exception as e:
+                        logger.warning(f"[admin_xp] Failed to send followup: {e}")
+                else:
+                    cap_str = f"/ {result['cap']}" if result["cap"] else "(MAX)"
+                    await interaction.response.send_message(
+                        f"✅ {member.mention} získal/a **+{amount} XP**. "
+                        f"Aktuálně: **{result['xp']}** {cap_str}",
+                        ephemeral=True,
+                    )
             else:
-                cap_str = f"/ {result['cap']}" if result["cap"] else "(MAX)"
+                # Odebrat XP
+                data = _load()
+                uid  = str(member.id)
+                p    = _profile(data, uid)
+                p["xp"] = max(0, p["xp"] + amount)
+                _save(data)
                 await interaction.response.send_message(
-                    f"✅ {member.mention} získal/a **+{amount} XP**. "
-                    f"Aktuálně: **{result['xp']}** {cap_str}",
+                    f"✅ {member.mention} ztratil/a **{abs(amount)} XP**. "
+                    f"Aktuálně: **{p['xp']}**",
                     ephemeral=True,
                 )
-        else:
-            # Odebrat XP
-            data = _load()
-            uid  = str(member.id)
-            p    = _profile(data, uid)
-            p["xp"] = max(0, p["xp"] + amount)
-            _save(data)
+        except Exception as e:
+            logger.exception(f"[admin_xp] Error: {e}")
             await interaction.response.send_message(
-                f"✅ {member.mention} ztratil/a **{abs(amount)} XP**. "
-                f"Aktuálně: **{p['xp']}**",
-                ephemeral=True,
+                f"❌ Chyba: {str(e)[:100]}",
+                ephemeral=True
             )
 
     # ── /admin-stats ──────────────────────────────────────────────────────────
@@ -426,15 +501,22 @@ class Stats(commands.Cog):
         stat: app_commands.Choice[str],
         hodnota: int,
     ):
-        data = _load()
-        uid  = str(member.id)
-        p    = _profile(data, uid)
-        p["stats"][stat.value] = max(1, hodnota)
-        _save(data)
-        await interaction.response.send_message(
-            f"✅ **{stat.value}** hráče {member.mention} nastaven na **{hodnota}**.",
-            ephemeral=True,
-        )
+        try:
+            data = _load()
+            uid  = str(member.id)
+            p    = _profile(data, uid)
+            p["stats"][stat.value] = max(1, hodnota)
+            _save(data)
+            await interaction.response.send_message(
+                f"✅ **{stat.value}** hráče {member.mention} nastaven na **{hodnota}**.",
+                ephemeral=True,
+            )
+        except Exception as e:
+            logger.exception(f"[admin_stats] Error: {e}")
+            await interaction.response.send_message(
+                f"❌ Chyba: {str(e)[:100]}",
+                ephemeral=True
+            )
 
 
 async def setup(bot):
