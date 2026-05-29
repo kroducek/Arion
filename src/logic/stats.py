@@ -176,16 +176,18 @@ _SP_EMOJI = {"STR": "💪", "DEX": "🤸", "INS": "👁️", "INT": "🧠", "CHA
 
 
 class SpendSPView(discord.ui.View):
-    """Interaktivní view pro rozdělování SP — 6 tlačítek, jedno na stat."""
+    """Interaktivní view pro rozdělování SP — 6 tlačítek, 2 řádky."""
 
     def __init__(self, user_id: int):
         super().__init__(timeout=300)
         self.user_id = user_id
-        for stat in STAT_LABELS:
+        for idx, stat in enumerate(STAT_LABELS):
+            # Discord max 5 buttonů na řádek — prvních 5 v řádku 0, poslední v řádku 1
+            row = 0 if idx < 5 else 1
             btn = discord.ui.Button(
                 label=f"{_SP_EMOJI.get(stat, '')} {stat}",
                 style=discord.ButtonStyle.blurple,
-                row=0,
+                row=row,
             )
             btn.callback = self._make_cb(stat)
             self.add_item(btn)
