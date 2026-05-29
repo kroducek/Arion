@@ -14,7 +14,7 @@ from src.utils.card_image import apply_frame_to_card
 from src.utils.json_utils import load_json, save_json
 from src.utils.embeds import create_error_embed
 
-CARDS_WORK = os.path.join(_data, "cards_work.json")
+CARDS_WORK = _data("cards_work.json")
 
 # Rarities
 RARITIES = {
