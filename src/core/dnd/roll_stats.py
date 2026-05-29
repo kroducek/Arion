@@ -3,8 +3,11 @@ from discord.ext import commands
 from discord import app_commands
 import json
 import os
+import threading
 
 from src.utils.paths import ROLL_STATS as ROLL_STATS_FILE
+
+_lock = threading.Lock()
 
 
 # ── Datová vrstva ──────────────────────────────────────────────────────────────
@@ -21,7 +24,8 @@ from src.utils.paths import ROLL_STATS as ROLL_STATS_FILE
 #   }
 # }
 
-def load_stats() -> dict:
+def _load_unsafe() -> dict:
+    """Načte data bez zámku — volat pouze uvnitř _lock bloku."""
     if not os.path.exists(ROLL_STATS_FILE):
         return {}
     try:
@@ -30,47 +34,64 @@ def load_stats() -> dict:
     except Exception:
         return {}
 
-def save_stats(data: dict):
+def _save_unsafe(data: dict):
+    """Uloží data bez zámku — volat pouze uvnitř _lock bloku."""
     try:
         with open(ROLL_STATS_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"[roll_stats] Chyba při ukládání: {e}")
 
+def load_stats() -> dict:
+    """Thread-safe načtení statistik hodů."""
+    with _lock:
+        return _load_unsafe()
+
+def save_stats(data: dict):
+    """Thread-safe uložení statistik hodů."""
+    with _lock:
+        _save_unsafe(data)
+
 def record_roll(guild_id: int, user_id: int, *, nat20: bool, nat1: bool, hit24: bool, is_check: bool = False, is_d20: bool = False) -> dict:
-    """Zaznamená výsledek hodu. Vrátí aktualizovaný stats dict hráče."""
-    data = load_stats()
-    gid  = str(guild_id)
-    uid  = str(user_id)
-    data.setdefault(gid, {}).setdefault(uid, {"nat20": 0, "nat1": 0, "hits24": 0, "total": 0, "checks": 0})
-    s = data[gid][uid]
-    s.setdefault("checks", 0)
-    s.setdefault("streak_nat20", 0)
-    s.setdefault("streak_nat1", 0)
-    s["total"]  += 1
-    if is_check: s["checks"] += 1
-    if nat20:    s["nat20"]  += 1
-    if nat1:     s["nat1"]   += 1
-    if hit24:    s["hits24"] += 1
-    if is_d20:
-        if nat20:
-            s["streak_nat20"] += 1
-            s["streak_nat1"]   = 0
-        elif nat1:
-            s["streak_nat1"]  += 1
-            s["streak_nat20"]  = 0
-        else:
-            s["streak_nat20"] = 0
-            s["streak_nat1"]  = 0
-    save_stats(data)
-    return s
+    """Thread-safe zaznamená výsledek hodu. Vrátí aktualizovaný stats dict hráče."""
+    gid = str(guild_id)
+    uid = str(user_id)
+    with _lock:
+        data = _load_unsafe()
+        data.setdefault(gid, {}).setdefault(uid, {"nat20": 0, "nat1": 0, "hits24": 0, "total": 0, "checks": 0})
+        s = data[gid][uid]
+        s.setdefault("checks", 0)
+        s.setdefault("streak_nat20", 0)
+        s.setdefault("streak_nat1", 0)
+        s["total"]  += 1
+        if is_check: s["checks"] += 1
+        if nat20:    s["nat20"]  += 1
+        if nat1:     s["nat1"]   += 1
+        if hit24:    s["hits24"] += 1
+        if is_d20:
+            if nat20:
+                s["streak_nat20"] += 1
+                s["streak_nat1"]   = 0
+            elif nat1:
+                s["streak_nat1"]  += 1
+                s["streak_nat20"]  = 0
+            else:
+                s["streak_nat20"] = 0
+                s["streak_nat1"]  = 0
+        _save_unsafe(data)
+        return dict(s)  # vrátíme kopii aby nebylo sdílení reference
 
 def get_stats(guild_id: int, user_id: int) -> dict:
-    data = load_stats()
+    """Thread-safe načtení statistik jednoho hráče."""
+    with _lock:
+        data = _load_unsafe()
     return data.get(str(guild_id), {}).get(str(user_id), {"nat20": 0, "nat1": 0, "hits24": 0, "total": 0})
 
 def get_all_stats(guild_id: int) -> dict:
-    return load_stats().get(str(guild_id), {})
+    """Thread-safe načtení statistik celého guildu."""
+    with _lock:
+        data = _load_unsafe()
+    return data.get(str(guild_id), {})
 
 
 # ── Cog ────────────────────────────────────────────────────────────────────────

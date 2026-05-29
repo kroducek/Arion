@@ -358,6 +358,23 @@ class Profile(commands.Cog):
             lines.append(f"{MEM_EMO} **Poslední vzpomínka**")
             lines.append(f"*{mem}*")
 
+        # Aktivní karta (Cards 2.0)
+        active_card_id = profile.get("active_card_id")
+        if active_card_id:
+            try:
+                from src.utils.paths import CARDS_INVENTORY
+                cards_inv = load_json(CARDS_INVENTORY, {})
+                card = cards_inv.get(active_card_id)
+                if card:
+                    print_num = card.get("print_number", "?")
+                    qual = card.get("quality", "normal")
+                    qual_icon = {"shiny": "✨", "gold": "🥇", "normal": "⚪", "damaged": "💔"}.get(qual, "⚪")
+                    lines.append("")
+                    lines.append(f"🎴 **Reprezentativní karta**")
+                    lines.append(f"*{card.get('name')}  ·  Print #{print_num}  ·  {qual_icon} {qual.capitalize()}  ·  ID: `{active_card_id}`*")
+            except Exception:
+                pass
+
         # ── Embed ──────────────────────────────────────────────────────────────
         embed = discord.Embed(
             title=f"🪪  Průkaz dobrodruha: {char_name}",

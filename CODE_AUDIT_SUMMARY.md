@@ -69,6 +69,7 @@ Kompletní code review a error handling refactor. Vyřešeno **10 kritických pr
 | `start.py` | Žádné error handling | Try/except, delay | MEDIUM |
 | `src/logic/profile.py` | Duplikátní funkce | Odstraněn `load_economy_data()` | LOW |
 | `src/logic/roll.py` | Přímé json.load | Refaktoring na `load_json()` | MEDIUM |
+| `src/core/dnd/roll_stats.py` | Přímé json.load | Refaktoring na thread-safe operace | MEDIUM |
 | `src/logic/economy.py` | Generic wrappery | Specifické _load_economy() | LOW |
 | `src/core/dnd/achievements.py` | Manuální JSON | Refaktoring na `load_json()` | MEDIUM |
 | `src/core/dnd/perks.py` | Manuální JSON | Refaktoring na `load_json()` | MEDIUM |
@@ -98,7 +99,6 @@ Kompletní code review a error handling refactor. Vyřešeno **10 kritických pr
 - [ ] Type hints na všechny cogy (`from typing import...`)
 
 ### P2 — Příští měsíc
-- [ ] Unit testy pro `json_utils.py` a `audit.py`
 - [ ] Refaktoring: jeden bot místo dvou (zmenšit DND cogs)
 - [ ] Web dashboard s admin panelem
 
@@ -125,9 +125,10 @@ Kompletní code review a error handling refactor. Vyřešeno **10 kritických pr
 
 ## ✨ Přesunuto do Hotovo
 
-- ✅ JSON thread-safety
+- ✅ JSON thread-safety (včetně roll_stats.py)
 - ✅ Error handling & logging
 - ✅ Code cleanup (no duplicates)
 - ✅ All imports verified
+- ✅ Unit testy pro kritické utility (`tests/test_json_utils.py`, `tests/test_audit.py`)
 
 **Status**: Ready for testing ✨

@@ -34,6 +34,8 @@ def save_json(path: str, data: Any) -> None:
     """Bezpečně uloží data do JSON souboru. Vytvoří adresář pokud neexistuje."""
     lock = _get_lock(path)
     with lock:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        dir_name = os.path.dirname(path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)

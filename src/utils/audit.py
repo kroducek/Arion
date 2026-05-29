@@ -6,7 +6,7 @@ Thread-safe s lockingem.
 import json
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.utils.paths import data as _data
 from src.utils.logger import get_logger
@@ -37,7 +37,9 @@ def _load() -> list:
 def _save(entries: list):
     """Thread-safely uloží audit log."""
     try:
-        os.makedirs(os.path.dirname(AUDIT_LOG), exist_ok=True)
+        dir_name = os.path.dirname(AUDIT_LOG)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
         with open(AUDIT_LOG, "w", encoding="utf-8") as f:
             json.dump(entries[-MAX_ENTRIES:], f, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -56,7 +58,7 @@ def log_action(action: str, actor: str, target: str, detail: str = ""):
         try:
             entries = _load()
             entries.append({
-                "ts":     datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+                "ts":     datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
                 "action": action,
                 "actor":  actor,
                 "target": target,

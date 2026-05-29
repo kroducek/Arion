@@ -1,4 +1,4 @@
-﻿"""Sběratelský systém karet pro ArionBot."""
+"""Sběratelský systém karet pro ArionBot."""
 
 import discord
 import os
@@ -9,10 +9,12 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 
-from src.utils.paths import CARDS_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES, FRAMES_INVENTORY, FRAMES_DIR
+from src.utils.paths import CARDS_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES, FRAMES_INVENTORY, FRAMES_DIR, data as _data
 from src.utils.card_image import apply_frame_to_card
 from src.utils.json_utils import load_json, save_json
 from src.utils.embeds import create_error_embed
+
+CARDS_WORK = os.path.join(_data, "cards_work.json")
 
 # Rarities
 RARITIES = {
@@ -23,11 +25,27 @@ RARITIES = {
     "legendary": {"color": 0xFFD700, "emoji": "🟡"}
 }
 
+# Qualities (Kvalita karet)
+QUALITIES = {
+    "shiny": {"name": "Shiny", "emoji": "✨", "color": 0xFFD700},
+    "gold": {"name": "Gold", "emoji": "🥇", "color": 0xFFB142},
+    "normal": {"name": "Normal", "emoji": "⚪", "color": 0x95A5A6},
+    "damaged": {"name": "Damaged", "emoji": "💔", "color": 0x8B0000}
+}
+
+# Expedice
+EXPEDITIONS = {
+    "hlidka": {"name": "Hlídka ve městě", "reward": 2, "hours": 8, "emoji": "🛡️"},
+    "lov": {"name": "Lov monster", "reward": 5, "hours": 24, "emoji": "🐺"},
+    "gilda": {"name": "Úkol pro gildu", "reward": 10, "hours": 48, "emoji": "📜"}
+}
+
 # Collections / Sady
 COLLECTIONS = {
     "unworthy": {"color": 0x2C2F33, "emoji": "💀", "description": "Nevolaní — padlí a zapomenutí"},
     "worthy":   {"color": 0x99AAB5, "emoji": "⚔️",  "description": "Hrdinové Aurionisu"},
     "queen":    {"color": 0xFF69B4, "emoji": "👑",  "description": "Královna a její dvůr"},
+    "chosen":   {"color": 0xE74C3C, "emoji": "🔥",  "description": "Vyvolení — ti, jenž nesou osud"}
 }
 
 SEED_CARDS = [
@@ -51,6 +69,20 @@ SEED_CARDS = [
         "description": "Kdo ví co za tajemství v sobě skrývá.",
         "image": "unworthy_kaiser_vexx.png",
         "collection": "unworthy"
+    },
+    {
+        "id": 4,
+        "name": "Nyx",
+        "description": "Vyvolená postava, která promlouvá skrze stíny.",
+        "image": "chosen_one_nyx.png",
+        "collection": "chosen"
+    },
+    {
+        "id": 5,
+        "name": "Darrin",
+        "description": "Hrdina nesoucí břímě vyvoleného.",
+        "image": "chosen_one_darrin.png",
+        "collection": "chosen"
     }
 ]
 
@@ -154,11 +186,29 @@ class Cards(commands.Cog):
         owner_id = str(owner.id) if owner else None
         inventory = load_json(CARDS_INVENTORY)
         created = []
+        
+        # Zjisti nejvyšší existující print number pro tuto kartu
+        max_print = 0
+        for c in inventory.values():
+            if c.get("card_id") == card_id:
+                p = c.get("print_number", 0)
+                if p > max_print:
+                    max_print = p
 
-        for _ in range(count):
+        for i in range(count):
             unique_id = generate_unique_id()
             while unique_id in inventory:
                 unique_id = generate_unique_id()
+
+            # Výběr kvality
+            q_roll = random.random()
+            if q_roll < 0.05: quality = "shiny"
+            elif q_roll < 0.20: quality = "gold"
+            elif q_roll < 0.70: quality = "normal"
+            else: quality = "damaged"
+
+            max_print += 1
+            print_number = max_print
 
             card = {
                 "card_id": card_id,
@@ -167,6 +217,8 @@ class Cards(commands.Cog):
                 "image": card_template.get("image"),
                 "collection": card_template.get("collection"),
                 "rarity": rarity,
+                "quality": quality,
+                "print_number": print_number,
                 "owner_id": owner_id,
                 "frame": None,
                 "created_at": datetime.now().isoformat()
@@ -213,10 +265,15 @@ class Cards(commands.Cog):
 
         for i, (unique_id, card) in enumerate(list(user_cards.items())[:15]):
             rarity_emoji = RARITIES.get(card.get("rarity", "unworthy"), {}).get("emoji", "⚪")
+            qual = card.get("quality", "normal")
+            qual_data = QUALITIES.get(qual, QUALITIES["normal"])
+            qual_text = f"{qual_data['emoji']} {qual_data['name']}"
+            
+            print_num = card.get("print_number", "?")
             frame_text = f"\nRámeček: {card.get('frame')}" if card.get("frame") else ""
             embed.add_field(
-                name=f"{i+1}. {card.get('name')}",
-                value=f"ID: {unique_id}\nRarita: {card.get('rarity')} {rarity_emoji}{frame_text}",
+                name=f"{i+1}. {card.get('name')} (Print #{print_num})",
+                value=f"ID: `{unique_id}`\nRarita: {card.get('rarity').capitalize()} {rarity_emoji}  ·  Kvalita: {qual_text}{frame_text}",
                 inline=False
             )
 
@@ -286,7 +343,17 @@ class Cards(commands.Cog):
                 value=f"{rarity_data.get('emoji', '⚪')} {rarity.capitalize()}",
                 inline=True
             )
-            embed.add_field(name="\u200b", value="\u200b", inline=True)
+            
+            qual = card.get("quality", "normal")
+            qual_data = QUALITIES.get(qual, QUALITIES["normal"])
+            embed.add_field(
+                name="💎 Kvalita",
+                value=f"{qual_data['emoji']} {qual_data['name']}",
+                inline=True
+            )
+            
+            print_num = card.get("print_number", "?")
+            embed.add_field(name="🖨️ Tisk", value=f"**#{print_num}**", inline=True)
 
             embed.add_field(name="👤 Vlastník", value=owner_text, inline=True)
             embed.add_field(name="🖼️ Rámeček", value=selected_frame or "Žádný", inline=True)
@@ -594,6 +661,236 @@ class Cards(commands.Cog):
             color=0xFF0000
         )
         
+        await interaction.response.send_message(embed=embed)
+
+    @cards_group.command(name="set_profile", description="Nastaví vybranou kartu jako reprezentativní na tvém RPG profilu")
+    @app_commands.describe(unique_id="Unikátní ID karty")
+    async def set_profile_card(self, interaction: discord.Interaction, unique_id: str):
+        """Nastaví profilovou kartu."""
+        uid = str(interaction.user.id)
+        inventory = load_json(CARDS_INVENTORY)
+        
+        if unique_id not in inventory:
+            await interaction.response.send_message(f"Karta s ID `{unique_id}` neexistuje.", ephemeral=True)
+            return
+            
+        card = inventory[unique_id]
+        if card.get("owner_id") != uid:
+            await interaction.response.send_message("Tato karta ti nepatří.", ephemeral=True)
+            return
+            
+        from src.logic.profile import _load_profiles as p_load, _save_profiles as p_save
+        profiles = p_load()
+        if uid not in profiles:
+            profiles[uid] = {}
+            
+        profiles[uid]["active_card_id"] = unique_id
+        p_save(profiles)
+        
+        await interaction.response.send_message(f"✅ Karta **{card.get('name')}** (Print #{card.get('print_number', '?')}) byla nastavena jako tvá profilová karta!", ephemeral=True)
+
+    @cards_group.command(name="burn", description="Spálit kartu a získat Hvězdný prach")
+    @app_commands.describe(unique_id="Unikátní ID karty")
+    async def burn_card(self, interaction: discord.Interaction, unique_id: str):
+        """Spálí kartu hráče a přidá mu Hvězdný prach do inventáře."""
+        uid = str(interaction.user.id)
+        inventory = load_json(CARDS_INVENTORY)
+        
+        if unique_id not in inventory:
+            await interaction.response.send_message(
+                f"Karta s ID `{unique_id}` neexistuje.", 
+                ephemeral=True
+            )
+            return
+            
+        card = inventory[unique_id]
+        if card.get("owner_id") != uid:
+            await interaction.response.send_message(
+                embed=create_error_embed("❌ Přístup odepřen", "Tato karta ti nepatří."), 
+                ephemeral=True
+            )
+            return
+
+        works = load_json(CARDS_WORK, default={})
+        user_work = works.get(uid)
+        if user_work and unique_id in user_work.get("cards", []):
+            await interaction.response.send_message(
+                embed=create_error_embed("❌ Nelze spálit", "Karta je momentálně na výpravě! Nejprve si vyzvedni odměnu."), 
+                ephemeral=True
+            )
+            return
+
+        # Odstranění z profilu, pokud je to aktivní karta
+        from src.logic.profile import _load_profiles as p_load, _save_profiles as p_save
+        profiles = p_load()
+        if uid in profiles and profiles[uid].get("active_card_id") == unique_id:
+            profiles[uid]["active_card_id"] = None
+            p_save(profiles)
+
+        rarity = card.get("rarity", "unworthy")
+        dust_amounts = {
+            "unworthy": 1,
+            "common": 2,
+            "rare": 5,
+            "epic": 15,
+            "legendary": 50
+        }
+        base_dust = dust_amounts.get(rarity, 1)
+        
+        qual = card.get("quality", "normal")
+        qual_mults = {
+            "shiny": 2.0,
+            "gold": 1.5,
+            "normal": 1.0,
+            "damaged": 0.5
+        }
+        mult = qual_mults.get(qual, 1.0)
+        
+        total_dust = max(1, int(base_dust * mult))
+        card_name = card.get("name")
+        
+        # Přidání Hvězdného prachu do inventáře
+        from src.logic.inventory import _load_profiles, _save_profiles, _ensure_inv_fields, _find_inv_entry
+        inv_profiles = _load_profiles()
+        profile = inv_profiles.get(uid)
+        if not profile:
+            profile = {"xp": 0, "level": 1, "balance": 0, "bank": 0}
+        profile = _ensure_inv_fields(profile)
+        
+        entry = _find_inv_entry(profile["inventory"], "Hvězdný prach")
+        if entry and entry["type"] == "free":
+            entry["qty"] = entry.get("qty", 1) + total_dust
+        else:
+            profile["inventory"].append({"type": "free", "name": "Hvězdný prach", "qty": total_dust})
+            
+        inv_profiles[uid] = profile
+        _save_profiles(inv_profiles)
+        
+        # Smaž kartu
+        del inventory[unique_id]
+        save_json(CARDS_INVENTORY, inventory)
+        
+        embed = discord.Embed(
+            title="🔥 Karta spálena",
+            description=f"Spálil jsi **{card_name}** (ID: `{unique_id}`).\nDuše karty se rozpadla na **{total_dust}x Hvězdný prach**.",
+            color=0xFF8C00
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @cards_group.command(name="work_send", description="Vyšle až 3 karty na výpravu za zlatem")
+    @app_commands.describe(
+        vyprava="Typ výpravy",
+        card1="ID první karty",
+        card2="ID druhé karty (volitelné)",
+        card3="ID třetí karty (volitelné)"
+    )
+    @app_commands.choices(vyprava=[
+        app_commands.Choice(name="Hlídka ve městě (8h / +2 Zlaté)", value="hlidka"),
+        app_commands.Choice(name="Lov monster (24h / +5 Zlatých)", value="lov"),
+        app_commands.Choice(name="Úkol pro gildu (48h / +10 Zlatých)", value="gilda")
+    ])
+    async def work_send(self, interaction: discord.Interaction, vyprava: str, card1: str, card2: str = None, card3: str = None):
+        uid = str(interaction.user.id)
+        works = load_json(CARDS_WORK, default={})
+        
+        if uid in works:
+            await interaction.response.send_message("Již máš aktivní výpravu! Zkontroluj ji přes `/cards work_status`.", ephemeral=True)
+            return
+            
+        card_ids = [c for c in [card1, card2, card3] if c]
+        if len(set(card_ids)) != len(card_ids):
+            await interaction.response.send_message("Nemůžeš poslat stejnou kartu víckrát!", ephemeral=True)
+            return
+            
+        inventory = load_json(CARDS_INVENTORY)
+        for cid in card_ids:
+            if cid not in inventory or inventory[cid].get("owner_id") != uid:
+                await interaction.response.send_message(f"Karta s ID `{cid}` ti nepatří nebo neexistuje.", ephemeral=True)
+                return
+                
+        exp = EXPEDITIONS.get(vyprava)
+        if not exp:
+            return
+            
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        end_time = now + timedelta(hours=exp["hours"])
+        
+        works[uid] = {
+            "type": vyprava,
+            "cards": card_ids,
+            "start_time": now.isoformat(),
+            "end_time": end_time.isoformat()
+        }
+        save_json(CARDS_WORK, works)
+        
+        embed = discord.Embed(
+            title=f"{exp['emoji']} Výprava zahájena: {exp['name']}",
+            description=f"Vyslal jsi **{len(card_ids)}** karet na výpravu.\nNávrat: <t:{int(end_time.timestamp())}:R>",
+            color=0x3498db
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @cards_group.command(name="work_status", description="Stav tvé aktuální výpravy")
+    async def work_status(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        works = load_json(CARDS_WORK, default={})
+        
+        if uid not in works:
+            await interaction.response.send_message("Nemáš žádnou aktivní výpravu. Použij `/cards work_send`.", ephemeral=True)
+            return
+            
+        work = works[uid]
+        exp = EXPEDITIONS.get(work["type"])
+        from datetime import datetime
+        end_time = datetime.fromisoformat(work["end_time"])
+        
+        embed = discord.Embed(
+            title=f"{exp['emoji']} Probíhá výprava: {exp['name']}",
+            description=f"Počet karet: **{len(work['cards'])}**\nZisk na kartu: **{exp['reward']}** zlaťáků\n"
+                        f"Návrat: <t:{int(end_time.timestamp())}:R>",
+            color=0x3498db
+        )
+        if datetime.now() >= end_time:
+            embed.color = 0x2ecc71
+            embed.description += "\n\n✅ **Výprava skončila!** Použij `/cards work_claim` pro zisk odměny."
+            
+        await interaction.response.send_message(embed=embed)
+
+    @cards_group.command(name="work_claim", description="Vyzvednout odměnu z dokončené výpravy")
+    async def work_claim(self, interaction: discord.Interaction):
+        uid = str(interaction.user.id)
+        works = load_json(CARDS_WORK, default={})
+        
+        if uid not in works:
+            await interaction.response.send_message("Nemáš žádnou aktivní výpravu.", ephemeral=True)
+            return
+            
+        work = works[uid]
+        from datetime import datetime
+        end_time = datetime.fromisoformat(work["end_time"])
+        
+        if datetime.now() < end_time:
+            await interaction.response.send_message(f"Výprava ještě neskončila! Návrat: <t:{int(end_time.timestamp())}:R>", ephemeral=True)
+            return
+            
+        exp = EXPEDITIONS.get(work["type"])
+        reward = exp["reward"] * len(work["cards"])
+        
+        # Add to economy
+        from src.logic.economy import load_economy, save_economy
+        eco = load_economy()
+        eco[uid] = eco.get(uid, 0) + reward
+        save_economy(eco)
+        
+        del works[uid]
+        save_json(CARDS_WORK, works)
+        
+        embed = discord.Embed(
+            title="💰 Výprava dokončena",
+            description=f"Tvé karty se v pořádku vrátily z **{exp['name']}**.\n\nZískáváš **{reward} zlaťáků**!",
+            color=0xFFD700
+        )
         await interaction.response.send_message(embed=embed)
 
 async def setup(bot):
