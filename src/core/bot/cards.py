@@ -55,9 +55,11 @@ QUALITY_MULTIPLIERS = {
 }
 
 EXPEDITIONS = {
-    "hlidka": {"name": "Hlídka ve městě", "reward":  2, "hours":  8, "emoji": "🛡️"},
-    "lov":    {"name": "Lov monster",     "reward":  5, "hours": 24, "emoji": "🐺"},
-    "gilda":  {"name": "Úkol pro gildu",  "reward": 10, "hours": 48, "emoji": "📜"},
+    "hlidka": {"name": "Hlídka ve městě",      "reward":  5, "hours":  6, "emoji": "🛡️",  "description": "Střežení městských bran"},
+    "tabor":  {"name": "Táborový kemp",       "reward":  8, "hours": 12, "emoji": "🏕️", "description": "Řídící tábor v pustině"},
+    "lov":    {"name": "Lov monster",         "reward": 12, "hours": 20, "emoji": "🐺", "description": "Hon na nebezpečné bestie"},
+    "gilda":  {"name": "Úkol pro gildu",      "reward": 20, "hours": 36, "emoji": "📜", "description": "Speciální úkol pro gildu"},
+    "bitva":  {"name": "Velká bitva",         "reward": 35, "hours": 48, "emoji": "⚔️",  "description": "Cesta na válečné bojiště — vysoké riziko!"},
 }
 
 COLLECTIONS = {
@@ -1070,15 +1072,21 @@ class Cards(commands.Cog):
             end_time = datetime.fromisoformat(work["end_time"])
             finished = datetime.now() >= end_time
 
+            # Výpočet očekávané odměny
+            card_count = len(work["cards"])
+            base_reward = exp["reward"] * card_count
+            bonus_mult = 1.25 if card_count >= 3 else (1.10 if card_count == 2 else 1.0)
+            expected_reward = int(base_reward * bonus_mult)
+            
             embed = discord.Embed(
                 title=f"{exp['emoji']} Probíhá výprava: {exp['name']}",
-                description=(
-                    f"Počet karet: **{len(work['cards'])}**\n"
-                    f"Zisk na kartu: **{exp['reward']}** zlaťáků\n"
-                    f"Návrat: <t:{int(end_time.timestamp())}:R>"
-                ),
+                description=f"*{exp['description']}*",
                 color=0x2ecc71 if finished else 0x3498db,
             )
+            embed.add_field(name="🎴 Počet karet", value=f"**{card_count}**", inline=True)
+            embed.add_field(name="💵 Odměna/kartu", value=f"**{exp['reward']}** zl", inline=True)
+            embed.add_field(name="✨ Očekávaný zisk", value=f"**{expected_reward}** zl" + (f" (+{int((bonus_mult-1.0)*100)}%)" if bonus_mult > 1.0 else ""), inline=True)
+            embed.add_field(name="⏰ Návrat", value=f"<t:{int(end_time.timestamp())}:R>", inline=False)
 
             inv = load_json(CARDS_INVENTORY, default={})
             cards_text = "\n".join(
@@ -1096,16 +1104,16 @@ class Cards(commands.Cog):
         else:
             embed = discord.Embed(
                 title="⚔️ Výpravné centrum",
-                description="Nemáš žádnou aktivní výpravu. Vyšli karty pomocí `/cards work_send`.\n\u200b",
+                description="Nemáš žádnou aktivní výpravu. Vyšli karty pomocí `/cards work_send`.\n🎁 **Bonus: Pošli více karet = více zisku!** (+10% za 2, +25% za 3)\n\u200b",
                 color=0x3498db,
             )
             for exp_id, exp in EXPEDITIONS.items():
                 embed.add_field(
-                    name=f"{exp['emoji']}  {exp['name']}",
-                    value=f"Trvání: **{exp['hours']}h**  ·  Odměna: **+{exp['reward']}** zl./kartu\n`/cards work_send {exp_id}`",
+                    name=f"{exp['emoji']} {exp['name']}",
+                    value=f"⏱️ {exp['hours']}h  •  💵 +{exp['reward']} zl/kartu\n*{exp['description']}*\n`/cards work_send {exp_id}`",
                     inline=False,
                 )
-            embed.set_footer(text="Každá karta přináší svůj příděl odměny zvlášť.")
+            embed.set_footer(text="Delší expedice = vyšší odměny. Pošli až 3 karty pro bonus!")
 
         await interaction.response.send_message(embed=embed)
 
@@ -1117,9 +1125,11 @@ class Cards(commands.Cog):
         card3="ID třetí karty (volitelné)",
     )
     @app_commands.choices(vyprava=[
-        app_commands.Choice(name="Hlídka ve městě (8h / +2 Zlaté)",   value="hlidka"),
-        app_commands.Choice(name="Lov monster (24h / +5 Zlatých)",    value="lov"),
-        app_commands.Choice(name="Úkol pro gildu (48h / +10 Zlatých)", value="gilda"),
+        app_commands.Choice(name="🛡️ Hlídka (6h / +5 Zl)",          value="hlidka"),
+        app_commands.Choice(name="🏕️ Táborový kemp (12h / +8 Zl)",   value="tabor"),
+        app_commands.Choice(name="🐺 Lov monster (20h / +12 Zl)",    value="lov"),
+        app_commands.Choice(name="📜 Úkol pro gildu (36h / +20 Zl)", value="gilda"),
+        app_commands.Choice(name="⚔️ Velká bitva (48h / +35 Zl)",    value="bitva"),
     ])
     async def work_send(
         self,
@@ -1168,15 +1178,25 @@ class Cards(commands.Cog):
         save_json(CARDS_WORK, works)
 
         card_names = ", ".join(inv[cid].get("name", cid) for cid in card_ids)
+        
+        # Výpočet očekávané odměny s bonusem
+        base_reward = exp['reward'] * len(card_ids)
+        bonus_mult = 1.25 if len(card_ids) >= 3 else (1.10 if len(card_ids) == 2 else 1.0)
+        expected_reward = int(base_reward * bonus_mult)
+        bonus_text = ""
+        if bonus_mult > 1.0:
+            bonus_text = f" (+ {int((bonus_mult - 1.0) * 100)}% bonus!)"
+        
         embed = discord.Embed(
             title=f"{exp['emoji']} Výprava zahájena: {exp['name']}",
-            description=(
-                f"Vyslal jsi **{len(card_ids)}** karet na výpravu.\n"
-                f"Karty: {card_names}\n"
-                f"Návrat: <t:{int(end_time.timestamp())}:R>"
-            ),
+            description=f"*{exp['description']}*",
             color=0x3498db,
         )
+        embed.add_field(name="🎴 Vyslané karty", value=card_names, inline=False)
+        embed.add_field(name="⏱️ Trvání", value=f"**{exp['hours']}h**", inline=True)
+        embed.add_field(name="💵 Očekávaná odměna", value=f"**{expected_reward}** zl{bonus_text}", inline=True)
+        embed.add_field(name="⏰ Návrat", value=f"<t:{int(end_time.timestamp())}:R>", inline=False)
+        embed.set_footer(text="Vyzvednout odměnu si můžeš pomocí /cards work_claim")
         await interaction.response.send_message(embed=embed)
 
     @cards_group.command(name="work_status", description="Stav tvé aktuální výpravy")
@@ -1202,17 +1222,28 @@ class Cards(commands.Cog):
         end_time = datetime.fromisoformat(work["end_time"])
         finished = datetime.now() >= end_time
 
+        # Výpočet očekávané odměny
+        card_count = len(work["cards"])
+        base_reward = exp["reward"] * card_count
+        bonus_mult = 1.25 if card_count >= 3 else (1.10 if card_count == 2 else 1.0)
+        expected_reward = int(base_reward * bonus_mult)
+
         embed = discord.Embed(
             title=f"{exp['emoji']} Probíhá výprava: {exp['name']}",
-            description=(
-                f"Počet karet: **{len(work['cards'])}**\n"
-                f"Zisk na kartu: **{exp['reward']}** zlaťáků\n"
-                f"Návrat: <t:{int(end_time.timestamp())}:R>"
-            ),
+            description=f"*{exp['description']}*",
             color=0x2ecc71 if finished else 0x3498db,
         )
+        embed.add_field(name="🎴 Počet karet", value=f"**{card_count}**", inline=True)
+        embed.add_field(name="💵 Odměna/kartu", value=f"**{exp['reward']}** zl", inline=True)
+        embed.add_field(name="✨ Očekávaný zisk", value=f"**{expected_reward}** zl" + (f" (+{int((bonus_mult-1.0)*100)}%)" if bonus_mult > 1.0 else ""), inline=True)
+        embed.add_field(name="⏰ Návrat", value=f"<t:{int(end_time.timestamp())}:R>", inline=False)
+        
         if finished:
-            embed.description += "\n\n✅ **Výprava skončila!** Použij `/cards work_claim` pro vyzvednutí odměny."
+            embed.add_field(
+                name="✅ Výprava skončila!",
+                value="Použij `/cards work_claim` pro vyzvednutí odměny.",
+                inline=False,
+            )
 
         await interaction.response.send_message(embed=embed)
 
@@ -1241,7 +1272,18 @@ class Cards(commands.Cog):
             )
             return
 
-        reward = exp["reward"] * len(work["cards"])
+        # Výpočet odměny s bonusem za počet karet
+        card_count = len(work["cards"])
+        base_reward = exp["reward"] * card_count
+        
+        # Bonus: 10% za 2 karty, 25% za 3 karty
+        bonus_multiplier = 1.0
+        if card_count == 2:
+            bonus_multiplier = 1.10
+        elif card_count >= 3:
+            bonus_multiplier = 1.25
+        
+        reward = int(base_reward * bonus_multiplier)
 
         eco = load_economy()
         eco[uid] = eco.get(uid, 0) + reward
@@ -1250,14 +1292,19 @@ class Cards(commands.Cog):
         del works[uid]
         save_json(CARDS_WORK, works)
 
+        # Build embed s detaily
         embed = discord.Embed(
             title="💰 Výprava dokončena",
-            description=(
-                f"Tvé karty se v pořádku vrátily z **{exp['name']}**.\n\n"
-                f"Získáváš **{reward} zlaťáků**!"
-            ),
+            description=f"Tvé karty se v pořádku vrátily z **{exp['name']}**!",
             color=0xFFD700,
         )
+        embed.add_field(name="🎴 Počet karet", value=f"**{card_count}**", inline=True)
+        embed.add_field(name="💵 Odměna na kartu", value=f"**{exp['reward']}** zl", inline=True)
+        if bonus_multiplier > 1.0:
+            bonus_pct = int((bonus_multiplier - 1.0) * 100)
+            embed.add_field(name="🎁 Bonus", value=f"+{bonus_pct}% (víc karet = víc zisku!)", inline=True)
+        embed.add_field(name="✨ Celkem", value=f"**{reward} zlaťáků**", inline=False, )
+        embed.set_footer(text=f"Základní: {int(base_reward)} zl" if bonus_multiplier > 1.0 else "")
         await interaction.response.send_message(embed=embed)
 
 
