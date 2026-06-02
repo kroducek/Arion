@@ -24,7 +24,7 @@ CARDS_WORK = _data("cards_work.json")
 # ---------------------------------------------------------------------------
 
 RARITIES = {
-    "unworthy":  {"color": 0x808080, "emoji": "⚪"},
+    "uncommon":  {"color": 0x808080, "emoji": "⚪"},
     "common":    {"color": 0xFFFFFF, "emoji": "🟢"},
     "rare":      {"color": 0x0000FF, "emoji": "🔵"},
     "epic":      {"color": 0x800080, "emoji": "🟣"},
@@ -40,7 +40,7 @@ QUALITIES = {
 
 # Hodnoty Hvězdného prachu — sdílené mezi /burn a /info
 DUST_VALUES = {
-    "unworthy":  1,
+    "uncommon":  1,
     "common":    2,
     "rare":      5,
     "epic":     15,
@@ -162,7 +162,7 @@ class Cards(commands.Cog):
         count="Kolik kopií vytisknout (výchozí: 1)",
     )
     @app_commands.choices(rarity=[
-        app_commands.Choice(name="Unworthy",  value="unworthy"),
+        app_commands.Choice(name="Uncommon",  value="uncommon"),
         app_commands.Choice(name="Common",    value="common"),
         app_commands.Choice(name="Rare",      value="rare"),
         app_commands.Choice(name="Epic",      value="epic"),
@@ -427,8 +427,8 @@ class Cards(commands.Cog):
         )
 
         for i, (unique_id, card) in enumerate(list(user_cards.items())[:15]):
-            rarity = card.get("rarity", "unworthy")
-            rarity_emoji = RARITIES.get(rarity, RARITIES["unworthy"])["emoji"]
+            rarity = card.get("rarity", "uncommon")
+            rarity_emoji = RARITIES.get(rarity, RARITIES["uncommon"])["emoji"]
             qual = card.get("quality", "normal")
             qual_data = QUALITIES.get(qual, QUALITIES["normal"])
             frame_text = f"\nRámeček: {card['frame']}" if card.get("frame") else ""
@@ -480,8 +480,8 @@ class Cards(commands.Cog):
             image_bytes = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
             file = discord.File(image_bytes, filename="card.png")
 
-            rarity = card.get("rarity", "unworthy")
-            rarity_data = RARITIES.get(rarity, RARITIES["unworthy"])
+            rarity = card.get("rarity", "uncommon")
+            rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
             collection = card.get("collection")
             coll_data = COLLECTIONS.get(collection, {}) if collection else {}
             qual = card.get("quality", "normal")
@@ -610,7 +610,7 @@ class Cards(commands.Cog):
         rarity_counts = {}
         collection_counts = {}
         for c in inv.values():
-            r = c.get("rarity", "unworthy")
+            r = c.get("rarity", "uncommon")
             rarity_counts[r] = rarity_counts.get(r, 0) + 1
             col = c.get("collection", "—")
             collection_counts[col] = collection_counts.get(col, 0) + 1
@@ -727,7 +727,7 @@ class Cards(commands.Cog):
 
             rarity_counts = {}
             for inst in instances:
-                r = inst.get("rarity", "unworthy")
+                r = inst.get("rarity", "uncommon")
                 rarity_counts[r] = rarity_counts.get(r, 0) + 1
 
             embed = discord.Embed(
@@ -856,8 +856,8 @@ class Cards(commands.Cog):
             image_bytes = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
             file = discord.File(image_bytes, filename="card.png")
 
-            rarity = card.get("rarity", "unworthy")
-            rarity_data = RARITIES.get(rarity, RARITIES["unworthy"])
+            rarity = card.get("rarity", "uncommon")
+            rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
             collection = card.get("collection")
             coll_data = COLLECTIONS.get(collection, {}) if collection else {}
             qual = card.get("quality", "normal")
@@ -926,7 +926,7 @@ class Cards(commands.Cog):
             profile_save(profiles)
 
         # Výpočet prachu
-        rarity = card.get("rarity", "unworthy")
+        rarity = card.get("rarity", "uncommon")
         qual = card.get("quality", "normal")
         base_dust = DUST_VALUES.get(rarity, 1)
         mult = QUALITY_MULTIPLIERS.get(qual, 1.0)
@@ -990,7 +990,7 @@ class Cards(commands.Cog):
         elif rarity_roll < 0.06:    rarity = "epic"
         elif rarity_roll < 0.16:    rarity = "rare"
         elif rarity_roll < 0.36:    rarity = "common"
-        else:                       rarity = "unworthy"
+        else:                       rarity = "uncommon"
 
         # Random kvalita
         quality_roll = random.random()
@@ -1030,7 +1030,7 @@ class Cards(commands.Cog):
         save_json(CARDS_INVENTORY, inventory)
 
         # Veřejný embed
-        rarity_data = RARITIES.get(rarity, RARITIES["unworthy"])
+        rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
         quality_data = QUALITIES.get(quality, QUALITIES["normal"])
         coll_data = COLLECTIONS.get(card_template.get("collection"), {})
 
