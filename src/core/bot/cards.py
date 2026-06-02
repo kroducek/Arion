@@ -972,6 +972,85 @@ class Cards(commands.Cog):
     # Výpravy
     # -----------------------------------------------------------------------
 
+    @cards_group.command(name="pool", description="Dej hráči jednu náhodnou kartu z pool")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(user="Hráč, kterému chceš kartu dát")
+    async def pool_card(self, interaction: discord.Interaction, user: discord.Member):
+        """[ADMIN] Dá hráči jednu náhodnou kartu z dostupného pool."""
+        uid = str(user.id)
+        cards_db = load_json(CARDS_DATA, default=[])
+        
+        if not cards_db:
+            await interaction.response.send_message("Databáze karet je prázdná!", ephemeral=True)
+            return
+
+        # Random rarity podle procent
+        rarity_roll = random.random()
+        if rarity_roll < 0.01:      rarity = "legendary"
+        elif rarity_roll < 0.06:    rarity = "epic"
+        elif rarity_roll < 0.16:    rarity = "rare"
+        elif rarity_roll < 0.36:    rarity = "common"
+        else:                       rarity = "unworthy"
+
+        # Random kvalita
+        quality_roll = random.random()
+        if quality_roll < 0.05:     quality = "shiny"
+        elif quality_roll < 0.20:   quality = "gold"
+        elif quality_roll < 0.70:   quality = "normal"
+        else:                       quality = "damaged"
+
+        # Random karta z DB
+        card_template = random.choice(cards_db)
+        card_id = card_template.get("id")
+
+        # Přidej do inventáře
+        inventory = load_json(CARDS_INVENTORY, default={})
+        unique_id = generate_unique_id()
+        while unique_id in inventory:
+            unique_id = generate_unique_id()
+
+        max_print = max(
+            (c.get("print_number", 0) for c in inventory.values() if c.get("card_id") == card_id),
+            default=0,
+        ) + 1
+
+        inventory[unique_id] = {
+            "card_id":      card_id,
+            "name":         card_template.get("name"),
+            "description":  card_template.get("description"),
+            "image":        card_template.get("image"),
+            "collection":   card_template.get("collection"),
+            "rarity":       rarity,
+            "quality":      quality,
+            "print_number": max_print,
+            "owner_id":     uid,
+            "frame":        None,
+            "created_at":   datetime.now().isoformat(),
+        }
+        save_json(CARDS_INVENTORY, inventory)
+
+        # Veřejný embed
+        rarity_data = RARITIES.get(rarity, RARITIES["unworthy"])
+        quality_data = QUALITIES.get(quality, QUALITIES["normal"])
+        coll_data = COLLECTIONS.get(card_template.get("collection"), {})
+
+        embed = discord.Embed(
+            title=f"🎴 **Získal jsi: {card_template.get('name')}!**",
+            description=f"*{card_template.get('description', '')}*",
+            color=rarity_data["color"],
+        )
+        embed.add_field(name="👤 Hráč",     value=user.mention,                                       inline=True)
+        embed.add_field(name="✨ Rarita",   value=f"{rarity_data['emoji']} {rarity.capitalize()}",   inline=True)
+        embed.add_field(name="💎 Kvalita", value=f"{quality_data['emoji']} {quality_data['name']}",  inline=True)
+        if coll_data:
+            embed.add_field(name="📚 Kolekce", value=f"{coll_data.get('emoji', '')} {card_template.get('collection', 'N/A').capitalize()}", inline=True)
+        embed.add_field(name="🖨️ Tisk",    value=f"**#{max_print}**",                                inline=True)
+        embed.add_field(name="🆔 ID",      value=f"`{unique_id}`",                                  inline=True)
+        embed.set_footer(text="⚜️ Aurionis  •  Karta přidána do tvého inventáře")
+        embed.set_thumbnail(url=user.display_avatar.url)
+
+        await interaction.response.send_message(embed=embed)
+
     @cards_group.command(name="work", description="Přehled výpravy — stav nebo dostupné expedice")
     async def work_hub(self, interaction: discord.Interaction):
         """Zobrazí stav aktivní výpravy, nebo přehled dostupných expedic."""
