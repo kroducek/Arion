@@ -426,6 +426,7 @@ class QuestsCog(commands.Cog):
 
         mains = {n: d for n, d in quests.items() if d.get("category") == Category.MAIN}
         sides = {n: d for n, d in quests.items() if d.get("category") == Category.SIDE}
+        solos = {n: d for n, d in quests.items() if d.get("category") == Category.SOLO}
 
         blocks   = []
         used_sides = set()
@@ -446,6 +447,10 @@ class QuestsCog(commands.Cog):
             if side_name not in used_sides:
                 blocks.append(format_side_block(side_name, side_data))
 
+        # Solo questy
+        for solo_name, solo_data in solos.items():
+            blocks.append(format_side_block(solo_name, solo_data))
+
         n     = len(quests)
         label = "quest" if n == 1 else "questy" if n <= 4 else "questů"
         embed = discord.Embed(
@@ -465,12 +470,13 @@ class QuestsCog(commands.Cog):
         info="Popis / zadání questu",
         category="Typ questu (Main = automaticky všichni hráči)",
         xp="Odměna za splnění (volitelné)",
-        members="Hráči oddělení mezerou (@zmínka) — jen pro Side questy",
+        members="Hráči oddělení mezerou (@zmínka) — jen pro Side/Solo questy",
         parent_quest="Main quest ke kterému patří (jen pro side questy)",
     )
     @app_commands.choices(category=[
         app_commands.Choice(name="⚔️ Main Quest — pro všechny", value=Category.MAIN),
-        app_commands.Choice(name="🗺️ Side Quest — pro vybrané", value=Category.SIDE),
+        app_commands.Choice(name="🗺️ Side Quest — pro vybrané (s hlavním questem)", value=Category.SIDE),
+        app_commands.Choice(name="🏃 Solo Quest — pro vybrané (bez hlavního questu)", value=Category.SOLO),
     ])
     async def quest_add(
         self,
@@ -491,8 +497,13 @@ class QuestsCog(commands.Cog):
             )
             return
 
-        # Validace parent_quest — musí existovat a být main quest
-        if parent_quest is not None:
+        # Validace parent_quest — jen pro Side questy
+        if category == Category.SIDE:
+            if parent_quest is None:
+                await interaction.followup.send(
+                    "Side quest MUSÍ mít nadřazený Main quest (`parent_quest:`).", ephemeral=True
+                )
+                return
             if parent_quest not in quests:
                 await interaction.followup.send(
                     f"Main quest **{parent_quest}** neexistuje.", ephemeral=True
@@ -503,22 +514,23 @@ class QuestsCog(commands.Cog):
                     f"**{parent_quest}** není Main Quest — parent lze přiřadit jen k main questům.", ephemeral=True
                 )
                 return
-            if category == Category.MAIN:
-                await interaction.followup.send(
-                    "Main quest nemůže mít nadřazený quest.", ephemeral=True
-                )
-                return
+        elif category == Category.MAIN and parent_quest is not None:
+            await interaction.followup.send(
+                "Main quest nemůže mít nadřazený quest.", ephemeral=True
+            )
+            return
 
         guild = interaction.guild
 
         if category == Category.MAIN:
             # Main quest → automaticky všichni non-bot členové
             member_ids = [m.id for m in guild.members if not m.bot]
-        else:
-            # Side quest → povinný members parametr
+        elif category in (Category.SIDE, Category.SOLO):
+            # Side/Solo quest → povinný members parametr
+            quest_type = "Side" if category == Category.SIDE else "Solo"
             if not members:
                 await interaction.followup.send(
-                    "Pro Side quest musíš zadat `members:` (@zmínka hráčů).", ephemeral=True
+                    f"Pro {quest_type} quest musíš zadat `members:` (@zmínka hráčů).", ephemeral=True
                 )
                 return
             member_ids = _parse_member_mentions(members, guild)
