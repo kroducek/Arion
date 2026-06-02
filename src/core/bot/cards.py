@@ -13,9 +13,9 @@ from src.utils.paths import CARDS_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES
 from src.utils.card_image import apply_frame_to_card
 from src.utils.json_utils import load_json, save_json
 from src.utils.embeds import create_error_embed
-from src.logic.profile import _load_profiles as profile_load, _save_profiles as profile_save
+from src.logic.profile import load_data as profile_load, save_data as profile_save
 from src.logic.inventory import _load_profiles as inv_load, _save_profiles as inv_save
-from src.logic.economy import load_economy, save_economy
+from src.logic.economy import _load_economy as load_economy, _save_economy as save_economy
 
 CARDS_WORK = _data("cards_work.json")
 
