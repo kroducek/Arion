@@ -669,12 +669,14 @@ def resolve_round(state: DuelState) -> list[str]:
     # Nested helpers
     def do_guard(atk: Fighter, grd: Fighter, raw: int, is_heavy: bool = False) -> tuple[int, int]:
         thorns = (15 if grd.critical else 10) if grd.cls_name == "Guardian" else 0
+        min_dmg = 8 if is_heavy else 5  # Minimální damage skrz štít
         if is_heavy:
             dmg, _ = _guard_absorb(grd, raw)
+            dmg = max(min_dmg, dmg)  # Aplikuj minimum
             absorb_pct = round((1 - dmg / raw) * 100) if raw > 0 else 0
             log.append(f"🛡️ **{grd.member.display_name}** drží štít — heavy dopadá! **{dmg}** dmg ({absorb_pct} % pohlt).")
         else:
-            dmg = max(1, round(raw * (1 - GUARD_LIGHT_ABSORB)))
+            dmg = max(min_dmg, round(raw * (1 - GUARD_LIGHT_ABSORB)))
             log.append(random.choice([
                 f"🛡️ **{grd.member.display_name}** vztyčí štít — **BLOCKED!** Jen **{dmg}** dmg pronikne.",
                 f"🛡️ Štít **{grd.member.display_name}** pohltí téměř vše — **{dmg}** dmg.",
@@ -935,13 +937,13 @@ def resolve_round(state: DuelState) -> list[str]:
                     else:
                         log.append(f"💨 **MISS!** **{n1}** vykročí ze dráhy sekyry — heavy mine!")
                 else:
-                    dmg = round(_atk(f2) * 0.45); d1 += dmg
-                    log.append(f"💨 **{n1}** uhýbá, ale nestačí — **{dmg}** dmg clippí ramenem.")
+                    dmg = round(_atk(f2) * 0.30); d1 += dmg
+                    log.append(f"💨 **{n1}** uhýbá — **{dmg}** dmg clippí ramenem.")
             elif a2 == "feint":
                 if f1.cls_name == "Rogue":
                     log.append(f"💨 **MISS!** **{n1}** čte feint — mizí beze stopy.")
                 else:
-                    dmg = round(_atk(f2) * 0.45); d1 += dmg
+                    dmg = round(_atk(f2) * 0.30); d1 += dmg
                     log.append(f"🎭 **{n2}** feintuje — clippí uhýbajícího **{n1}** za **{dmg}** dmg.")
             else:
                 log.append(f"*{n1} uhýbá — ale {n2} nezaútočil.*")
@@ -959,13 +961,13 @@ def resolve_round(state: DuelState) -> list[str]:
                     else:
                         log.append(f"💨 **MISS!** **{n2}** vykročí ze dráhy sekyry — heavy mine!")
                 else:
-                    dmg = round(_atk(f1) * 0.45); d2 += dmg
-                    log.append(f"💨 **{n2}** uhýbá, ale nestačí — **{dmg}** dmg clippí ramenem.")
+                    dmg = round(_atk(f1) * 0.30); d2 += dmg
+                    log.append(f"💨 **{n2}** uhýbá — **{dmg}** dmg clippí ramenem.")
             elif a1 == "feint":
                 if f2.cls_name == "Rogue":
                     log.append(f"💨 **MISS!** **{n2}** čte feint — mizí beze stopy.")
                 else:
-                    dmg = round(_atk(f1) * 0.45); d2 += dmg
+                    dmg = round(_atk(f1) * 0.30); d2 += dmg
                     log.append(f"🎭 **{n1}** feintuje — clippí uhýbajícího **{n2}** za **{dmg}** dmg.")
             else:
                 log.append(f"*{n2} uhýbá — ale {n1} nezaútočil.*")
@@ -2093,8 +2095,6 @@ async def _try_resolve(state: DuelState):
             state.arena_msg = await state.channel.send(
                 embed=build_status_embed(state, log), view=ArenaView(state)
             )
-            if state.both_chose():
-                await _try_resolve(state)
 
 # ── Cog ───────────────────────────────────────────────────────────────────────
 
