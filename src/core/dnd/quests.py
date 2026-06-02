@@ -8,6 +8,7 @@ from datetime import datetime
 from src.utils.paths import QUESTS as QUESTS_FILE, QUEST_LOG as QUEST_LOG_FILE, DIARIES as DIARY_FILE
 from src.utils.json_utils import load_json, save_json
 from src.utils.audit import log_action, get_recent
+from src.logic.stats import add_xp
 
 ARION_NAME = "Aurionis"
 QUEST_TAG  = "📜"
@@ -22,6 +23,7 @@ class Status:
 class Category:
     MAIN = "main"
     SIDE = "side"
+    SOLO = "solo"
 
 STATUS_META = {
     Status.ACTIVE:    {"emoji": "🟢", "color": 0x2E6B3E},
@@ -32,6 +34,7 @@ STATUS_META = {
 CATEGORY_META = {
     Category.MAIN: {"emoji": "⚔️",  "label": "Main Quest"},
     Category.SIDE: {"emoji": "🗺️", "label": "Side Quest"},
+    Category.SOLO: {"emoji": "🎯", "label": "Solo Quest"},
 }
 
 # ── Pomocné funkce ─────────────────────────────────────────────────────────────
@@ -58,6 +61,17 @@ def save_diaries(data: dict):
 
 def today() -> str:
     return datetime.now().strftime("%d.%m.")
+
+def _parse_xp(xp_str: str | None) -> int:
+    """Parsuje XP string (např. '160 000' → 160000) a vrátí int. Vrátí 0 pokud není validní."""
+    if not xp_str:
+        return 0
+    # Odstraň mezery a parsuj
+    xp_clean = xp_str.strip().replace(" ", "").replace(",", "")
+    try:
+        return int(xp_clean)
+    except ValueError:
+        return 0
 
 def _migrate_entries(raw) -> list:
     """Bezpečná migrace — vždy vrátí list bez ohledu na vstup."""
@@ -641,6 +655,9 @@ class QuestsCog(commands.Cog):
             del quests[name]
             save_quests(quests)
 
+            # ── Automatické přidělování XP při dokončení ─────────────────────────
+            xp_reward = _parse_xp(quest_data.get("xp")) if status == Status.COMPLETED else 0
+
             diaries  = load_diaries()
             dm_embed = discord.Embed(
                 title=f"{meta['emoji']}  Quest {status}",
@@ -658,6 +675,24 @@ class QuestsCog(commands.Cog):
                         "tag":    QUEST_TAG,
                     })
                 diaries[uid_str] = entries
+                
+                # Přidej XP, pokud je quest dokončen
+                if xp_reward > 0:
+                    xp_result = add_xp(uid, xp_reward)
+                    # Přidej do embedu info o XP a levelupu
+                    if xp_result["leveled_up"]:
+                        dm_embed.add_field(
+                            name="✨ Odměna",
+                            value=f"+{xp_reward} XP  ·  **LEVELUP!** Lvl {xp_result['new_level']}",
+                            inline=False,
+                        )
+                    else:
+                        dm_embed.add_field(
+                            name="✨ Odměna",
+                            value=f"+{xp_reward} XP  ({xp_result['xp']}/{xp_result['cap']})",
+                            inline=False,
+                        )
+                
                 member = guild.get_member(uid)
                 if member:
                     try:
