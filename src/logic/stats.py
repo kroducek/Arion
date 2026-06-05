@@ -9,7 +9,7 @@ import logging
 # KONFIGURACE
 # ══════════════════════════════════════════════════════════════════════════════
 
-from src.utils.paths import PROFILES as DATA_FILE
+from src.utils.paths import PROFILES as DATA_FILE, ITEMS as ITEMS_FILE
 from src.utils.json_utils import load_json, save_json
 
 logger = logging.getLogger("Stats")
@@ -44,6 +44,22 @@ SP_PER_LEVEL = 1
 DEFAULT_LUCK = 100
 
 # ══════════════════════════════════════════════════════════════════════════════
+# EMOJI KONSTANTY  (synchronizováno s profile.py)
+# ══════════════════════════════════════════════════════════════════════════════
+
+HP_ON       = "<:hp:1490146344290222111>"
+MN_ON       = "<:mana:1490148547427831981>"
+HN_ON       = "<:hunger:1490169001890807928>"
+FU_EMO      = "<:furioku:1490160933081972866>"
+XP_EMO      = "<:xp:1490159053425348748>"
+VLIV_EMO    = "<:vliv:1490162671969112085>"
+SVETLO_EMO  = "<:svetlo:1490166284741120120>"
+TEMNOTA_EMO = "<:temnota:1490166345516581034>"
+ROVNO_EMO   = "<:rovnovaha:1490166409458749671>"
+
+_SP_EMOJI = {"STR": "💪", "DEX": "🤸", "INS": "👁️", "INT": "🧠", "CHA": "✨", "WIS": "🔮"}
+
+# ══════════════════════════════════════════════════════════════════════════════
 # HELPERS — profiles.json
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -65,6 +81,51 @@ def _profile(data: dict, uid: str) -> dict:
     p.setdefault("stats",        {s: 1 for s in STAT_LABELS})
     return p
 
+def _ensure_fields(p: dict) -> None:
+    """Doplní výchozí hodnoty HP, hlad, mana, furioka atd. pokud chybí."""
+    p.setdefault("hp_max",          50)
+    p.setdefault("hp_cur",          p.get("hp_max", 50))
+    p.setdefault("hunger_max",      10)
+    p.setdefault("hunger_cur",      p.get("hunger_max", 10))
+    p.setdefault("mana_max",        5)
+    p.setdefault("mana_cur",        0)
+    p.setdefault("fury_max",        0)
+    p.setdefault("fury_cur",        0)
+    p.setdefault("vliv_svetlo",     0)
+    p.setdefault("vliv_temnota",    0)
+    p.setdefault("vliv_rovnovaha",  0)
+    p.setdefault("luck",            DEFAULT_LUCK)
+    p.setdefault("level",           0)
+    p.setdefault("xp",              0)
+    p.setdefault("sp",              0)
+    p.setdefault("stats",           {s: 1 for s in STAT_LABELS})
+
+def _load_items_db() -> dict:
+    try:
+        return load_json(ITEMS_FILE, default={})
+    except Exception:
+        return {}
+
+def _bar(cur: int, mx: int, width: int = 10) -> str:
+    if mx <= 0:
+        return "░" * width
+    filled = round(max(0, min(cur, mx)) / mx * width)
+    return "█" * filled + "░" * (width - filled)
+
+def _compute_def(profile: dict, items_db: dict) -> int:
+    equipment = profile.get("equipment", {})
+    seen = set()
+    total = 0
+    for item_id in equipment.values():
+        if item_id and item_id not in seen:
+            seen.add(item_id)
+            total += items_db.get(item_id, {}).get("def", 0)
+    return total
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PUBLIC API — volané z jiných cogů
+# ══════════════════════════════════════════════════════════════════════════════
+
 def get_xp_cap(level: int) -> int | None:
     """XP cap pro daný level. None = max level."""
     if level < len(XP_CAPS):
@@ -76,10 +137,6 @@ def level_label(level: int) -> str:
     if level < len(roman):
         return f"Lvl {roman[level]}"
     return f"Lvl {level}"
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PUBLIC API — volané z jiných cogů
-# ══════════════════════════════════════════════════════════════════════════════
 
 def init_stats(user_id: int, base_stats: dict, sp: int = 0):
     """
@@ -169,11 +226,229 @@ def spend_sp(user_id: int, stat: str, amount: int = 1) -> bool:
     return True
 
 # ══════════════════════════════════════════════════════════════════════════════
-# LEVELUP VIEW — hráč rozděluje SP po levelupu
+# QUICK SHEET — sestavení embedu
 # ══════════════════════════════════════════════════════════════════════════════
 
-_SP_EMOJI = {"STR": "💪", "DEX": "🤸", "INS": "👁️", "INT": "🧠", "CHA": "✨", "WIS": "🔮"}
+def _build_quicksheet_embed(
+    user: discord.User | discord.Member,
+    p: dict,
+    items_db: dict,
+) -> discord.Embed:
+    """Sestaví přehledný embed pro /stats quick sheet."""
+    _ensure_fields(p)
 
+    hp_cur     = p["hp_cur"];      hp_max     = p["hp_max"]
+    mana_cur   = p["mana_cur"];    mana_max   = p["mana_max"]
+    hunger_cur = p["hunger_cur"];  hunger_max = p["hunger_max"]
+    fury_cur   = p["fury_cur"];    fury_max   = p["fury_max"]
+    v_svetlo   = p["vliv_svetlo"]
+    v_temnota  = p["vliv_temnota"]
+    v_rovno    = p["vliv_rovnovaha"]
+    level      = p["level"];  xp = p["xp"]; sp = p.get("sp", 0)
+    luck       = p.get("luck", DEFAULT_LUCK)
+    stats      = p.get("stats", {})
+    total_def  = _compute_def(p, items_db)
+    cap        = get_xp_cap(level)
+
+    char_name = p.get("name", user.display_name)
+    def_str   = f"  ·  🛡️ **{total_def}**" if total_def else ""
+    xp_str    = f"*{xp} (MAX)*" if not cap else f"*{xp}/{cap}*"
+    sp_str    = f"  ·  ⚡ **{sp} SP**" if sp > 0 else ""
+
+    lines = []
+
+    # ── Vitální stavy ─────────────────────────────────────────────────────────
+    hp_bar     = _bar(hp_cur,     hp_max)
+    mana_bar   = _bar(mana_cur,   mana_max)
+    hunger_bar = _bar(hunger_cur, hunger_max)
+
+    lines.append(f"{HP_ON} **Zdraví**  `{hp_bar}`  *{hp_cur} / {hp_max}*{def_str}")
+    lines.append(f"{MN_ON} **Mana**  `{mana_bar}`  *{mana_cur} / {mana_max}*")
+    lines.append(f"{HN_ON} **Hlad**  `{hunger_bar}`  *{hunger_cur} / {hunger_max}*")
+
+    if fury_max > 0:
+        fury_bar = _bar(fury_cur, fury_max)
+        lines.append(f"{FU_EMO} **Furioka**  `{fury_bar}`  *{fury_cur} / {fury_max}*")
+    else:
+        lines.append(f"{FU_EMO} **Furioka**  *— žádný Vliv*")
+
+    lines.append("")
+
+    # ── Progres ───────────────────────────────────────────────────────────────
+    xp_bar = _bar(xp, cap if cap else 1)
+    lines.append(f"⭐ **{level_label(level)}**  ·  {XP_EMO} `{xp_bar}` {xp_str}{sp_str}")
+
+    # Vliv (jen pokud má nějaký)
+    if v_svetlo or v_temnota or v_rovno:
+        lines.append(
+            f"{VLIV_EMO}  {SVETLO_EMO} **{v_svetlo}**  ·  "
+            f"{TEMNOTA_EMO} **{v_temnota}**  ·  "
+            f"{ROVNO_EMO} **{v_rovno}**"
+        )
+
+    # Luck (jen pokud se liší od základu)
+    if luck != DEFAULT_LUCK:
+        if luck >= 130:   luck_icon = "🌟"
+        elif luck >= 80:  luck_icon = "🍀"
+        else:             luck_icon = "💔"
+        lines.append(f"{luck_icon} *Štěstí {luck}%*")
+
+    lines.append("")
+
+    # ── Staty ─────────────────────────────────────────────────────────────────
+    if stats:
+        parts = [
+            f"*{_SP_EMOJI.get(s, '')} {s}* **{stats.get(s, 1)}**"
+            for s in STAT_LABELS
+        ]
+        lines.append("  ·  ".join(parts))
+
+    embed = discord.Embed(
+        title=f"📋  *{char_name}*  —  Quick Sheet",
+        description="\n".join(lines),
+        color=0x5865f2,
+    )
+    embed.set_thumbnail(url=user.display_avatar.url)
+    embed.set_footer(text="Uprav svůj stav tlačítky níže  ·  Aurionis")
+    return embed
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADJUST MODAL — zadání +číslo / -číslo
+# ══════════════════════════════════════════════════════════════════════════════
+
+class _AdjustModal(discord.ui.Modal):
+    """Generický modal: hráč zadá +číslo nebo -číslo."""
+
+    value_input = discord.ui.TextInput(
+        label="Zadej změnu  (+číslo nebo -číslo)",
+        placeholder="+5   nebo   -3",
+        min_length=2,
+        max_length=7,
+    )
+
+    def __init__(
+        self,
+        title: str,
+        key_cur: str,
+        key_max: str,
+        user_id: int,
+        allow_exceed_max: bool = False,
+    ):
+        super().__init__(title=title)
+        self.key_cur         = key_cur
+        self.key_max         = key_max
+        self.user_id         = user_id
+        self.allow_exceed_max = allow_exceed_max
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = self.value_input.value.strip()
+        try:
+            delta = int(raw)
+        except ValueError:
+            await interaction.response.send_message(
+                f"❌ Neplatná hodnota `{raw}` — zadej např. `+5` nebo `-3`.",
+                ephemeral=True,
+            )
+            return
+
+        data = _load()
+        uid  = str(self.user_id)
+        p    = data.get(uid)
+        if not p:
+            await interaction.response.send_message("❌ Profil nenalezen.", ephemeral=True)
+            return
+
+        _ensure_fields(p)
+        cur = p[self.key_cur]
+        mx  = p[self.key_max]
+
+        if self.allow_exceed_max:
+            new_val = max(0, cur + delta)
+        else:
+            new_val = max(0, min(mx, cur + delta))
+
+        p[self.key_cur] = new_val
+        _save(data)
+
+        items_db = _load_items_db()
+        embed = _build_quicksheet_embed(interaction.user, p, items_db)
+        await interaction.response.edit_message(
+            embed=embed,
+            view=QuickSheetView(self.user_id),
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# QUICK SHEET VIEW — tlačítka
+# ══════════════════════════════════════════════════════════════════════════════
+
+class QuickSheetView(discord.ui.View):
+    """Tlačítka pro úpravu vitálních hodnot v /stats quick sheetu."""
+
+    def __init__(self, user_id: int):
+        super().__init__(timeout=600)
+        self.user_id = user_id
+
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "❌ *Toto není tvůj quick sheet.*", ephemeral=True
+            )
+            return False
+        return True
+
+    # ── Řádek 0 ──────────────────────────────────────────────────────────────
+
+    @discord.ui.button(label="❤️ HP", style=discord.ButtonStyle.red, row=0)
+    async def btn_hp(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._guard(interaction):
+            return
+        await interaction.response.send_modal(
+            _AdjustModal("Upravit HP", "hp_cur", "hp_max", self.user_id)
+        )
+
+    @discord.ui.button(label="🔷 Mana", style=discord.ButtonStyle.blurple, row=0)
+    async def btn_mana(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._guard(interaction):
+            return
+        await interaction.response.send_modal(
+            _AdjustModal("Upravit Manu", "mana_cur", "mana_max", self.user_id)
+        )
+
+    @discord.ui.button(label="🔥 Furioka", style=discord.ButtonStyle.grey, row=0)
+    async def btn_fury(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._guard(interaction):
+            return
+        await interaction.response.send_modal(
+            _AdjustModal("Upravit Furioku", "fury_cur", "fury_max", self.user_id)
+        )
+
+    @discord.ui.button(label="🍖 Hlad", style=discord.ButtonStyle.green, row=0)
+    async def btn_hunger(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._guard(interaction):
+            return
+        await interaction.response.send_modal(
+            _AdjustModal("Upravit Hlad", "hunger_cur", "hunger_max", self.user_id)
+        )
+
+    # ── Řádek 1 ──────────────────────────────────────────────────────────────
+
+    @discord.ui.button(label="🔄 Obnovit", style=discord.ButtonStyle.grey, row=1)
+    async def btn_refresh(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._guard(interaction):
+            return
+        data = _load()
+        p    = data.get(str(self.user_id), {})
+        _ensure_fields(p)
+        items_db = _load_items_db()
+        embed = _build_quicksheet_embed(interaction.user, p, items_db)
+        await interaction.response.edit_message(embed=embed, view=QuickSheetView(self.user_id))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LEVELUP VIEW — hráč rozděluje SP po levelupu
+# ══════════════════════════════════════════════════════════════════════════════
 
 class SpendSPView(discord.ui.View):
     """Interaktivní view pro rozdělování SP — 6 tlačítek, 2 řádky."""
@@ -273,43 +548,42 @@ class Stats(commands.Cog):
 
     # ── /stats ────────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="stats", description="Zobraz své staty, level a XP.")
-    @app_commands.describe(member="Hráč (výchozí: ty)")
+    @app_commands.command(name="stats", description="Tvůj quick sheet — stav postavy a tlačítka pro úpravu.")
+    @app_commands.describe(member="Hráč (výchozí: ty) — při zobrazení jiného hráče bez tlačítek.")
     async def stats_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
         try:
-            target = member or interaction.user
-            data   = _load()
-            p      = _profile(data, str(target.id))
+            target   = member or interaction.user
+            data     = _load()
+            uid      = str(target.id)
 
-            level  = p["level"]
-            xp     = p["xp"]
-            cap    = get_xp_cap(level)
-            sp     = p["sp"]
-            luck   = p["luck"]
-            stats  = p.get("stats", {})
+            if uid not in data:
+                await interaction.response.send_message(
+                    f"*{target.display_name} zatím nemá profil — musí projít tutoriálem.*",
+                    ephemeral=True,
+                )
+                return
 
-            xp_bar = f"{xp} / {cap} XP" if cap else f"{xp} XP (MAX LEVEL)"
+            p = data[uid]
+            _ensure_fields(p)
+            items_db = _load_items_db()
+            embed    = _build_quicksheet_embed(target, p, items_db)
 
-            stats_lines = "  ".join(f"**{s}** {stats.get(s, 1)}" for s in STAT_LABELS)
+            # Vlastní quick sheet → ephemeral s tlačítky; cizí → bez tlačítek
+            is_self = (member is None or member.id == interaction.user.id)
+            if is_self:
+                await interaction.response.send_message(
+                    embed=embed,
+                    view=QuickSheetView(interaction.user.id),
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
 
-            embed = discord.Embed(
-                title=f"📊 {target.display_name}",
-                color=0x9b59b6,
-            )
-            embed.add_field(name="Level", value=f"**{level_label(level)}**", inline=True)
-            embed.add_field(name="XP",    value=xp_bar,                      inline=True)
-            if sp > 0:
-                embed.add_field(name="⚡ Volné SP", value=str(sp),            inline=True)
-            embed.add_field(name="Staty", value=stats_lines,                  inline=False)
-            embed.add_field(name="Štěstí (LUCK)", value=f"{luck}%",           inline=True)
-            embed.set_footer(text="⭐ Aurionis")
-
-            await interaction.response.send_message(embed=embed, ephemeral=(member is None))
         except Exception as e:
             logger.exception(f"[stats_cmd] Error: {e}")
             await interaction.response.send_message(
                 f"❌ Chyba: {str(e)[:100]}",
-                ephemeral=True
+                ephemeral=True,
             )
 
     # ── /sp ───────────────────────────────────────────────────────────────────
