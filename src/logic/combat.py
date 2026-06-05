@@ -2,7 +2,7 @@ import discord
 import asyncio
 import logging
 from discord.ext import commands
-from discord import app_commands
+from discord import app_commands, ui
 from src.utils.paths import COMBAT_STATE
 from src.utils.json_utils import load_json, save_json
 
@@ -14,6 +14,55 @@ def _make_bar(current: int, maximum: int, length: int = 10) -> str:
         return "░" * length
     filled = max(0, min(length, round((current / maximum) * length)))
     return "█" * filled + "░" * (length - filled)
+
+
+# ── EOT Button View ────────────────────────────────────────────────────────────
+
+class EOTView(ui.View):
+    def __init__(self, cog, channel_id, current_actor, is_admin):
+        super().__init__(timeout=None)
+        self.cog = cog
+        self.channel_id = channel_id
+        self.current_actor = current_actor
+        self.is_admin = is_admin
+
+    @ui.button(label="EOT (End of Turn)", style=discord.ButtonStyle.danger, emoji="⏭️")
+    async def eot_button(self, interaction: discord.Interaction, button: ui.Button):
+        if self.channel_id not in self.cog.active_combats:
+            return await interaction.response.send_message("Combat byl ukončen.", ephemeral=True)
+
+        combat = self.cog.active_combats[self.channel_id]
+        
+        if not combat.get("locked"):
+            return await interaction.response.send_message("Combat ještě není uzavřen. Čekej na `/combat_setorder`.", ephemeral=True)
+
+        current_actor = combat["order"][combat["current_index"]]
+        is_npc_turn = not current_actor.startswith("<@")
+        is_user_admin = interaction.user.guild_permissions.administrator
+        is_current_player = interaction.user.mention == current_actor
+
+        # Check permissions: only current player or admin can use EOT
+        if not is_npc_turn and not is_current_player and not is_user_admin:
+            return await interaction.response.send_message(
+                f"Nejsi na řadě! Nyní hraje: {current_actor}",
+                ephemeral=True
+            )
+
+        if is_npc_turn and not is_user_admin:
+            return await interaction.response.send_message(
+                f"Tah NPC **{current_actor}** může předat pouze GM (admin).",
+                ephemeral=True
+            )
+
+        # Advance to next turn
+        combat["current_index"] = (combat["current_index"] + 1) % len(combat["order"])
+        next_actor = combat["order"][combat["current_index"]]
+        combat["active_player"] = next_actor
+        self.cog._save_state()
+
+        # Show updated order
+        await interaction.response.defer()
+        await self.cog._show_order_with_button(interaction, "➡️ DALŠÍ NA ŘADĚ", next_actor)
 
 
 def _boss_embed(name: str, s: dict, flashing: bool = False) -> discord.Embed:
@@ -138,6 +187,33 @@ class CombatCog(commands.Cog):
             color=discord.Color.gold()
         )
         await interaction.response.send_message(content=f"Akci provadi: {active or current_actor}", embed=embed)
+
+    async def _show_order_with_button(self, interaction, title, current_actor):
+        """Show order with EOT button for turn management."""
+        combat = self.active_combats[interaction.channel_id]
+        order = combat["order"]
+        idx = combat["current_index"]
+        stats = combat["stats"]
+        active = combat.get("active_player")
+
+        list_str = ""
+        for i, name in enumerate(order):
+            formatted = self._format_name(name, stats)
+            if combat["locked"] and i == idx:
+                list_str += f"▶️ **{formatted}** (NA RADE)\n"
+            elif not combat["locked"] and active and name == active:
+                list_str += f"🔥 **{formatted}** (PRAVE HRAJE)\n"
+            else:
+                list_str += f"◽ {formatted}\n"
+
+        embed = discord.Embed(
+            title=title,
+            description=list_str if list_str else "Seznam je prazdny.",
+            color=discord.Color.gold()
+        )
+        
+        view = EOTView(self, interaction.channel_id, current_actor, False)
+        await interaction.followup.send(content=f"Akci provadi: {active or current_actor}", embed=embed, view=view)
 
     # ── Příkazy ───────────────────────────────────────────────────────────────
 
@@ -407,7 +483,7 @@ class CombatCog(commands.Cog):
         self._save_state()
         await interaction.response.send_message(f"❌ **{to_remove}** byl odstranyen z boje.")
 
-    @app_commands.command(name="combat_setorder", description="Uzavre poradi do pevne smycky")
+    @app_commands.command(name="combat_setorder", description="Uzavre poradi do pevne smycky a spusti combat")
     @app_commands.checks.has_permissions(administrator=True)
     async def combat_setorder(self, interaction: discord.Interaction):
         channel_id = interaction.channel_id
@@ -423,41 +499,11 @@ class CombatCog(commands.Cog):
 
         combat["locked"] = True
         combat["current_index"] = 0
+        combat["active_player"] = combat["order"][0]
         self._save_state()
 
-        await self._show_order(interaction, "🔒 PORADI UZAVRENO", combat["order"][0])
-
-    @app_commands.command(name="next", description="Preda tah dalsimu v poradi")
-    async def next_turn(self, interaction: discord.Interaction):
-        channel_id = interaction.channel_id
-        if channel_id not in self.active_combats or not self.active_combats[channel_id]["locked"]:
-            return await interaction.response.send_message("Combat neni v loop rezimu. Pouzij `/combat_setorder`.", ephemeral=True)
-
-        combat = self.active_combats[channel_id]
-        current_actor = combat["order"][combat["current_index"]]
-
-        is_npc_turn = not current_actor.startswith("<@")
-        is_admin = interaction.user.guild_permissions.administrator
-        is_current_player = interaction.user.mention == current_actor
-
-        if not is_npc_turn and not is_current_player and not is_admin:
-            return await interaction.response.send_message(
-                f"Nejsi na rade! Nyni hraje: {current_actor}",
-                ephemeral=True
-            )
-
-        if is_npc_turn and not is_admin:
-            return await interaction.response.send_message(
-                f"Tah NPC **{current_actor}** muze predat pouze GM (admin).",
-                ephemeral=True
-            )
-
-        combat["current_index"] = (combat["current_index"] + 1) % len(combat["order"])
-        current_actor = combat["order"][combat["current_index"]]
-        combat["active_player"] = current_actor
-        self._save_state()
-
-        await self._show_order(interaction, "➡️ DALSI NA RADE", current_actor)
+        await interaction.response.defer()
+        await self.cog._show_order_with_button(interaction, "🔒 PORADI UZAVRENO - BOJ ZACINA!", combat["order"][0])
 
     @app_commands.command(name="combat_end", description="Ukonci combat a vymaze data")
     async def combat_end(self, interaction: discord.Interaction):
