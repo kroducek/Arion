@@ -19,23 +19,90 @@ STAT_LABELS = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
 # XP caps pro každý level (index = level)
 # Level 0 je startovní — hráč začíná zde po tutorialu
 XP_CAPS = [
-    100,    # Lvl 0  → 1
-    500,    # Lvl I
-    750,    # Lvl II
-    1250,   # Lvl III
-    2500,   # Lvl IV
-    3500,   # Lvl V
-    5000,   # Lvl VI
-    7500,   # Lvl VII
-    9000,   # Lvl VIII
-    12500,  # Lvl IX  (+5 SP navíc)
-    14500,  # Lvl X
-    17500,  # Lvl XI
-    21000,  # Lvl XII
+    100,          # Lvl 0  → I
+    500,          # Lvl I
+    750,          # Lvl II
+    1_250,        # Lvl III
+    2_500,        # Lvl IV
+    3_500,        # Lvl V
+    5_000,        # Lvl VI
+    7_500,        # Lvl VII
+    9_000,        # Lvl VIII
+    12_500,       # Lvl IX   (+5 SP navíc)
+    14_500,       # Lvl X
+    17_500,       # Lvl XI
+    21_000,       # Lvl XII
+    25_000,       # Lvl XIII
+    30_000,       # Lvl XIV
+    36_000,       # Lvl XV
+    43_000,       # Lvl XVI
+    51_000,       # Lvl XVII
+    60_000,       # Lvl XVIII
+    71_000,       # Lvl XIX
+    84_000,       # Lvl XX
+    99_000,       # Lvl 21
+    115_000,      # Lvl 22
+    135_000,      # Lvl 23
+    160_000,      # Lvl 24
+    190_000,      # Lvl 25
+    225_000,      # Lvl 26
+    265_000,      # Lvl 27
+    310_000,      # Lvl 28
+    365_000,      # Lvl 29
+    430_000,      # Lvl 30
+    505_000,      # Lvl 31
+    595_000,      # Lvl 32
+    700_000,      # Lvl 33
+    825_000,      # Lvl 34
+    970_000,      # Lvl 35
+    1_150_000,    # Lvl 36
+    1_350_000,    # Lvl 37
+    1_600_000,    # Lvl 38
+    1_900_000,    # Lvl 39
+    2_250_000,    # Lvl 40
+    2_650_000,    # Lvl 41
+    3_100_000,    # Lvl 42
+    3_650_000,    # Lvl 43
+    4_300_000,    # Lvl 44
+    5_050_000,    # Lvl 45
+    5_950_000,    # Lvl 46
+    7_000_000,    # Lvl 47
+    8_250_000,    # Lvl 48
+    9_700_000,    # Lvl 49
+    11_500_000,   # Lvl 50
+    13_500_000,   # Lvl 51
+    16_000_000,   # Lvl 52
+    19_000_000,   # Lvl 53
+    22_500_000,   # Lvl 54
+    26_500_000,   # Lvl 55
+    31_000_000,   # Lvl 56
+    36_500_000,   # Lvl 57
+    43_000_000,   # Lvl 58
+    50_500_000,   # Lvl 59
+    59_500_000,   # Lvl 60
+    70_000_000,   # Lvl 61
+    82_500_000,   # Lvl 62
+    97_000_000,   # Lvl 63
+    114_000_000,  # Lvl 64
+    134_000_000,  # Lvl 65
+    158_000_000,  # Lvl 66
+    186_000_000,  # Lvl 67
+    219_000_000,  # Lvl 68
+    258_000_000,  # Lvl 69
+    304_000_000,  # Lvl 70
+    358_000_000,  # Lvl 71
+    422_000_000,  # Lvl 72
+    498_000_000,  # Lvl 73
+    588_000_000,  # Lvl 74
+    694_000_000,  # Lvl 75
+    819_000_000,  # Lvl 76
+    966_000_000,  # Lvl 77
+    1_139_000_000, # Lvl 78
+    1_343_000_000, # Lvl 79  (MAX)
 ]
 
 # SP bonus na vybraných levelech  {level: bonus_sp}
-SP_BONUS = {9: 5}
+SP_BONUS = {9: 5, 20: 3, 40: 5, 60: 5, 79: 10}
 
 # Základní SP za levelup
 SP_PER_LEVEL = 1
@@ -133,7 +200,10 @@ def get_xp_cap(level: int) -> int | None:
     return None
 
 def level_label(level: int) -> str:
-    roman = ["0","I","II","III","IV","V","VI","VII","VIII","IX","X","XI","XII"]
+    roman = [
+        "0","I","II","III","IV","V","VI","VII","VIII","IX","X",
+        "XI","XII","XIII","XIV","XV","XVI","XVII","XVIII","XIX","XX",
+    ]
     if level < len(roman):
         return f"Lvl {roman[level]}"
     return f"Lvl {level}"
