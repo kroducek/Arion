@@ -11,8 +11,12 @@ import logging
 
 from src.utils.paths import PROFILES as DATA_FILE, ITEMS as ITEMS_FILE
 from src.utils.json_utils import load_json, save_json
+import datetime
 
 logger = logging.getLogger("Stats")
+
+# Maximální počet záznamů v XP logu na hráče (FIFO ring buffer)
+XP_LOG_MAX_PER_USER = 50
 
 STAT_LABELS = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
 
@@ -173,6 +177,36 @@ def _load_items_db() -> dict:
     except Exception:
         return {}
 
+# ══════════════════════════════════════════════════════════════════════════════
+# XP LOG — persistentní log v profiles.json pod klíčem "xp_log"
+# Každý záznam: {"ts": ISO str, "delta": int, "level_before": int,
+#                "level_after": int, "reason": str}
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _append_xp_log(p: dict, delta: int, level_before: int,
+                   level_after: int, reason: str = "") -> None:
+    """Přidá záznam do XP logu hráče (FIFO, max XP_LOG_MAX_PER_USER záznamů)."""
+    entry = {
+        "ts":           datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "delta":        delta,
+        "level_before": level_before,
+        "level_after":  level_after,
+        "reason":       reason,
+    }
+    log = p.setdefault("xp_log", [])
+    log.append(entry)
+    # FIFO — zahoď nejstarší pokud přesáhne limit
+    if len(log) > XP_LOG_MAX_PER_USER:
+        p["xp_log"] = log[-XP_LOG_MAX_PER_USER:]
+
+
+def get_xp_log(user_id: int) -> list[dict]:
+    """Vrátí XP log hráče (od nejnovějšího)."""
+    data = _load()
+    p    = _profile(data, str(user_id))
+    return list(reversed(p.get("xp_log", [])))
+
+
 def _bar(cur: int, mx: int, width: int = 10) -> str:
     if mx <= 0:
         return "░" * width
@@ -224,19 +258,35 @@ def init_stats(user_id: int, base_stats: dict, sp: int = 0):
     p["luck"]  = DEFAULT_LUCK
     _save(data)
 
-def add_xp(user_id: int, amount: int) -> dict:
+def add_xp(user_id: int, amount: int, reason: str = "") -> dict:
     """
     Přidá XP hráči. Vrátí dict s informacemi o levelupu.
-    Return: {'leveled_up': bool, 'new_level': int, 'sp_gained': int, 'xp': int, 'cap': int|None}
+    Return: {'leveled_up': bool, 'levels_gained': int, 'new_level': int,
+             'sp_gained': int, 'xp': int, 'cap': int|None}
+    Záporné amount je tiše ignorováno — pro odebrání XP použij remove_xp().
+    reason: volitelný popis (zobrazí se v /xp-log), např. "Quest: Stíny minulosti"
     """
-    data   = _load()
-    uid    = str(user_id)
-    p      = _profile(data, uid)
-    p["xp"] += amount
+    if amount <= 0:
+        p = _profile(_load(), str(user_id))
+        return {
+            "leveled_up":    False,
+            "levels_gained": 0,
+            "new_level":     p["level"],
+            "sp_gained":     0,
+            "xp":            p["xp"],
+            "cap":           get_xp_cap(p["level"]),
+        }
 
-    leveled_up = False
-    sp_gained  = 0
-    new_level  = p["level"]
+    data          = _load()
+    uid           = str(user_id)
+    p             = _profile(data, uid)
+    level_before  = p["level"]
+    p["xp"]       = max(0, p["xp"] + amount)
+
+    leveled_up    = False
+    sp_gained     = 0
+    levels_gained = 0
+    new_level     = p["level"]
 
     cap = get_xp_cap(p["level"])
     while cap is not None and p["xp"] >= cap:
@@ -244,24 +294,50 @@ def add_xp(user_id: int, amount: int) -> dict:
         p["level"] += 1
         new_level   = p["level"]
         leveled_up  = True
+        levels_gained += 1
         sp          = SP_PER_LEVEL + SP_BONUS.get(new_level, 0)
         sp_gained  += sp
         p["sp"]    += sp
         cap = get_xp_cap(p["level"])
 
+    _append_xp_log(p, amount, level_before, new_level, reason)
     _save(data)
     return {
-        "leveled_up": leveled_up,
-        "new_level":  new_level,
-        "sp_gained":  sp_gained,
-        "xp":         p["xp"],
-        "cap":        get_xp_cap(new_level),
+        "leveled_up":    leveled_up,
+        "levels_gained": levels_gained,
+        "new_level":     new_level,
+        "sp_gained":     sp_gained,
+        "xp":            p["xp"],
+        "cap":           get_xp_cap(new_level),
+    }
+
+
+def remove_xp(user_id: int, amount: int, reason: str = "") -> dict:
+    """
+    Odebere XP hráči. XP neklesne pod 0, level se nesníží.
+    Return: {'new_xp': int, 'level': int, 'cap': int|None}
+    reason: volitelný popis (zobrazí se v /xp-log)
+    """
+    if amount <= 0:
+        raise ValueError("amount musí být kladné číslo")
+    data = _load()
+    uid  = str(user_id)
+    p    = _profile(data, uid)
+    level_before  = p["level"]
+    p["xp"]       = max(0, p["xp"] - amount)
+    _append_xp_log(p, -amount, level_before, p["level"], reason)
+    _save(data)
+    return {
+        "new_xp": p["xp"],
+        "level":  p["level"],
+        "cap":    get_xp_cap(p["level"]),
     }
 
 def get_stats(user_id: int) -> dict:
-    """Vrátí stats dict hráče."""
+    """Vrátí stats dict hráče (vždy s plně inicializovanými poli)."""
     data = _load()
     p    = _profile(data, str(user_id))
+    _ensure_fields(p)
     return p
 
 def set_luck(user_id: int, value: int):
@@ -412,6 +488,13 @@ class _AdjustModal(discord.ui.Modal):
         self.allow_exceed_max = allow_exceed_max
 
     async def on_submit(self, interaction: discord.Interaction):
+        # Bezpečnostní kontrola — jen vlastník může upravovat svůj profil
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "❌ *Nemůžeš upravovat cizí profil.*", ephemeral=True
+            )
+            return
+
         raw = self.value_input.value.strip()
         try:
             delta = int(raw)
@@ -710,7 +793,7 @@ class Stats(commands.Cog):
             elif luck >= 40:  desc = "📉 Nepříznivé interference"
             else:             desc = "💀 Kritická nesouhra (Naprostá smůla)"
 
-            bar_filled = round(luck / 10)
+            bar_filled = min(20, round(luck / 10))
             bar = "█" * bar_filled + "░" * (20 - bar_filled)
 
             embed = discord.Embed(
@@ -771,32 +854,40 @@ class Stats(commands.Cog):
     # ── /admin-xp ─────────────────────────────────────────────────────────────
 
     @app_commands.command(name="admin-xp", description="[Admin] Přidej nebo odeber XP hráči.")
-    @app_commands.describe(member="Hráč", amount="Množství XP (kladné = přidat, záporné = odebrat)")
+    @app_commands.describe(
+        member="Hráč",
+        amount="Množství XP (kladné = přidat, záporné = odebrat)",
+        reason="Důvod (zobrazí se v /xp-log hráče)",
+    )
     @app_commands.checks.has_permissions(administrator=True)
-    async def admin_xp(self, interaction: discord.Interaction, member: discord.Member, amount: int):
+    async def admin_xp(self, interaction: discord.Interaction, member: discord.Member,
+                       amount: int, reason: str = ""):
         try:
             if amount > 0:
-                result = add_xp(member.id, amount)
+                result = add_xp(member.id, amount, reason=reason)
                 if result["leveled_up"]:
-                    cap_str = f"/ {result['cap']}" if result["cap"] else "(MAX)"
+                    cap_str = f"/ {result['cap']:,}" if result["cap"] else "(MAX)"
+                    levels_str = (
+                        f"  *(+{result['levels_gained']} levelů)*"
+                        if result["levels_gained"] > 1 else ""
+                    )
                     embed = discord.Embed(
                         title="⬆️ Level Up!",
                         description=(
-                            f"{member.mention} dosáhl/a **{level_label(result['new_level'])}**!\n\n"
-                            f"XP: **{result['xp']}** {cap_str}\n"
+                            f"{member.mention} dosáhl/a **{level_label(result['new_level'])}**!{levels_str}\n\n"
+                            f"XP: **{result['xp']:,}** {cap_str}\n"
                             f"Získané SP: **{result['sp_gained']}**"
                         ),
                         color=0xf1c40f,
                     )
                     await interaction.response.send_message(embed=embed)
-                    # Upozornit hráče
                     try:
                         await interaction.followup.send(
                             content=member.mention,
                             embed=discord.Embed(
                                 title="⬆️ Level Up!",
                                 description=(
-                                    f"Dosáhl/a jsi **{level_label(result['new_level'])}**!\n\n"
+                                    f"Dosáhl/a jsi **{level_label(result['new_level'])}**!{levels_str}\n\n"
                                     f"Získal/a jsi **{result['sp_gained']} SP** — rozděl je přes `/sp`."
                                 ),
                                 color=0xf1c40f,
@@ -805,23 +896,23 @@ class Stats(commands.Cog):
                     except Exception as e:
                         logger.warning(f"[admin_xp] Failed to send followup: {e}")
                 else:
-                    cap_str = f"/ {result['cap']}" if result["cap"] else "(MAX)"
+                    cap_str = f"/ {result['cap']:,}" if result["cap"] else "(MAX)"
                     await interaction.response.send_message(
-                        f"✅ {member.mention} získal/a **+{amount} XP**. "
-                        f"Aktuálně: **{result['xp']}** {cap_str}",
+                        f"✅ {member.mention} získal/a **+{amount:,} XP**. "
+                        f"Aktuálně: **{result['xp']:,}** {cap_str}",
                         ephemeral=True,
                     )
-            else:
-                # Odebrat XP
-                data = _load()
-                uid  = str(member.id)
-                p    = _profile(data, uid)
-                p["xp"] = max(0, p["xp"] + amount)
-                _save(data)
+            elif amount < 0:
+                result = remove_xp(member.id, abs(amount), reason=reason)
+                cap_str = f"/ {result['cap']:,}" if result["cap"] else "(MAX)"
                 await interaction.response.send_message(
-                    f"✅ {member.mention} ztratil/a **{abs(amount)} XP**. "
-                    f"Aktuálně: **{p['xp']}**",
+                    f"✅ {member.mention} ztratil/a **{abs(amount):,} XP**. "
+                    f"Aktuálně: **{result['new_xp']:,}** {cap_str}",
                     ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(
+                    "❌ Zadej nenulové množství XP.", ephemeral=True
                 )
         except Exception as e:
             logger.exception(f"[admin_xp] Error: {e}")
@@ -862,6 +953,144 @@ class Stats(commands.Cog):
             await interaction.response.send_message(
                 f"❌ Chyba: {str(e)[:100]}",
                 ephemeral=True
+            )
+
+
+    # ── /xp-log ───────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="xp-log", description="Zobraz historii XP změn.")
+    @app_commands.describe(member="Hráč (výchozí: ty)")
+    async def xp_log_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
+        try:
+            target   = member or interaction.user
+            is_self  = (member is None or member.id == interaction.user.id)
+            is_admin = interaction.user.guild_permissions.administrator
+
+            # Cizí log může vidět jen admin
+            if not is_self and not is_admin:
+                await interaction.response.send_message(
+                    "❌ Nemáš oprávnění zobrazit XP log jiného hráče.", ephemeral=True
+                )
+                return
+
+            log = get_xp_log(target.id)  # od nejnovějšího
+            if not log:
+                await interaction.response.send_message(
+                    f"*{target.display_name} ještě nemá žádné záznamy v XP logu.*",
+                    ephemeral=True,
+                )
+                return
+
+            lines = []
+            for entry in log[:20]:  # max 20 zobrazených
+                delta      = entry["delta"]
+                sign       = "+" if delta >= 0 else ""
+                lvl_before = entry["level_before"]
+                lvl_after  = entry["level_after"]
+                ts         = entry["ts"][:16].replace("T", " ")  # "YYYY-MM-DD HH:MM"
+                reason     = entry.get("reason", "")
+
+                lvl_str = (
+                    f"  ⬆️ {level_label(lvl_before)} → **{level_label(lvl_after)}**"
+                    if lvl_after != lvl_before else ""
+                )
+                reason_str = f"  *{reason}*" if reason else ""
+                icon       = "📈" if delta >= 0 else "📉"
+                lines.append(
+                    f"{icon} `{ts}` **{sign}{delta:,} XP**{lvl_str}{reason_str}"
+                )
+
+            data  = _load()
+            p     = _profile(data, str(target.id))
+            level = p["level"]
+            xp    = p["xp"]
+            cap   = get_xp_cap(level)
+            cap_str = f"/ {cap:,}" if cap else "(MAX)"
+
+            embed = discord.Embed(
+                title=f"📜 XP Log — {target.display_name}",
+                description="\n".join(lines),
+                color=0x3498db,
+            )
+            embed.set_footer(
+                text=f"{level_label(level)}  ·  {xp:,} {cap_str} XP  ·  "
+                     f"zobrazeno {min(len(log), 20)} / {len(log)} záznamů"
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        except Exception as e:
+            logger.exception(f"[xp_log_cmd] Error: {e}")
+            await interaction.response.send_message(
+                f"❌ Chyba: {str(e)[:100]}", ephemeral=True
+            )
+
+    # ── /xp-leaderboard ───────────────────────────────────────────────────────
+
+    @app_commands.command(name="xp-leaderboard", description="Žebříček hráčů podle levelu a XP.")
+    async def xp_leaderboard_cmd(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer(ephemeral=False)
+
+            data = _load()
+            if not data:
+                await interaction.followup.send("*Žádní hráči ještě nemají profil.*")
+                return
+
+            # Seřadit: primárně level desc, sekundárně xp desc
+            entries = []
+            for uid, p in data.items():
+                if not isinstance(p, dict):
+                    continue
+                level = p.get("level", 0)
+                xp    = p.get("xp", 0)
+                entries.append((uid, level, xp))
+
+            entries.sort(key=lambda x: (x[1], x[2]), reverse=True)
+            top = entries[:15]
+
+            # Resolve Discord member names
+            guild      = interaction.guild
+            lines      = []
+            medals     = {1: "🥇", 2: "🥈", 3: "🥉"}
+            caller_uid = str(interaction.user.id)
+            caller_pos = next(
+                (i + 1 for i, (uid, *_) in enumerate(entries) if uid == caller_uid),
+                None,
+            )
+
+            for rank, (uid, level, xp) in enumerate(top, 1):
+                medal = medals.get(rank, f"`#{rank}`")
+                cap   = get_xp_cap(level)
+                cap_str = f"/ {cap:,}" if cap else "(MAX)"
+
+                try:
+                    member = guild.get_member(int(uid)) or await guild.fetch_member(int(uid))
+                    name   = member.display_name
+                except Exception:
+                    name = f"*Hráč {uid[-4:]}*"
+
+                bold_open  = "**" if uid == caller_uid else ""
+                bold_close = "**" if uid == caller_uid else ""
+                lines.append(
+                    f"{medal}  {bold_open}{name}{bold_close}  —  "
+                    f"{level_label(level)}  ·  {xp:,} {cap_str} XP"
+                )
+
+            footer_parts = [f"Celkem hráčů: {len(entries)}"]
+            if caller_pos and caller_pos > 15:
+                footer_parts.append(f"Tvoje pozice: #{caller_pos}")
+
+            embed = discord.Embed(
+                title="🏆 XP Žebříček",
+                description="\n".join(lines) if lines else "*Žádná data.*",
+
+                color=0xf1c40f,
+            )
+            embed.set_footer(text="  ·  ".join(footer_parts) + "  ·  Aurionis")
+            await interaction.followup.send(embed=embed)
+        except Exception as e:
+            logger.exception(f"[xp_leaderboard_cmd] Error: {e}")
+            await interaction.followup.send(
+                f"❌ Chyba: {str(e)[:100]}"
             )
 
 
