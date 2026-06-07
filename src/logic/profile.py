@@ -78,6 +78,7 @@ SVETLO_EMO  = "<:svetlo:1490166284741120120>"
 TEMNOTA_EMO = "<:temnota:1490166345516581034>"
 ROVNO_EMO   = "<:rovnovaha:1490166409458749671>"
 COIN        = "<:goldcoin:1490171741237018795>"
+SPIRIT_EMO  = "👻"
 
 def _heart_bar(current: int, maximum: int, slots: int = 10) -> str:
     if maximum <= 0:
@@ -248,6 +249,41 @@ def _apply_vliv_fury(profile: dict) -> None:
     profile["fury_cur"] = max(0, min(new_max, profile.get("fury_cur", 0) + delta))
 
 # ══════════════════════════════════════════════════════════════════════════════
+# STRÁŽNÝ DUCH — helper funkce
+# Duch je uložen v profile["guardian_spirit"] jako:
+#   { "name": str, "fury": int, "description": str, "equipped": bool }
+# Hráč může vlastnit víc duchů v profile["spirits"] (list), ale equipnutý
+# je vždy jen jeden — odkazuje na index v seznamu nebo None.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _get_equipped_spirit(profile: dict) -> dict | None:
+    """Vrátí equipnutého ducha nebo None."""
+    spirits = profile.get("spirits", [])
+    equipped_idx = profile.get("equipped_spirit_idx")
+    if equipped_idx is None or not (0 <= equipped_idx < len(spirits)):
+        return None
+    return spirits[equipped_idx]
+
+
+def _spirit_fury_bonus(profile: dict) -> int:
+    """Vrátí bonus furioku od equipnutého ducha (0 pokud žádný)."""
+    spirit = _get_equipped_spirit(profile)
+    return spirit["fury"] if spirit else 0
+
+
+def _fury_display(profile: dict) -> tuple[int, int, int]:
+    """
+    Vrátí (fury_cur, fury_max, spirit_bonus) pro zobrazení v profilu.
+    fury_cur a fury_max jsou hodnoty hráče BEZ ducha.
+    spirit_bonus je přičten jen vizuálně.
+    """
+    fury_cur    = profile.get("fury_cur", 0)
+    fury_max    = profile.get("fury_max", 0)
+    bonus       = _spirit_fury_bonus(profile)
+    return fury_cur, fury_max, bonus
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 
 class Profile(commands.Cog):
     def __init__(self, bot):
@@ -283,8 +319,8 @@ class Profile(commands.Cog):
         hunger_max = profile.get("hunger_max", 10)
         mana_cur   = profile.get("mana_cur", 0)
         mana_max   = profile.get("mana_max", 5)
-        fury_cur   = profile.get("fury_cur", 0)
-        fury_max   = profile.get("fury_max", 0)
+        fury_cur, fury_max, spirit_bonus = _fury_display(profile)
+        equipped_spirit = _get_equipped_spirit(profile)
         v_svetlo   = profile.get("vliv_svetlo",    0)
         v_temnota  = profile.get("vliv_temnota",   0)
         v_rovno    = profile.get("vliv_rovnovaha", 0)
@@ -297,7 +333,8 @@ class Profile(commands.Cog):
         hp_bar     = _heart_bar(hp_cur, hp_max)
         hunger_bar = _hunger_bar(hunger_cur, hunger_max)
         mana_bar   = _mana_bar(mana_cur, mana_max)
-        fury_bar   = _bar(fury_cur, fury_max)
+        fury_total = fury_cur + spirit_bonus
+        fury_bar   = _bar(fury_total, fury_max + spirit_bonus if fury_max > 0 else 1)
         xp_bar     = _bar(xp, cap if cap else 1)
 
         def_str = f"  ·  🛡️ **{total_def}** DEF" if total_def else ""
@@ -313,13 +350,20 @@ class Profile(commands.Cog):
 
         # Základní info
         lines.append(f"🎖️ Rank: **{profile.get('rank', 'F3')}**  ·  👤 Jméno: **{char_name}**  ·  {COIN} **{balance}** zlaťáků")
+        if equipped_spirit:
+            spirit_fury_str = f"+{equipped_spirit['fury']}" if equipped_spirit["fury"] > 0 else str(equipped_spirit["fury"])
+            lines.append(f"-# {SPIRIT_EMO} *Strážný duch: {equipped_spirit['name']} ({spirit_fury_str} {FU_EMO})*")
         lines.append("")
 
         # Stav
         lines.append(f"{HP_ON} Zdraví:  {hp_bar}  ·  {hp_cur}/{hp_max}{def_str}")
         lines.append(f"{MN_ON} Mana:  {mana_bar}  ·  {mana_cur}/{mana_max}")
         lines.append(f"{HN_ON} Hlad:  {hunger_bar}  ·  {hunger_cur}/{hunger_max}")
-        lines.append(f"{FU_EMO} Furioka:  {fury_bar}  ·  {fury_cur}/{fury_max}")
+        if spirit_bonus > 0:
+            fury_display_str = f"{fury_cur}/{fury_max}  *(+{spirit_bonus} od {equipped_spirit['name']})*"
+        else:
+            fury_display_str = f"{fury_cur}/{fury_max}"
+        lines.append(f"{FU_EMO} Furioka:  {fury_bar}  ·  {fury_display_str}")
         lines.append(f"·  **{level_label(level)}**  ·  {XP_EMO}  {xp_bar}  ·  {xp_str}{sp_str}")
 
         # Vliv
@@ -874,6 +918,192 @@ class Profile(commands.Cog):
     async def reset_error(self, interaction: discord.Interaction, error):
         if isinstance(error, app_commands.MissingPermissions):
             await interaction.response.send_message("Nemáš oprávnění.", ephemeral=True)
+
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STRÁŽNÝ DUCH — ADMIN PŘÍKAZY
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @app_commands.command(
+        name="duch-pridat",
+        description="[DM] Přidá hráči nového strážného ducha.",
+    )
+    @app_commands.describe(
+        member="Hráč",
+        name="Jméno ducha (např. Arion)",
+        fury="Kolik furioku duch přináší",
+        description="Krátký popis ducha (volitelné, zobrazí se v /duch-seznam)",
+    )
+    async def duch_pridat(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+        name: str,
+        fury: int,
+        description: str = "",
+    ):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM.")
+            return
+        if fury < 0:
+            await interaction.followup.send("❌ Furioka musí být nezáporné číslo.")
+            return
+
+        data    = load_data()
+        uid     = str(member.id)
+        profile = data.setdefault(uid, {})
+        spirits = profile.setdefault("spirits", [])
+
+        # Zabráň duplicitnímu jménu
+        if any(s["name"].lower() == name.lower() for s in spirits):
+            await interaction.followup.send(
+                f"❌ Hráč **{member.display_name}** už má ducha jménem **{name}**."
+            )
+            return
+
+        spirit = {"name": name, "fury": fury, "description": description}
+        spirits.append(spirit)
+        save_data(data)
+
+        await interaction.followup.send(
+            f"✅ Duch **{name}** ({fury} {FU_EMO}) přidán hráči **{member.display_name}**. Použij `/duch-equip` k equipnutí.",
+        )
+
+
+
+    @app_commands.command(
+        name="duch-equip",
+        description="[DM] Equipni hráči strážného ducha.",
+    )
+    @app_commands.describe(
+        member="Hráč",
+        name="Jméno ducha k equipnutí",
+    )
+    async def duch_equip(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+        name: str,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM.")
+            return
+
+        data    = load_data()
+        uid     = str(member.id)
+        profile = data.get(uid)
+        if not profile:
+            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
+            return
+
+        spirits = profile.get("spirits", [])
+        idx = next(
+            (i for i, s in enumerate(spirits) if s["name"].lower() == name.lower()),
+            None,
+        )
+        if idx is None:
+            names = ", ".join(s["name"] for s in spirits) or "žádní"
+            await interaction.followup.send(
+                f"❌ Hráč nemá ducha jménem **{name}**. Dostupní duchové: {names}"
+            )
+
+
+            return
+
+        old_idx = profile.get("equipped_spirit_idx")
+        profile["equipped_spirit_idx"] = idx
+        save_data(data)
+
+        spirit = spirits[idx]
+        old_str = f" *(byl equipnut: {spirits[old_idx]['name']})*" if old_idx is not None and old_idx != idx else ""
+        await interaction.followup.send(
+            f"✅ **{member.display_name}** má nyní equipnutého ducha **{spirit['name']}** "
+            f"({spirit['fury']} {FU_EMO}).{old_str}"
+        )
+
+    @app_commands.command(
+        name="duch-unequip",
+        description="[DM] Odequipni strážného ducha hráče.",
+    )
+    @app_commands.describe(member="Hráč")
+    async def duch_unequip(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM.")
+            return
+
+        data    = load_data()
+        uid     = str(member.id)
+        profile = data.get(uid)
+        if not profile:
+            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
+            return
+
+        spirit = _get_equipped_spirit(profile)
+        if spirit is None:
+            await interaction.followup.send(
+                f"ℹ️ **{member.display_name}** nemá žádného equipnutého ducha."
+            )
+            return
+
+        old_name = spirit["name"]
+        profile["equipped_spirit_idx"] = None
+        save_data(data)
+        await interaction.followup.send(
+            f"✅ Duch **{old_name}** byl odequipnut od **{member.display_name}**."
+        )
+
+    @app_commands.command(
+        name="duch-seznam",
+        description="Zobraz seznam strážných duchů hráče.",
+    )
+    @app_commands.describe(member="Hráč (výchozí: ty)")
+    async def duch_seznam(
+        self,
+        interaction: discord.Interaction,
+        member: Optional[discord.Member] = None,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        target  = member or interaction.user
+        data    = load_data()
+        uid     = str(target.id)
+        profile = data.get(uid)
+
+        if not profile:
+            await interaction.followup.send(f"❌ **{target.display_name}** nemá profil.")
+            return
+
+        spirits     = profile.get("spirits", [])
+        equipped_idx = profile.get("equipped_spirit_idx")
+
+        if not spirits:
+            await interaction.followup.send(
+                f"*{target.display_name} nemá žádného strážného ducha.*"
+            )
+            return
+
+        lines = []
+        for i, s in enumerate(spirits):
+            eq_mark = " ◀ *equipnutý*" if i == equipped_idx else ""
+            desc    = f"-# *{s["description"]}*" if s.get("description") else ""
+
+            lines.append(
+                f"{SPIRIT_EMO} **{s['name']}** — {s['fury']} {FU_EMO}{eq_mark}{desc}"
+            )
+
+        embed = discord.Embed(
+            title=f"{SPIRIT_EMO} Strážní duchové — {target.display_name}",
+            description="\n".join(lines),
+
+            color=0x9b59b6,
+        )
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot):
