@@ -281,7 +281,7 @@ def _spirit_embed(s: dict, title: str = None) -> discord.Embed:
     embed.add_field(name="Furioka", value=f"{s['fury']} {FU_EMO}",     inline=True)
     xp_thresh = s.get("xp_threshold", rank_xp_threshold(s["rank"]))
     embed.add_field(
-        name="Progres",
+        name="Progress",
         value=f"XP: **{s.get('xp', 0)}** / {xp_thresh}  ·  Celkem: {s.get('total_xp', 0)}",
         inline=False,
     )
