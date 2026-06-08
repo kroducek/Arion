@@ -14,26 +14,32 @@ ARION_NAME = "Aurionis"
 
 # ── Skupiny a barvy ───────────────────────────────────────────────────────────
 
-GROUP_ORDER = ["Furioku", "Magie", "Pasivky", "Temnota", "Světlo", "Základní", "Výzbroj", "Unikátní"]
+GROUP_ORDER = ["Furioku", "Magie", "Pasivky", "Útočné", "Posilovací", "Rovnováha", "Temnota", "Světlo", "Základní", "Výzbroj", "Unikátní"]
 GROUP_EMOJI = {
-    "Furioku":  "👻",
-    "Magie":    "🔮",
-    "Pasivky":  "🛡️",
-    "Temnota":  "🌑",
-    "Světlo":   "☀️",
-    "Základní": "📚",
-    "Výzbroj":  "⚔️",
-    "Unikátní": "⭐",
+    "Furioku":    "👻",
+    "Magie":      "🔮",
+    "Pasivky":    "🛡️",
+    "Útočné":     "🗡️",
+    "Posilovací": "💪",
+    "Rovnováha":  "⚖️",
+    "Temnota":    "🌑",
+    "Světlo":     "☀️",
+    "Základní":   "📚",
+    "Výzbroj":    "⚔️",
+    "Unikátní":   "⭐",
 }
 GROUP_COLOR = {
-    "Furioku":  0x7B68EE,
-    "Magie":    0x9B59B6,
-    "Pasivky":  0x95A5A6,
-    "Temnota":  0x2C2F33,
-    "Světlo":   0xFFD700,
-    "Základní": 0x5D6D7E,
-    "Výzbroj":  0xB7950B,
-    "Unikátní": 0xFF6B35,
+    "Furioku":    0x7B68EE,
+    "Magie":      0x9B59B6,
+    "Pasivky":    0x95A5A6,
+    "Útočné":     0xC0392B,
+    "Posilovací": 0xE67E22,
+    "Rovnováha":  0x1ABC9C,
+    "Temnota":    0x2C2F33,
+    "Světlo":     0xFFD700,
+    "Základní":   0x5D6D7E,
+    "Výzbroj":    0xB7950B,
+    "Unikátní":   0xFF6B35,
 }
 
 # ── Seed databáze perků ───────────────────────────────────────────────────────
@@ -1033,6 +1039,14 @@ def _progress_bar(used: int, max_: int = PROGRESS_MAX) -> str:
 
 # ── Migrace ───────────────────────────────────────────────────────────────────
 
+def _load_connections():
+    """Načte uložená propojení perků do runtime _NEXT_TIER dict."""
+    perks = load_perks()
+    for from_id, to_id in perks.get("_connections", {}).items():
+        if from_id not in _NEXT_TIER:
+            _NEXT_TIER[from_id] = to_id
+
+
 def _migrate_perks():
     perks   = load_perks()
     changed = False
@@ -1040,6 +1054,9 @@ def _migrate_perks():
         if lid in perks:
             del perks[lid]
             changed = True
+    for pid in list(perks.keys()):
+        if pid == "_connections":
+            continue  # přeskoč interní klíč
     for pid, seed in _SEED_PERKS.items():
         if pid not in perks:
             perks[pid] = seed
@@ -1209,6 +1226,7 @@ class PerksCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         _migrate_perks()
+        _load_connections()
 
     # ── /perks skupina ───────────────────────────────────────────────────────
 
@@ -1491,7 +1509,7 @@ class PerksCog(commands.Cog):
     ):
         try:
             # Zvaliduj group
-            valid_groups = ["Furioku", "Magie", "Pasivky", "Temnota", "Světlo", "Základní", "Výzbroj", "Unikátní"]
+            valid_groups = GROUP_ORDER
             if group not in valid_groups:
                 await interaction.response.send_message(
                     f"❌ Neznámá skupina: `{group}`. Platné: {', '.join(valid_groups)}", ephemeral=True
@@ -1648,6 +1666,100 @@ class PerksCog(commands.Cog):
             await interaction.followup.send(
                 f"✅ Progres přidán — **{perk['name']}** {bar}  ({member.display_name})", ephemeral=True
             )
+
+    @perk_group.command(name="connect", description="Propoj základní perky I. II. III. (admin)")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(
+        perk_1="ID perku I. tier (výchozí/základní)",
+        perk_2="ID perku II. tier (volitelné)",
+        perk_3="ID perku III. tier (volitelné)",
+    )
+    async def perk_connect(
+        self,
+        interaction: discord.Interaction,
+        perk_1: str,
+        perk_2: str = "",
+        perk_3: str = "",
+    ):
+        """
+        Propojí perky do řetězce I → II → III tak, že /perk progress
+        automaticky evolvuje na správný další tier.
+        Funguje pro perky jejichž ID nesleduje _1/_2/_3 konvenci.
+        Uloží mapping do NEXT_TIER v runtime (a trvale do perks.json pod klíčem "_connect").
+        """
+        await interaction.response.defer(ephemeral=True)
+        all_perks = load_perks()
+
+        # Validace — všechny zadané perky musí existovat
+        ids = [p.strip() for p in [perk_1, perk_2, perk_3] if p.strip()]
+        if len(ids) < 2:
+            await interaction.followup.send("❌ Zadej alespoň perk I. a II. tier.", ephemeral=True)
+            return
+
+        missing = [pid for pid in ids if pid not in all_perks]
+        if missing:
+            await interaction.followup.send(
+                f"❌ Perky nenalezeny v databázi: `{'`, `'.join(missing)}`", ephemeral=True
+            )
+            return
+
+        # Zkontroluj, že jsou všechny learnable
+        not_learnable = [pid for pid in ids if not all_perks[pid].get("learnable")]
+        if not_learnable:
+            names = ", ".join(f"**{all_perks[p]['name']}**" for p in not_learnable)
+            await interaction.followup.send(
+                f"❌ Tyto perky nejsou `learnable` — nastav jim `learnable=true` přes `/perk edit` nejdřív:\n{names}",
+
+                ephemeral=True,
+            )
+            return
+
+        # Ulož propojení do perks.json pod speciálním klíčem "_connections"
+        connections: dict = all_perks.get("_connections", {})
+        changed_pairs = []
+        for i in range(len(ids) - 1):
+            from_id = ids[i]
+            to_id   = ids[i + 1]
+            old_target = connections.get(from_id)
+            connections[from_id] = to_id
+            # Aktualizuj i runtime _NEXT_TIER dict
+            _NEXT_TIER[from_id] = to_id
+            changed_pairs.append((from_id, to_id, old_target))
+
+        all_perks["_connections"] = connections
+        save_perks(all_perks)
+
+        # Embednout přehled propojení
+        lines = []
+        for from_id, to_id, old_target in changed_pairs:
+            from_name = all_perks[from_id]["name"]
+            to_name   = all_perks[to_id]["name"]
+            old_str   = f" *(bylo: `{old_target}`)*" if old_target and old_target != to_id else ""
+            lines.append(f"▸ **{from_name}** → **{to_name}**{old_str}")
+
+        chain_names = " → ".join(all_perks[pid]["name"] for pid in ids)
+        embed = discord.Embed(
+            title="🔗 Perky propojeny",
+            description=f"Řetězec: {chain_names}\n\n" + "\n".join(lines),
+
+
+
+            color=0x1ABC9C,
+        )
+        embed.set_footer(text=f"⭐ {ARION_NAME}  ·  /perk progress nyní evolvuje správně")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @perk_connect.autocomplete("perk_1")
+    @perk_connect.autocomplete("perk_2")
+    @perk_connect.autocomplete("perk_3")
+    async def _autocomplete_connect(self, interaction: discord.Interaction, current: str):
+        perks = load_perks()
+        return [
+            app_commands.Choice(name=f"{p['name']} ({pid})", value=pid)
+            for pid, p in perks.items()
+            if pid != "_connections"
+            and (current.lower() in pid.lower() or current.lower() in p.get("name", "").lower())
+        ][:25]
 
     @perk_group.command(name="new", description="Vytvoř nový perk v databázi (admin)")
     @app_commands.checks.has_permissions(administrator=True)
