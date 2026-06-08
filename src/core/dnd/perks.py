@@ -1247,32 +1247,23 @@ class PerksCog(commands.Cog):
             await interaction.response.send_message(msg, ephemeral=True)
             return
 
-        unique_list:   list[tuple[str, dict]] = []
-        cooldown_list: list[tuple[str, dict]] = []
-        zakladni_list: list[tuple[str, dict]] = []
-        vyzboj_list:   list[tuple[str, dict]] = []
-        passive_list:  list[tuple[str, dict]] = []
+        # Roztřiď perky do skupin podle group field — stejné skupiny jako /perk add
+        grouped: dict[str, list[tuple[str, dict]]] = {g: [] for g in GROUP_ORDER}
+        no_group: list[tuple[str, dict]] = []
 
         for pid in owned:
             p = all_perks.get(pid)
-            if not p:
+            if not p or pid == "_connections":
                 continue
-            if p.get("unique"):
-                unique_list.append((pid, p))
-            elif not p.get("passive"):
-                cooldown_list.append((pid, p))
-            elif p.get("learnable") and p.get("group") == "Výzbroj":
-                vyzboj_list.append((pid, p))
-            elif p.get("learnable"):
-                zakladni_list.append((pid, p))
+            grp = p.get("group", "")
+            if grp in grouped:
+                grouped[grp].append((pid, p))
             else:
-                passive_list.append((pid, p))
+                no_group.append((pid, p))
 
         def fmt_entry(pid: str, p: dict) -> list[str]:
-            gemoji      = GROUP_EMOJI.get(p.get("group", ""), "▸")
-            passive_tag = " *(pasivní)*" if p.get("passive") else ""
-            lines = [f"▸ {gemoji} **{p['name']}**{passive_tag}"]
-            cd_str  = _cooldown_status(player, pid, p)
+            passive_tag = "  *(pasivní)*" if p.get("passive") else ""
+            cd_str      = _cooldown_status(player, pid, p)
             sub_parts: list[str] = []
             if cd_str:
                 sub_parts.append(cd_str)
@@ -1280,38 +1271,46 @@ class PerksCog(commands.Cog):
                 prog = player.get("progress", {}).get(pid, 0)
                 sub_parts.append(f"⬆️ {_progress_bar(prog)}")
             sub_parts.append(f"`{pid}`")
-            lines.append("-# " + "  ·  ".join(sub_parts))
-            return lines
+            return [
+                f"▸ **{p['name']}**{passive_tag}",
+                "-# " + "  ·  ".join(sub_parts),
+            ]
 
-        sections: list[str] = []
-        if unique_list:
-            sections.append("\n⭐ **Unikátní**")
-            for pid, p in unique_list:
-                sections.extend(fmt_entry(pid, p))
-        if cooldown_list:
-            sections.append("\n⚡ **S Cooldownem**")
-            for pid, p in cooldown_list:
-                sections.extend(fmt_entry(pid, p))
-        if zakladni_list:
-            sections.append("\n📚 **Základní dovednosti**")
-            for pid, p in zakladni_list:
-                sections.extend(fmt_entry(pid, p))
-        if vyzboj_list:
-            sections.append("\n⚔️ **Výzbroj**")
-            for pid, p in vyzboj_list:
-                sections.extend(fmt_entry(pid, p))
-        if passive_list:
-            sections.append("\n🛡️ **Pasivní**")
-            for pid, p in passive_list:
-                sections.extend(fmt_entry(pid, p))
-
+        # Sestav embed — každá skupina = jeden embed field
         is_self = target.id == interaction.user.id
         title   = "Tvoje perky" if is_self else f"Perky — {target.display_name}"
-        desc    = f"### 🏷️ {title}" + "\n".join(sections)
-        desc   += f"\n\n-# *Celkem perků: {len(owned)}  ·  /perk use — aktivuj perk*"
+        color   = 0x7B68EE  # výchozí, přebije se barvou první neprázdné skupiny
 
-        embed = discord.Embed(description=desc, color=0x7B68EE)
-        embed.set_footer(text=f"⭐ {ARION_NAME}")
+        embed = discord.Embed(title=f"🏷️ {title}", color=color)
+
+        first_color_set = False
+        for grp in GROUP_ORDER:
+            entries = grouped.get(grp, [])
+            if not entries:
+                continue
+            if not first_color_set:
+                embed.color = GROUP_COLOR.get(grp, 0x7B68EE)
+                first_color_set = True
+            gemoji   = GROUP_EMOJI.get(grp, "▸")
+            lines: list[str] = []
+            for pid, p in entries:
+                lines.extend(fmt_entry(pid, p))
+            embed.add_field(
+                name=f"{gemoji} {grp}",
+                value="\n".join(lines),
+
+                inline=False,
+            )
+
+        # Perky bez skupiny (fallback)
+        if no_group:
+            lines = []
+            for pid, p in no_group:
+                lines.extend(fmt_entry(pid, p))
+            embed.add_field(name="❓ Ostatní", value="\n".join(lines), inline=False)
+
+
+        embed.set_footer(text=f"Celkem perků: {len(owned)}  ·  /perk use — aktivuj perk  ·  ⭐ {ARION_NAME}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @perks_group.command(name="give", description="Přiřaď perk hráči (admin)")
