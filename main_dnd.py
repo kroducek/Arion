@@ -77,6 +77,7 @@ DND_COGS = [
     "src.logic.memory",
     "src.logic.reputation",
     "src.logic.economy",
+    "src.logic.spirits",
 ]
 
 class ArionDND(commands.Bot):
