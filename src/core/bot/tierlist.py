@@ -1,5 +1,5 @@
 """Tierlist Cog – Arion Bot
-Hráči si mohou vytvářet tierlistry, přidávat položky a řadit je do tierů.
+Hráči si mohou vytvářet tierlistry, přidávat položky, řadit je do tierů a hlasovat.
 """
 
 import discord
@@ -45,41 +45,51 @@ def save_tierlists(data: dict):
 def tierlist_key(guild_id: int, name: str) -> str:
     return f"{guild_id}:{name.lower()}"
 
+def get_votes(tl: dict, item_name: str) -> int:
+    """Vrátí počet hlasů pro danou položku."""
+    return len(tl.get("votes", {}).get(item_name.lower(), {}).get("voters", []))
+
+def format_item(tl: dict, item_name: str) -> str:
+    """Formátuje položku pro embed — přidá [N] pokud má hlasy."""
+    votes = get_votes(tl, item_name)
+    return f"`{item_name} [{votes}]`" if votes else f"`{item_name}`"
+
 # ── Embed builder ──────────────────────────────────────────────────────────────
 
-def build_tierlist_embed(name: str, tierlist: dict) -> discord.Embed:
-    tiers = tierlist.get("tiers", {})
-    tier_order = tierlist.get("tier_order", DEFAULT_TIERS)
+def build_tierlist_embed(name: str, tl: dict) -> discord.Embed:
+    tiers = tl.get("tiers", {})
+    tier_order = tl.get("tier_order", DEFAULT_TIERS)
 
-    embed = discord.Embed(
-        title=f"🏆 Tierlist: {name}",
-        color=0xFFD700,
-    )
-    embed.set_footer(text=f"Vytvořil: {tierlist.get('author', '?')} • Položky lze přidávat přes /tierlist pridat")
+    embed = discord.Embed(title=f"🏆 Tierlist: {name}", color=0xFFD700)
+    embed.set_footer(text=f"Vytvořil: {tl.get('author', '?')} • /tierlist add | /tierlist vote")
 
     has_any = False
     for tier in tier_order:
         items = tiers.get(tier, [])
         if items:
             has_any = True
-        color_dot = _tier_dot(tier)
-        embed.add_field(
-            name=f"{color_dot} **{tier}**",
-            value=", ".join(f"`{i}`" for i in items) if items else "*prázdný*",
-            inline=False,
-        )
+        dot = _tier_dot(tier)
+        value = ", ".join(format_item(tl, i) for i in items) if items else "*empty*"
+        embed.add_field(name=f"{dot} **{tier}**", value=value, inline=False)
 
     if not has_any:
-        embed.description = "*Tierlist je zatím prázdný. Přidej položky přes `/tierlist pridat`.*"
+        embed.description = "*Tierlist is empty. Add items via `/tierlist add`.*"
 
     return embed
 
 def _tier_dot(tier: str) -> str:
-    dots = {
+    return {
         "S+": "🩷", "S": "🔴", "A": "🟠", "B": "🟡",
         "C": "🟢", "D": "🔵", "E": "🟣", "F": "⚫",
-    }
-    return dots.get(tier, "⚪")
+    }.get(tier, "⚪")
+
+def _find_item(tl: dict, item_name: str) -> tuple[str | None, str | None]:
+    """Najde položku v tierlistu bez ohledu na velikost písmen. Vrátí (tier, přesný název)."""
+    for tier, items in tl.get("tiers", {}).items():
+        for i in items:
+            if i.lower() == item_name.lower():
+                return tier, i
+    return None, None
 
 # ── Cog ───────────────────────────────────────────────────────────────────────
 
@@ -87,81 +97,62 @@ class TierlistCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    tierlist = app_commands.Group(
-        name="tierlist",
-        description="Správa tierlistů",
-    )
+    tierlist = app_commands.Group(name="tierlist", description="Tierlist management")
 
-    # ── /tierlist vytvorit ─────────────────────────────────────────────────────
+    # ── /tierlist create ──────────────────────────────────────────────────────
 
-    @tierlist.command(name="vytvorit", description="Vytvoří nový tierlist.")
+    @tierlist.command(name="create", description="Create a new tierlist.")
     @app_commands.describe(
-        nazev="Název tierlistu (např. 'gaming' nebo 'nas skvely tierlist')",
-        tiery="Volitelné vlastní tiery oddělené čárkou (např. 'S+,S,A,B,C,F'). Výchozí: S+,S,A,B,C,D,E,F",
+        name="Tierlist name (e.g. 'gaming' or 'best movies')",
+        tiers="Optional custom tiers separated by commas (e.g. 'S+,S,A,B,C,F'). Default: S+,S,A,B,C,D,E,F",
     )
-    async def vytvorit(
-        self,
-        interaction: discord.Interaction,
-        nazev: str,
-        tiery: Optional[str] = None,
-    ):
+    async def create(self, interaction: discord.Interaction, name: str, tiers: Optional[str] = None):
         data = load_tierlists()
-        key = tierlist_key(interaction.guild_id, nazev)
+        key = tierlist_key(interaction.guild_id, name)
 
         if key in data:
             await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=f"❌ Tierlist **{nazev}** již existuje!",
-                    color=0xFF4444,
-                ),
+                embed=discord.Embed(description=f"❌ Tierlist **{name}** already exists!", color=0xFF4444),
                 ephemeral=True,
             )
             return
 
-        tier_order = [t.strip() for t in tiery.split(",")] if tiery else DEFAULT_TIERS
+        tier_order = [t.strip() for t in tiers.split(",")] if tiers else DEFAULT_TIERS
         tier_order = [t for t in tier_order if t]
 
         data[key] = {
-            "name": nazev,
+            "name": name,
             "author": interaction.user.display_name,
             "author_id": interaction.user.id,
             "tier_order": tier_order,
             "tiers": {tier: [] for tier in tier_order},
+            "votes": {},
         }
         save_tierlists(data)
 
         embed = discord.Embed(
-            title="✅ Tierlist vytvořen!",
-            description=f"**{nazev}** je připraven.\nTiery: {' › '.join(tier_order)}",
+            title="✅ Tierlist created!",
+            description=f"**{name}** is ready.\nTiers: {' › '.join(tier_order)}",
             color=0x2ECC71,
         )
-        embed.set_footer(text="Přidej položky přes /tierlist pridat")
+        embed.set_footer(text="Add items via /tierlist add")
         await interaction.response.send_message(embed=embed)
 
-    # ── /tierlist pridat ───────────────────────────────────────────────────────
+    # ── /tierlist add ─────────────────────────────────────────────────────────
 
-    @tierlist.command(name="pridat", description="Přidá položku do tieru.")
+    @tierlist.command(name="add", description="Add an item to a tier.")
     @app_commands.describe(
-        nazev="Název tierlistu",
-        polozka="Co chceš přidat (např. 'Minecraft' nebo 'Pizza')",
-        tier="Do jakého tieru zařadit (např. S, A, B…)",
+        name="Tierlist name",
+        item="Item to add (e.g. 'Minecraft' or 'Pizza')",
+        tier="Which tier to place it in (e.g. S, A, B…)",
     )
-    async def pridat(
-        self,
-        interaction: discord.Interaction,
-        nazev: str,
-        polozka: str,
-        tier: str,
-    ):
+    async def add(self, interaction: discord.Interaction, name: str, item: str, tier: str):
         data = load_tierlists()
-        key = tierlist_key(interaction.guild_id, nazev)
+        key = tierlist_key(interaction.guild_id, name)
 
         if key not in data:
             await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=f"❌ Tierlist **{nazev}** neexistuje. Vytvoř ho přes `/tierlist vytvorit`.",
-                    color=0xFF4444,
-                ),
+                embed=discord.Embed(description=f"❌ Tierlist **{name}** doesn't exist. Create it via `/tierlist create`.", color=0xFF4444),
                 ephemeral=True,
             )
             return
@@ -170,58 +161,45 @@ class TierlistCog(commands.Cog):
         tier_upper = tier.upper()
 
         if tier_upper not in tl["tiers"]:
-            dostupne = ", ".join(tl["tier_order"])
+            available = ", ".join(tl["tier_order"])
             await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=f"❌ Tier **{tier}** neexistuje.\nDostupné tiery: `{dostupne}`",
-                    color=0xFF4444,
-                ),
+                embed=discord.Embed(description=f"❌ Tier **{tier}** doesn't exist.\nAvailable: `{available}`", color=0xFF4444),
                 ephemeral=True,
             )
             return
 
-        for t, items in tl["tiers"].items():
-            if polozka.lower() in [i.lower() for i in items]:
-                await interaction.response.send_message(
-                    embed=discord.Embed(
-                        description=f"⚠️ **{polozka}** už je v tieru **{t}**!",
-                        color=0xFFA500,
-                    ),
-                    ephemeral=True,
-                )
-                return
+        existing_tier, _ = _find_item(tl, item)
+        if existing_tier:
+            await interaction.response.send_message(
+                embed=discord.Embed(description=f"⚠️ **{item}** is already in tier **{existing_tier}**!", color=0xFFA500),
+                ephemeral=True,
+            )
+            return
 
-        tl["tiers"][tier_upper].append(polozka)
+        tl["tiers"][tier_upper].append(item)
+        if "votes" not in tl:
+            tl["votes"] = {}
         save_tierlists(data)
 
         dot = _tier_dot(tier_upper)
-        embed = discord.Embed(
-            description=f"✅ **{polozka}** přidán/a do tieru {dot} **{tier_upper}** v tierlistu **{tl['name']}**!",
-            color=TIER_COLORS.get(tier_upper, 0x5865F2),
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                description=f"✅ **{item}** added to {dot} **{tier_upper}** in **{tl['name']}**!",
+                color=TIER_COLORS.get(tier_upper, 0x5865F2),
+            )
         )
-        await interaction.response.send_message(embed=embed)
 
-    # ── /tierlist presunout ────────────────────────────────────────────────────
+    # ── /tierlist move ────────────────────────────────────────────────────────
 
-    @tierlist.command(name="presunout", description="Přesune položku do jiného tieru.")
-    @app_commands.describe(
-        nazev="Název tierlistu",
-        polozka="Položka kterou chceš přesunout",
-        tier="Nový tier",
-    )
-    async def presunout(
-        self,
-        interaction: discord.Interaction,
-        nazev: str,
-        polozka: str,
-        tier: str,
-    ):
+    @tierlist.command(name="move", description="Move an item to a different tier.")
+    @app_commands.describe(name="Tierlist name", item="Item to move", tier="New tier")
+    async def move(self, interaction: discord.Interaction, name: str, item: str, tier: str):
         data = load_tierlists()
-        key = tierlist_key(interaction.guild_id, nazev)
+        key = tierlist_key(interaction.guild_id, name)
 
         if key not in data:
             await interaction.response.send_message(
-                embed=discord.Embed(description=f"❌ Tierlist **{nazev}** neexistuje.", color=0xFF4444),
+                embed=discord.Embed(description=f"❌ Tierlist **{name}** doesn't exist.", color=0xFF4444),
                 ephemeral=True,
             )
             return
@@ -230,71 +208,114 @@ class TierlistCog(commands.Cog):
         tier_upper = tier.upper()
 
         if tier_upper not in tl["tiers"]:
-            dostupne = ", ".join(tl["tier_order"])
+            available = ", ".join(tl["tier_order"])
             await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=f"❌ Tier **{tier}** neexistuje.\nDostupné: `{dostupne}`",
-                    color=0xFF4444,
-                ),
+                embed=discord.Embed(description=f"❌ Tier **{tier}** doesn't exist.\nAvailable: `{available}`", color=0xFF4444),
                 ephemeral=True,
             )
             return
 
-        stary_tier = None
-        for t, items in tl["tiers"].items():
-            for i in items:
-                if i.lower() == polozka.lower():
-                    stary_tier = t
-                    items.remove(i)
-                    break
-            if stary_tier:
-                break
-
-        if not stary_tier:
+        old_tier, exact_name = _find_item(tl, item)
+        if not old_tier:
             await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=f"❌ Položka **{polozka}** nebyla nalezena v tierlistu **{tl['name']}**.",
-                    color=0xFF4444,
-                ),
+                embed=discord.Embed(description=f"❌ Item **{item}** not found in **{tl['name']}**.", color=0xFF4444),
                 ephemeral=True,
             )
             return
 
-        tl["tiers"][tier_upper].append(polozka)
+        tl["tiers"][old_tier].remove(exact_name)
+        tl["tiers"][tier_upper].append(exact_name)
         save_tierlists(data)
 
         dot = _tier_dot(tier_upper)
-        embed = discord.Embed(
-            description=f"🔀 **{polozka}** přesunut/a z **{stary_tier}** → {dot} **{tier_upper}**",
-            color=TIER_COLORS.get(tier_upper, 0x5865F2),
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                description=f"🔀 **{exact_name}** moved from **{old_tier}** → {dot} **{tier_upper}**",
+                color=TIER_COLORS.get(tier_upper, 0x5865F2),
+            )
         )
-        await interaction.response.send_message(embed=embed)
 
-    # ── /tierlist zobrazit ─────────────────────────────────────────────────────
+    # ── /tierlist vote ────────────────────────────────────────────────────────
 
-    @tierlist.command(name="zobrazit", description="Zobrazí tierlist.")
-    @app_commands.describe(nazev="Název tierlistu")
-    async def zobrazit(self, interaction: discord.Interaction, nazev: str):
+    @tierlist.command(name="vote", description="Vote for an item in a tierlist.")
+    @app_commands.describe(
+        name="Tierlist name",
+        item="Item you want to vote for",
+    )
+    async def vote(self, interaction: discord.Interaction, name: str, item: str):
         data = load_tierlists()
-        key = tierlist_key(interaction.guild_id, nazev)
+        key = tierlist_key(interaction.guild_id, name)
 
         if key not in data:
             await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=f"❌ Tierlist **{nazev}** neexistuje.",
-                    color=0xFF4444,
-                ),
+                embed=discord.Embed(description=f"❌ Tierlist **{name}** doesn't exist.", color=0xFF4444),
                 ephemeral=True,
             )
             return
 
-        embed = build_tierlist_embed(nazev, data[key])
-        await interaction.response.send_message(embed=embed)
+        tl = data[key]
+        _, exact_name = _find_item(tl, item)
 
-    # ── /tierlist seznam ───────────────────────────────────────────────────────
+        if not exact_name:
+            await interaction.response.send_message(
+                embed=discord.Embed(description=f"❌ Item **{item}** not found in **{tl['name']}**.", color=0xFF4444),
+                ephemeral=True,
+            )
+            return
 
-    @tierlist.command(name="seznam", description="Zobrazí všechny tierlistry na tomto serveru.")
-    async def seznam(self, interaction: discord.Interaction):
+        if "votes" not in tl:
+            tl["votes"] = {}
+
+        item_key = exact_name.lower()
+        if item_key not in tl["votes"]:
+            tl["votes"][item_key] = {"voters": []}
+
+        voters = tl["votes"][item_key]["voters"]
+        user_id = interaction.user.id
+
+        if user_id in voters:
+            # Unvote
+            voters.remove(user_id)
+            save_tierlists(data)
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description=f"🗳️ Removed your vote from **{exact_name}**. *(now {len(voters)} votes)*",
+                    color=0x808080,
+                ),
+                ephemeral=True,
+            )
+        else:
+            voters.append(user_id)
+            save_tierlists(data)
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    description=f"✅ Voted for **{exact_name}**! *(now {len(voters)} votes)*",
+                    color=0x2ECC71,
+                ),
+                ephemeral=True,
+            )
+
+    # ── /tierlist show ────────────────────────────────────────────────────────
+
+    @tierlist.command(name="show", description="Show a tierlist.")
+    @app_commands.describe(name="Tierlist name")
+    async def show(self, interaction: discord.Interaction, name: str):
+        data = load_tierlists()
+        key = tierlist_key(interaction.guild_id, name)
+
+        if key not in data:
+            await interaction.response.send_message(
+                embed=discord.Embed(description=f"❌ Tierlist **{name}** doesn't exist.", color=0xFF4444),
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.send_message(embed=build_tierlist_embed(name, data[key]))
+
+    # ── /tierlist list ────────────────────────────────────────────────────────
+
+    @tierlist.command(name="list", description="Show all tierlists on this server.")
+    async def list_tierlists(self, interaction: discord.Interaction):
         data = load_tierlists()
         prefix = f"{interaction.guild_id}:"
         server_lists = {k: v for k, v in data.items() if k.startswith(prefix)}
@@ -302,88 +323,75 @@ class TierlistCog(commands.Cog):
         if not server_lists:
             await interaction.response.send_message(
                 embed=discord.Embed(
-                    description="📭 Na tomto serveru zatím nejsou žádné tierlistry.\nVytvoř první přes `/tierlist vytvorit`!",
+                    description="📭 No tierlists on this server yet.\nCreate one via `/tierlist create`!",
                     color=0x5865F2,
                 ),
                 ephemeral=True,
             )
             return
 
-        embed = discord.Embed(title="📋 Tierlistry na tomto serveru", color=0x5865F2)
+        embed = discord.Embed(title="📋 Tierlists on this server", color=0x5865F2)
         for k, tl in server_lists.items():
             tier_order = tl.get("tier_order", DEFAULT_TIERS)
             total_items = sum(len(v) for v in tl["tiers"].values())
+            total_votes = sum(
+                len(v.get("voters", [])) for v in tl.get("votes", {}).values()
+            )
             embed.add_field(
                 name=f"🏆 {tl['name']}",
-                value=f"Tiery: `{'` `'.join(tier_order)}`\nPoložek: **{total_items}** • Autor: {tl['author']}",
+                value=f"Tiers: `{'` `'.join(tier_order)}`\nItems: **{total_items}** • Votes: **{total_votes}** • Author: {tl['author']}",
                 inline=False,
             )
 
         await interaction.response.send_message(embed=embed)
 
-    # ── /tierlist smazat_polozku ───────────────────────────────────────────────
+    # ── /tierlist remove ──────────────────────────────────────────────────────
 
-    @tierlist.command(name="smazat_polozku", description="Odebere položku z tierlistu.")
-    @app_commands.describe(
-        nazev="Název tierlistu",
-        polozka="Položka kterou chceš odebrat",
-    )
-    async def smazat_polozku(
-        self,
-        interaction: discord.Interaction,
-        nazev: str,
-        polozka: str,
-    ):
+    @tierlist.command(name="remove", description="Remove an item from a tierlist.")
+    @app_commands.describe(name="Tierlist name", item="Item to remove")
+    async def remove(self, interaction: discord.Interaction, name: str, item: str):
         data = load_tierlists()
-        key = tierlist_key(interaction.guild_id, nazev)
+        key = tierlist_key(interaction.guild_id, name)
 
         if key not in data:
             await interaction.response.send_message(
-                embed=discord.Embed(description=f"❌ Tierlist **{nazev}** neexistuje.", color=0xFF4444),
+                embed=discord.Embed(description=f"❌ Tierlist **{name}** doesn't exist.", color=0xFF4444),
                 ephemeral=True,
             )
             return
 
         tl = data[key]
-        nalezeno = False
-        for t, items in tl["tiers"].items():
-            for i in items:
-                if i.lower() == polozka.lower():
-                    items.remove(i)
-                    nalezeno = True
-                    break
-            if nalezeno:
-                break
+        old_tier, exact_name = _find_item(tl, item)
 
-        if not nalezeno:
+        if not old_tier:
             await interaction.response.send_message(
-                embed=discord.Embed(
-                    description=f"❌ Položka **{polozka}** nebyla nalezena.",
-                    color=0xFF4444,
-                ),
+                embed=discord.Embed(description=f"❌ Item **{item}** not found.", color=0xFF4444),
                 ephemeral=True,
             )
             return
 
+        tl["tiers"][old_tier].remove(exact_name)
+        tl.get("votes", {}).pop(exact_name.lower(), None)
         save_tierlists(data)
+
         await interaction.response.send_message(
             embed=discord.Embed(
-                description=f"🗑️ **{polozka}** odebrán/a z tierlistu **{tl['name']}**.",
+                description=f"🗑️ **{exact_name}** removed from **{tl['name']}**.",
                 color=0x2ECC71,
             )
         )
 
-    # ── /tierlist smazat ──────────────────────────────────────────────────────
+    # ── /tierlist delete ──────────────────────────────────────────────────────
 
-    @tierlist.command(name="smazat", description="Smaže celý tierlist (pouze autor nebo admin).")
-    @app_commands.describe(nazev="Název tierlistu který chceš smazat")
-    async def smazat(self, interaction: discord.Interaction, nazev: str):
+    @tierlist.command(name="delete", description="Delete an entire tierlist (author or admin only).")
+    @app_commands.describe(name="Tierlist name to delete")
+    async def delete(self, interaction: discord.Interaction, name: str):
         data = load_tierlists()
-        key = tierlist_key(interaction.guild_id, nazev)
+        key = tierlist_key(interaction.guild_id, name)
 
         if key not in data:
             await interaction.response.send_message(
-                embed=discord.Embed(description=f"❌ Tierlist **{nazev}** neexistuje.", color=0xFF4444),
+                embed=discord.Embed(description=f"❌ Tierlist **{name}** doesn't exist.", color=0xFF4444),
                 ephemeral=True,
             )
             return
@@ -394,10 +402,7 @@ class TierlistCog(commands.Cog):
 
         if not is_author and not is_admin:
             await interaction.response.send_message(
-                embed=discord.Embed(
-                    description="❌ Tierlist může smazat pouze jeho autor nebo admin.",
-                    color=0xFF4444,
-                ),
+                embed=discord.Embed(description="❌ Only the author or an admin can delete this tierlist.", color=0xFF4444),
                 ephemeral=True,
             )
             return
@@ -406,10 +411,7 @@ class TierlistCog(commands.Cog):
         save_tierlists(data)
 
         await interaction.response.send_message(
-            embed=discord.Embed(
-                description=f"🗑️ Tierlist **{nazev}** byl smazán.",
-                color=0x2ECC71,
-            )
+            embed=discord.Embed(description=f"🗑️ Tierlist **{name}** deleted.", color=0x2ECC71)
         )
 
 
