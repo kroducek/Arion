@@ -69,7 +69,7 @@ BOT_COGS = [
     "src.core.bot.poll",
     "src.core.bot.news",
     "src.core.bot.story",
-    “src.core.bot.tierlist”,
+    "src.core.bot.tierlist",
     # Sdílená logika
     "src.logic.economy",
 ]
