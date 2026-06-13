@@ -262,3 +262,6 @@ PLAYER_PERKS = data("player_perks.json")
 
 # ── Bot state ────────────────────────────────────────────────
 TUTORIAL_MSG = data("tutorial_msg.json")
+
+# ── Tierlistry ───────────────────────────────────────────────
+TIERLISTS = data("tierlists.json")

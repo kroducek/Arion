@@ -12,10 +12,9 @@ import os
 # ── Cesta k datům ─────────────────────────────────────────────────────────────
 
 try:
-    from src.utils import paths as _paths
-    DATA_PATH = _paths.data("tierlists.json")
+    from src.utils.paths import TIERLISTS as DATA_PATH
 except Exception:
-    DATA_PATH = "src/database/data/tierlists.json"
+    DATA_PATH = os.path.join("src", "database", "data", "tierlists.json")
 
 DEFAULT_TIERS = ["S+", "S", "A", "B", "C", "D", "E", "F"]
 
