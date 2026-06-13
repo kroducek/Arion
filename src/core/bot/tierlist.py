@@ -11,7 +11,11 @@ import os
 
 # ── Cesta k datům ─────────────────────────────────────────────────────────────
 
-DATA_PATH = "src/database/data/tierlists.json"
+try:
+    from src.utils import paths as _paths
+    DATA_PATH = _paths.data("tierlists.json")
+except Exception:
+    DATA_PATH = "src/database/data/tierlists.json"
 
 DEFAULT_TIERS = ["S+", "S", "A", "B", "C", "D", "E", "F"]
 
