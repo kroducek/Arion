@@ -71,6 +71,8 @@ USE_CATEGORIES = ["jídlo", "lektvary", "svitky", "ostatní"]
 DM_ROLE_NAME = "DM"
 EMBED_COLOR  = 0x2b2d31
 PAGE_SIZE    = 15
+BOH_ITEM_ID  = "bag_of_holding"
+BOH_COLOR    = 0x6B4226   # hnědá — barva pytle
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DATOVÁ VRSTVA
@@ -118,6 +120,19 @@ def _ensure_inv_fields(profile: dict) -> dict:
     profile.setdefault("fury_max",   0)
     profile.setdefault("fury_cur",   0)
     return profile
+
+def _ensure_boh_field(profile: dict) -> None:
+    """Zajistí že profil má pole bag_of_holding."""
+    profile.setdefault("bag_of_holding", [])
+
+
+def _has_boh(profile: dict) -> bool:
+    """True pokud hráč vlastní Bag of Holding (v inventáři nebo equipnutý)."""
+    for entry in profile.get("inventory", []):
+        if entry.get("type") == "registered" and entry.get("id") == BOH_ITEM_ID:
+            return True
+    return any(v == BOH_ITEM_ID for v in profile.get("equipment", {}).values())
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # INVENTORY HELPERS
@@ -616,6 +631,45 @@ def _build_inspect_embed(item_id: str, items_db: dict,
     embed.set_footer(text=f"ID: {item_id}  ·  slot: {slot_label or '—'}")
     return embed
 
+def _build_boh_embed(profile: dict, member: discord.Member,
+                     items_db: dict, page: int = 0) -> tuple[discord.Embed, int]:
+    """Sestaví embed pro Bag of Holding."""
+    _ensure_boh_field(profile)
+    boh = profile["bag_of_holding"]
+
+    embed = discord.Embed(color=BOH_COLOR)
+    embed.set_author(
+        name=f"{member.display_name} — 👜 Bag of Holding  ∞",
+        icon_url=member.display_avatar.url,
+    )
+
+    if not boh:
+        embed.description = "*Pytel je prázdný...*\n-# DM může přidat věci přes `/inv-admin boh-add`."
+        return embed, 1
+
+    lines: list[str] = []
+    for entry in boh:
+        name    = _item_display_name(entry, items_db)
+        qty     = entry.get("qty", 1)
+        qty_str = f" ×{qty}" if qty > 1 else ""
+        if entry["type"] == "registered":
+            db_item = items_db.get(entry["id"], {})
+            cat     = db_item.get("category", "")
+            cat_str = f"  *{cat}*" if cat else ""
+            lines.append(f"▸ **{name}**{qty_str}{cat_str}")
+        else:
+            lines.append(f"▸ {name}")
+
+    total = len(lines)
+    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    start = page * PAGE_SIZE
+    chunk = lines[start : start + PAGE_SIZE]
+
+    embed.description = "\n".join(chunk) if chunk else "*Prázdná strana.*"
+    embed.set_footer(text=f"👜 Bag of Holding  ·  {total} předmětů  ·  Strana {page + 1}/{pages}")
+    return embed, pages
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PERMISSION HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -839,40 +893,89 @@ async def _ac_equip_slot(
 
 class InvPageView(discord.ui.View):
     def __init__(self, profile: dict, member: discord.Member,
-                 items_db: dict, pages: int):
+                 items_db: dict, inv_pages: int, boh_pages: int = 1):
         super().__init__(timeout=120)
-        self.profile  = profile
-        self.member   = member
-        self.items_db = items_db
-        self.pages    = pages
-        self.page     = 0
+        self.profile   = profile
+        self.member    = member
+        self.items_db  = items_db
+        self.mode      = "inv"   # "inv" | "boh"
+        self.inv_page  = 0
+        self.inv_pages = inv_pages
+        self.boh_page  = 0
+        self.boh_pages = boh_pages
+
+        # Dynamické tlačítko BoH — jen pokud hráč bag vlastní
+        if _has_boh(profile):
+            boh_btn = discord.ui.Button(
+                label="👜 Bag of Holding",
+                style=discord.ButtonStyle.success,
+                custom_id="boh_toggle",
+                row=1,
+            )
+            boh_btn.callback = self._toggle_boh
+            self.add_item(boh_btn)
+
         self._update_buttons()
 
+    @property
+    def _page(self) -> int:
+        return self.boh_page if self.mode == "boh" else self.inv_page
+
+    @property
+    def _pages(self) -> int:
+        return self.boh_pages if self.mode == "boh" else self.inv_pages
+
     def _update_buttons(self):
-        self.prev_btn.disabled = self.page == 0
-        self.next_btn.disabled = self.page >= self.pages - 1
+        self.prev_btn.disabled = (self._page == 0)
+        self.next_btn.disabled = (self._page >= self._pages - 1)
+
+    async def _toggle_boh(self, interaction: discord.Interaction):
+        self.mode = "boh" if self.mode == "inv" else "inv"
+        for item in self.children:
+            if getattr(item, "custom_id", "") == "boh_toggle":
+                if self.mode == "boh":
+                    item.label = "🎒 Inventář"
+                    item.style = discord.ButtonStyle.secondary
+                else:
+                    item.label = "👜 Bag of Holding"
+                    item.style = discord.ButtonStyle.success
+                break
+        await self._refresh(interaction)
 
     async def _refresh(self, interaction: discord.Interaction):
         profiles = _load_profiles()
         profile  = profiles.get(str(self.member.id))
         if profile:
             _ensure_inv_fields(profile)
+            _ensure_boh_field(profile)
             self.profile = profile
-        embed, pages = _build_inv_embed(self.profile, self.member, self.items_db, self.page)
-        self.pages = pages
+
+        if self.mode == "boh":
+            embed, pages   = _build_boh_embed(self.profile, self.member, self.items_db, self.boh_page)
+            self.boh_pages = pages
+        else:
+            embed, pages    = _build_inv_embed(self.profile, self.member, self.items_db, self.inv_page)
+            self.inv_pages  = pages
+
         self._update_buttons()
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary, row=0)
     async def prev_btn(self, interaction: discord.Interaction,
                        button: discord.ui.Button):
-        self.page -= 1
+        if self.mode == "boh":
+            self.boh_page -= 1
+        else:
+            self.inv_page -= 1
         await self._refresh(interaction)
 
-    @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary, row=0)
     async def next_btn(self, interaction: discord.Interaction,
                        button: discord.ui.Button):
-        self.page += 1
+        if self.mode == "boh":
+            self.boh_page += 1
+        else:
+            self.inv_page += 1
         await self._refresh(interaction)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -900,9 +1003,11 @@ class Inventory(commands.Cog):
             return
         _ensure_inv_fields(profile)
         items_db     = _load_items()
-        embed, pages = _build_inv_embed(profile, target, items_db)
-        if pages > 1:
-            view = InvPageView(profile, target, items_db, pages)
+        _ensure_boh_field(profile)
+        embed, inv_pages = _build_inv_embed(profile, target, items_db)
+        _, boh_pages     = _build_boh_embed(profile, target, items_db, 0)
+        if inv_pages > 1 or _has_boh(profile):
+            view = InvPageView(profile, target, items_db, inv_pages, boh_pages)
             await interaction.followup.send(embed=embed, view=view)
         else:
             await interaction.followup.send(embed=embed)
@@ -1652,6 +1757,107 @@ class Inventory(commands.Cog):
         _save_profiles(profiles)
         await interaction.followup.send(
             f"✅ **{member.display_name}** má teď {count}× {label} slot.")
+
+
+    @inv_admin.command(name="boh-add", description="[DM] Přidá item do Bag of Holding hráče.")
+    @app_commands.describe(member="Hráč.", item="ID registrovaného itemu.", qty="Množství.")
+    @app_commands.autocomplete(item=_ac_database_item)
+    async def inv_admin_boh_add(self, interaction: discord.Interaction,
+                                member: discord.Member, item: str, qty: int = 1):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM.")
+            return
+        profiles = _load_profiles()
+        profile  = profiles.get(str(member.id))
+        if not profile:
+            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
+            return
+        _ensure_inv_fields(profile)
+        _ensure_boh_field(profile)
+        items_db = _load_items()
+        if item not in items_db:
+            await interaction.followup.send(f"❌ Item `{item}` není v databázi.")
+            return
+        _add_to_inventory(profile["bag_of_holding"], item, qty)
+        _save_profiles(profiles)
+        name = items_db[item]["name"]
+        await interaction.followup.send(
+            f"✅ Přidáno **{name}** ×{qty} do 👜 BoH hráče **{member.display_name}**.")
+
+    @inv_admin.command(name="boh-remove", description="[DM] Odebere item z Bag of Holding hráče.")
+    @app_commands.describe(member="Hráč.", item="ID itemu.", qty="Množství.")
+    @app_commands.autocomplete(item=_ac_database_item)
+    async def inv_admin_boh_remove(self, interaction: discord.Interaction,
+                                   member: discord.Member, item: str, qty: int = 1):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM.")
+            return
+        profiles = _load_profiles()
+        profile  = profiles.get(str(member.id))
+        if not profile:
+            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
+            return
+        _ensure_boh_field(profile)
+        ok = _remove_from_inventory(profile["bag_of_holding"], item, qty)
+        if not ok:
+            await interaction.followup.send(
+                f"❌ **{member.display_name}** nemá dost kusů **{item}** v BoH.")
+            return
+        _save_profiles(profiles)
+        await interaction.followup.send(
+            f"✅ Odebráno **{item}** ×{qty} z 👜 BoH hráče **{member.display_name}**.")
+
+    @inv_admin.command(name="boh-move", description="[DM] Přesune item mezi inventářem a BoH.")
+    @app_commands.describe(
+        member="Hráč.",
+        item="ID itemu.",
+        qty="Množství.",
+        direction="Směr přesunu.",
+    )
+    @app_commands.choices(direction=[
+        app_commands.Choice(name="Inventář → BoH", value="to_boh"),
+        app_commands.Choice(name="BoH → Inventář", value="to_inv"),
+    ])
+    @app_commands.autocomplete(item=_ac_database_item)
+    async def inv_admin_boh_move(self, interaction: discord.Interaction,
+                                 member: discord.Member, item: str,
+                                 direction: str, qty: int = 1):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM.")
+            return
+        profiles = _load_profiles()
+        profile  = profiles.get(str(member.id))
+        if not profile:
+            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
+            return
+        _ensure_inv_fields(profile)
+        _ensure_boh_field(profile)
+        items_db = _load_items()
+
+        if direction == "to_boh":
+            ok = _remove_from_inventory(profile["inventory"], item, qty)
+            if not ok:
+                await interaction.followup.send(
+                    f"❌ Hráč nemá dost kusů **{item}** v inventáři.")
+                return
+            _add_to_inventory(profile["bag_of_holding"], item, qty)
+            arrow = "Inventář → 👜 BoH"
+        else:
+            ok = _remove_from_inventory(profile["bag_of_holding"], item, qty)
+            if not ok:
+                await interaction.followup.send(
+                    f"❌ Hráč nemá dost kusů **{item}** v BoH.")
+                return
+            _add_to_inventory(profile["inventory"], item, qty)
+            arrow = "👜 BoH → Inventář"
+
+        _save_profiles(profiles)
+        name = items_db.get(item, {}).get("name", item)
+        await interaction.followup.send(
+            f"✅ **{name}** ×{qty} přesunuto: {arrow} — **{member.display_name}**.")
 
 
 async def setup(bot):
