@@ -74,6 +74,17 @@ PAGE_SIZE    = 15
 BOH_ITEM_ID  = "bag_of_holding"
 BOH_COLOR    = 0x6B4226   # hnědá — barva pytle
 
+# ── Storage systém ────────────────────────────────────────────────────────────
+BASE_INV_SLOTS = 10                                  # základní sloty (+ STR)
+WEIGHTLESS_CATEGORIES = ["jídlo", "lektvary", "náboje"]  # nezabírají sloty
+
+# Vizuál pro storage embed dle item kategorie / typu
+STORAGE_VISUALS = {
+    "inventory":     {"emoji": "🎒", "label": "Inventář",        "color": EMBED_COLOR},
+    "bag_of_holding":{"emoji": "👜", "label": "Bag of Holding",  "color": BOH_COLOR},
+    "_default":      {"emoji": "📦", "label": "Úložiště",        "color": 0x5a6b3b},
+}
+
 # ══════════════════════════════════════════════════════════════════════════════
 # DATOVÁ VRSTVA
 # ══════════════════════════════════════════════════════════════════════════════
@@ -122,17 +133,129 @@ def _ensure_inv_fields(profile: dict) -> dict:
     return profile
 
 def _ensure_boh_field(profile: dict) -> None:
-    """Zajistí že profil má pole bag_of_holding a boh_notes."""
-    profile.setdefault("bag_of_holding", [])
-    profile.setdefault("boh_notes", [])
+    """Zajistí že profil má BoH storage (zpětná kompatibilita)."""
+    _migrate_storages(profile)
+    profile.setdefault("storages", {}).setdefault("bag_of_holding", [])
+    profile["bag_of_holding"] = profile["storages"]["bag_of_holding"]
+    profile.setdefault("storage_notes", {}).setdefault("bag_of_holding", [])
+    profile["boh_notes"] = profile["storage_notes"]["bag_of_holding"]
 
 
 def _has_boh(profile: dict) -> bool:
     """True pokud hráč vlastní Bag of Holding (v inventáři nebo equipnutý)."""
-    for entry in profile.get("inventory", []):
-        if entry.get("type") == "registered" and entry.get("id") == BOH_ITEM_ID:
-            return True
-    return any(v == BOH_ITEM_ID for v in profile.get("equipment", {}).values())
+    return _owns_storage_item(profile, BOH_ITEM_ID)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STORAGE SYSTÉM
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _migrate_storages(profile: dict) -> None:
+    """Převede starý inventory/bag_of_holding do profile['storages']."""
+    profile.setdefault("storages", {})
+    profile.setdefault("storage_notes", {})
+
+    storages = profile["storages"]
+    # Migrace inventáře
+    if "inventory" not in storages:
+        storages["inventory"] = profile.get("inventory", [])
+    if "bag_of_holding" not in storages and profile.get("bag_of_holding"):
+        storages["bag_of_holding"] = profile.get("bag_of_holding", [])
+
+    # Notes migrace
+    notes = profile["storage_notes"]
+    notes.setdefault("inventory", profile.get("notes", []))
+    if profile.get("boh_notes"):
+        notes.setdefault("bag_of_holding", profile.get("boh_notes", []))
+
+    # Drž zpětnou kompatibilitu — inventory i bag_of_holding jsou živé reference
+    profile["inventory"] = storages["inventory"]
+    if "bag_of_holding" in storages:
+        profile["bag_of_holding"] = storages["bag_of_holding"]
+
+
+def _is_storage_item(item_id: str, items_db: dict) -> bool:
+    """True pokud je item v DB označen jako storage (má pole 'storage')."""
+    return isinstance(items_db.get(item_id, {}).get("storage"), dict)
+
+
+def _storage_capacity(storage_key: str, profile: dict, items_db: dict) -> int | None:
+    """Vrátí kapacitu storage. None = unlimited."""
+    if storage_key == "inventory":
+        return BASE_INV_SLOTS + profile.get("stats", {}).get("STR", 0)
+    cap = items_db.get(storage_key, {}).get("storage", {}).get("capacity")
+    return cap  # None = unlimited (BoH)
+
+
+def _entry_slot_cost(entry: dict, items_db: dict) -> int:
+    """Kolik slotů zabírá daný entry (qty se počítá; lehké kategorie = 0)."""
+    if entry.get("type") != "registered":
+        return 0   # free/custom položky slot nezabírají
+    db_item = items_db.get(entry["id"], {})
+    if db_item.get("category") in WEIGHTLESS_CATEGORIES:
+        return 0
+    return entry.get("qty", 1)
+
+
+def _count_slots(storage: list, items_db: dict) -> int:
+    """Spočítá obsazené sloty v daném storage."""
+    return sum(_entry_slot_cost(e, items_db) for e in storage)
+
+
+def _owns_storage_item(profile: dict, item_id: str) -> bool:
+    """True pokud hráč vlastní daný item (v jakémkoliv storage nebo equipnutý)."""
+    for stor in profile.get("storages", {}).values():
+        for entry in stor:
+            if entry.get("type") == "registered" and entry.get("id") == item_id:
+                return True
+    return any(v == item_id for v in profile.get("equipment", {}).values())
+
+
+def _available_storages(profile: dict, items_db: dict) -> list[str]:
+    """Vrátí seznam storage klíčů které hráč může používat (inventory + vlastněné storage itemy)."""
+    keys = ["inventory"]
+    seen = {"inventory"}
+    # Projdi všechny itemy které hráč má a najdi storage typy
+    for stor in profile.get("storages", {}).values():
+        for entry in stor:
+            if entry.get("type") == "registered":
+                iid = entry["id"]
+                if iid not in seen and _is_storage_item(iid, items_db):
+                    keys.append(iid)
+                    seen.add(iid)
+    # Equipnuté storage itemy (např. BoH na pásku)
+    for v in profile.get("equipment", {}).values():
+        if v and v not in seen and _is_storage_item(v, items_db):
+            keys.append(v)
+            seen.add(v)
+    return keys
+
+
+def _ensure_storage(profile: dict, storage_key: str) -> list:
+    """Vrátí (a vytvoří) storage list pro daný klíč."""
+    profile.setdefault("storages", {})
+    profile["storages"].setdefault(storage_key, [])
+    if storage_key == "inventory":
+        profile["inventory"] = profile["storages"]["inventory"]
+    return profile["storages"][storage_key]
+
+
+def _drop_storage(profile: dict, item_id: str) -> None:
+    """Smaže storage instanci i s obsahem (když hráč ztratí batoh/brašnu)."""
+    profile.get("storages", {}).pop(item_id, None)
+    profile.get("storage_notes", {}).pop(item_id, None)
+
+
+def _storage_visual(storage_key: str, items_db: dict) -> dict:
+    """Vrátí emoji/label/color pro storage embed."""
+    if storage_key in STORAGE_VISUALS:
+        return STORAGE_VISUALS[storage_key]
+    db_item = items_db.get(storage_key, {})
+    return {
+        "emoji": db_item.get("storage", {}).get("emoji", "📦"),
+        "label": db_item.get("name", storage_key),
+        "color": STORAGE_VISUALS["_default"]["color"],
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -480,6 +603,64 @@ def _unequip_slot(profile: dict, slot: str, items_db: dict) -> tuple[bool, str]:
 # EMBED BUILDERS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _build_equip_embed(profile: dict, member: discord.Member,
+                       items_db: dict) -> discord.Embed:
+    """Embed zobrazující equipment + přehled dostupných úložišť (úvod /inv)."""
+    _ensure_inv_fields(profile)
+    _migrate_storages(profile)
+    equipment = profile["equipment"]
+
+    embed = discord.Embed(color=EMBED_COLOR)
+    embed.set_author(name=f"{member.display_name} — ⚔️ Výbava",
+                     icon_url=member.display_avatar.url)
+
+    equip_lines = []
+    total_def   = 0
+    seen_items  = set()
+    for slot in _active_slots(profile):
+        label   = SLOT_LABELS.get(slot, slot)
+        emoji   = SLOT_EMOJIS.get(slot, "▪️")
+        item_id = equipment.get(slot)
+        if not item_id:
+            equip_lines.append(f"{emoji} **{label}**  —")
+        else:
+            if slot == "hand_r" and equipment.get("hand_l") == item_id:
+                continue
+            db_item  = items_db.get(item_id) or {}
+            name     = db_item.get("name", f"[{item_id}]")
+            suffix   = "  *(obouruční)*" if db_item.get("hand_type") == "two" else ""
+            def_val  = db_item.get("def", 0)
+            atk_val  = db_item.get("atk", 0)
+            mods     = _parse_modifiers(db_item)
+            stat_str = ""
+            if atk_val: stat_str += f"  ⚔️{atk_val}"
+            if mods:    stat_str += f"  {mods}"
+            if def_val: stat_str += f"  🛡️{def_val}"
+            if item_id not in seen_items:
+                total_def += def_val
+                seen_items.add(item_id)
+            equip_lines.append(f"{emoji} **{label}**  {name}{suffix}{stat_str}")
+
+    totals_str = f"  ·  🛡️ DEF celkem: **{total_def}**" if total_def else ""
+    embed.add_field(name=f"⚔️  Equipment{totals_str}",
+                    value="\n".join(equip_lines) or "—", inline=False)
+
+    stor_lines = []
+    for skey in _available_storages(profile, items_db):
+        visual  = _storage_visual(skey, items_db)
+        stor    = profile.get("storages", {}).get(skey, [])
+        cap     = _storage_capacity(skey, profile, items_db)
+        used    = _count_slots(stor, items_db)
+        cap_str = "∞" if cap is None else f"{used}/{cap}"
+        stor_lines.append(f"{visual['emoji']} **{visual['label']}**  `[{cap_str}]`")
+    embed.add_field(name="🎒  Úložiště",
+                    value="\n".join(stor_lines) + "\n-# Vyber tlačítkem níže.",
+                    inline=False)
+
+    embed.set_footer(text="🪶 = lehký předmět (nezabírá slot)  ·  Aurionis")
+    return embed
+
+
 def _build_inv_embed(profile: dict, member: discord.Member,
                      items_db: dict, page: int = 0) -> tuple[discord.Embed, int]:
     _ensure_inv_fields(profile)
@@ -681,6 +862,54 @@ def _build_boh_embed(profile: dict, member: discord.Member,
     return embed, pages
 
 
+def _build_storage_embed(profile: dict, member: discord.Member, items_db: dict,
+                         storage_key: str, page: int = 0) -> tuple[discord.Embed, int]:
+    """Univerzální embed pro libovolný storage (inventory, BoH, batoh, brašna…)."""
+    storage = _ensure_storage(profile, storage_key)
+    notes   = profile.setdefault("storage_notes", {}).setdefault(storage_key, [])
+    visual  = _storage_visual(storage_key, items_db)
+    cap     = _storage_capacity(storage_key, profile, items_db)
+    used    = _count_slots(storage, items_db)
+    cap_str = "∞" if cap is None else f"{used}/{cap}"
+
+    embed = discord.Embed(color=visual["color"])
+    embed.set_author(
+        name=f"{member.display_name} — {visual['emoji']} {visual['label']}  [{cap_str}]",
+        icon_url=member.display_avatar.url,
+    )
+
+    lines: list[str] = []
+    for entry in storage:
+        name    = _item_display_name(entry, items_db)
+        qty     = entry.get("qty", 1)
+        qty_str = f" ×{qty}" if qty > 1 else ""
+        if entry.get("type") == "registered":
+            db_item   = items_db.get(entry["id"], {})
+            cat       = db_item.get("category", "")
+            light     = " 🪶" if cat in WEIGHTLESS_CATEGORIES else ""
+            cat_str   = f"  *{cat}*" if cat else ""
+            lines.append(f"▸ **{name}**{qty_str}{cat_str}{light}")
+        else:
+            lines.append(f"▸ {name}")
+
+    total = len(lines)
+    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+    start = page * PAGE_SIZE
+    chunk = lines[start : start + PAGE_SIZE]
+    embed.description = "\n".join(chunk) if chunk else "*Prázdné...*"
+
+    if notes:
+        note_lines = [f"`{i+1}.` {n}" for i, n in enumerate(notes)]
+        notes_val  = "\n".join(note_lines[:20])
+        if len(notes) > 20:
+            notes_val += f"\n*... a {len(notes) - 20} dalších*"
+        embed.add_field(name="📝 Ostatní", value=notes_val, inline=False)
+
+    cap_footer = "∞ neomezeno" if cap is None else f"{used}/{cap} slotů"
+    embed.set_footer(text=f"{visual['emoji']} {visual['label']}  ·  {cap_footer}  ·  Strana {page + 1}/{pages}")
+    return embed, pages
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PERMISSION HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -860,10 +1089,54 @@ async def _ac_boh_item(
     return choices[:25]
 
 
-async def _ac_equip_slot(
+async def _ac_storage_key(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[str]]:
-    """Kontextový autocomplete pro slot v /equip — závisí na zvoleném itemu."""
+    """Autocomplete pro dostupné storage hráče (inventory, BoH, batoh…)."""
+    items_db = _load_items()
+    profile  = _get_profile(interaction.user.id)
+    if not profile:
+        return []
+    _migrate_storages(profile)
+    cur     = current.lower()
+    choices = []
+    for skey in _available_storages(profile, items_db):
+        visual = _storage_visual(skey, items_db)
+        label  = f"{visual['emoji']} {visual['label']}"
+        if cur in label.lower() or cur in skey.lower():
+            choices.append(app_commands.Choice(name=label, value=skey))
+    return choices[:25]
+
+
+def _make_ac_storage_items(param_name: str):
+    """Factory — autocomplete pro itemy v storage zvoleném v jiném parametru."""
+    async def _ac(interaction: discord.Interaction, current: str):
+        items_db = _load_items()
+        profile  = _get_profile(interaction.user.id)
+        if not profile:
+            return []
+        _migrate_storages(profile)
+        # Zjisti hodnotu zdrojového storage z již vyplněných parametrů
+        skey = None
+        for opt in (interaction.data.get("options") or []):
+            for sub in opt.get("options", [opt]):
+                if sub.get("name") == param_name:
+                    skey = sub.get("value")
+        if skey is None:
+            skey = "inventory"
+        stor    = profile.get("storages", {}).get(skey, [])
+        cur     = current.lower()
+        choices = []
+        for entry in stor:
+            name = _item_display_name(entry, items_db)
+            key  = entry["id"] if entry["type"] == "registered" else entry.get("name", "")
+            if cur in name.lower() or cur in key.lower():
+                choices.append(app_commands.Choice(name=name, value=key))
+        return choices[:25]
+    return _ac
+
+
+
     items_db = _load_items()
     profile  = _get_profile(interaction.user.id)
     item_id  = getattr(interaction.namespace, "item", None)
@@ -922,91 +1195,76 @@ async def _ac_equip_slot(
 # ══════════════════════════════════════════════════════════════════════════════
 
 class InvPageView(discord.ui.View):
-    def __init__(self, profile: dict, member: discord.Member,
-                 items_db: dict, inv_pages: int, boh_pages: int = 1):
-        super().__init__(timeout=120)
-        self.profile   = profile
-        self.member    = member
-        self.items_db  = items_db
-        self.mode      = "inv"   # "inv" | "boh"
-        self.inv_page  = 0
-        self.inv_pages = inv_pages
-        self.boh_page  = 0
-        self.boh_pages = boh_pages
+    """Univerzální view — equip embed + tlačítka pro každý dostupný storage."""
 
-        # Dynamické tlačítko BoH — jen pokud hráč bag vlastní
-        if _has_boh(profile):
-            boh_btn = discord.ui.Button(
-                label="👜 Bag of Holding",
-                style=discord.ButtonStyle.success,
-                custom_id="boh_toggle",
-                row=1,
+    def __init__(self, profile: dict, member: discord.Member, items_db: dict,
+                 start_storage: str = "inventory"):
+        super().__init__(timeout=180)
+        self.profile  = profile
+        self.member   = member
+        self.items_db = items_db
+        self.storages = _available_storages(profile, items_db)
+        self.active   = start_storage if start_storage in self.storages else "inventory"
+        self.page     = 0
+        self.pages    = 1
+        self._build_storage_buttons()
+
+    def _build_storage_buttons(self):
+        """Přidá tlačítko pro každý dostupný storage (row 1+)."""
+        # Smaž stará storage tlačítka
+        for item in [c for c in self.children if getattr(c, "custom_id", "").startswith("stor_")]:
+            self.remove_item(item)
+        for i, skey in enumerate(self.storages):
+            visual = _storage_visual(skey, self.items_db)
+            is_active = (skey == self.active)
+            btn = discord.ui.Button(
+                label=f"{visual['emoji']} {visual['label']}",
+                style=discord.ButtonStyle.success if is_active else discord.ButtonStyle.secondary,
+                custom_id=f"stor_{skey}",
+                row=1 + (i // 5),
             )
-            boh_btn.callback = self._toggle_boh
-            self.add_item(boh_btn)
+            btn.callback = self._make_storage_callback(skey)
+            self.add_item(btn)
 
-        self._update_buttons()
+    def _make_storage_callback(self, storage_key: str):
+        async def callback(interaction: discord.Interaction):
+            self.active = storage_key
+            self.page   = 0
+            self._build_storage_buttons()
+            await self._refresh(interaction)
+        return callback
 
-    @property
-    def _page(self) -> int:
-        return self.boh_page if self.mode == "boh" else self.inv_page
-
-    @property
-    def _pages(self) -> int:
-        return self.boh_pages if self.mode == "boh" else self.inv_pages
-
-    def _update_buttons(self):
-        self.prev_btn.disabled = (self._page == 0)
-        self.next_btn.disabled = (self._page >= self._pages - 1)
-
-    async def _toggle_boh(self, interaction: discord.Interaction):
-        self.mode = "boh" if self.mode == "inv" else "inv"
-        for item in self.children:
-            if getattr(item, "custom_id", "") == "boh_toggle":
-                if self.mode == "boh":
-                    item.label = "🎒 Inventář"
-                    item.style = discord.ButtonStyle.secondary
-                else:
-                    item.label = "👜 Bag of Holding"
-                    item.style = discord.ButtonStyle.success
-                break
-        await self._refresh(interaction)
+    def _update_nav(self):
+        self.prev_btn.disabled = (self.page == 0)
+        self.next_btn.disabled = (self.page >= self.pages - 1)
 
     async def _refresh(self, interaction: discord.Interaction):
         profiles = _load_profiles()
         profile  = profiles.get(str(self.member.id))
         if profile:
             _ensure_inv_fields(profile)
-            _ensure_boh_field(profile)
-            self.profile = profile
+            _migrate_storages(profile)
+            self.profile  = profile
+            self.storages = _available_storages(profile, self.items_db)
+            if self.active not in self.storages:
+                self.active = "inventory"
 
-        if self.mode == "boh":
-            embed, pages   = _build_boh_embed(self.profile, self.member, self.items_db, self.boh_page)
-            self.boh_pages = pages
-        else:
-            embed, pages    = _build_inv_embed(self.profile, self.member, self.items_db, self.inv_page)
-            self.inv_pages  = pages
-
-        self._update_buttons()
+        embed, pages = _build_storage_embed(
+            self.profile, self.member, self.items_db, self.active, self.page)
+        self.pages = pages
+        self._update_nav()
         await interaction.response.edit_message(embed=embed, view=self)
 
     @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary, row=0)
-    async def prev_btn(self, interaction: discord.Interaction,
-                       button: discord.ui.Button):
-        if self.mode == "boh":
-            self.boh_page -= 1
-        else:
-            self.inv_page -= 1
+    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = max(0, self.page - 1)
         await self._refresh(interaction)
 
     @discord.ui.button(label="▶", style=discord.ButtonStyle.secondary, row=0)
-    async def next_btn(self, interaction: discord.Interaction,
-                       button: discord.ui.Button):
-        if self.mode == "boh":
-            self.boh_page += 1
-        else:
-            self.inv_page += 1
+    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page += 1
         await self._refresh(interaction)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # COG
@@ -1020,7 +1278,7 @@ class Inventory(commands.Cog):
         self.bot = bot
 
     # ── /inv ──────────────────────────────────────────────────────────────────
-    @app_commands.command(name="inv", description="Zobrazí inventář, equipment a poznámky.")
+    @app_commands.command(name="inv", description="Zobrazí equipment a úložiště.")
     @app_commands.describe(member="Hráč (výchozí: ty).")
     async def inv(self, interaction: discord.Interaction,
                   member: Optional[discord.Member] = None):
@@ -1032,15 +1290,14 @@ class Inventory(commands.Cog):
                 f"❌ **{target.display_name}** nemá profil.", ephemeral=True)
             return
         _ensure_inv_fields(profile)
-        items_db     = _load_items()
-        _ensure_boh_field(profile)
-        embed, inv_pages = _build_inv_embed(profile, target, items_db)
-        _, boh_pages     = _build_boh_embed(profile, target, items_db, 0)
-        if inv_pages > 1 or _has_boh(profile):
-            view = InvPageView(profile, target, items_db, inv_pages, boh_pages)
-            await interaction.followup.send(embed=embed, view=view)
-        else:
-            await interaction.followup.send(embed=embed)
+        _migrate_storages(profile)
+        items_db = _load_items()
+
+        # Equip embed jako úvodní pohled
+        equip_embed = _build_equip_embed(profile, target, items_db)
+        view = InvPageView(profile, target, items_db, start_storage="inventory")
+        # Při otevření ukáž rovnou equip + tlačítka storage
+        await interaction.followup.send(embed=equip_embed, view=view)
 
     # ── /inv-note ─────────────────────────────────────────────────────────────
     @app_commands.command(name="inv-note",
@@ -1690,6 +1947,77 @@ class Inventory(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     # ══════════════════════════════════════════════════════════════════════════
+    # STORAGE — univerzální přesun (hráč)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @app_commands.command(name="storage-move",
+                          description="Přesune item mezi úložišti (inventář, BoH, batoh…).")
+    @app_commands.describe(
+        odkud="Zdrojové úložiště.",
+        item="Item ze zdrojového úložiště.",
+        kam="Cílové úložiště.",
+        qty="Množství (výchozí: 1).",
+    )
+    @app_commands.autocomplete(odkud=_ac_storage_key, kam=_ac_storage_key,
+                               item=_make_ac_storage_items("odkud"))
+    async def storage_move(self, interaction: discord.Interaction,
+                           odkud: str, item: str, kam: str, qty: int = 1):
+        await interaction.response.defer(ephemeral=True)
+        profiles = _load_profiles()
+        profile  = profiles.get(str(interaction.user.id))
+        if not profile:
+            await interaction.followup.send("❌ Nemáš profil.")
+            return
+        _ensure_inv_fields(profile)
+        _migrate_storages(profile)
+        items_db = _load_items()
+
+        avail = _available_storages(profile, items_db)
+        if odkud not in avail or kam not in avail:
+            await interaction.followup.send("❌ Neplatné úložiště.")
+            return
+        if odkud == kam:
+            await interaction.followup.send("❌ Zdroj a cíl jsou stejné.")
+            return
+
+        src = _ensure_storage(profile, odkud)
+        dst = _ensure_storage(profile, kam)
+
+        # Ověř kapacitu cíle (jen pro itemy které zabírají sloty)
+        src_entry = _find_inv_entry(src, item)
+        if not src_entry or src_entry.get("qty", 1) < qty:
+            await interaction.followup.send(f"❌ Nemáš dost kusů **{item}** v `{odkud}`.")
+            return
+
+        slot_cost = _entry_slot_cost({"type": "registered", "id": item, "qty": qty}, items_db) \
+            if src_entry["type"] == "registered" else 0
+        cap = _storage_capacity(kam, profile, items_db)
+        if cap is not None and slot_cost > 0:
+            if _count_slots(dst, items_db) + slot_cost > cap:
+                visual = _storage_visual(kam, items_db)
+                await interaction.followup.send(
+                    f"❌ **{visual['label']}** nemá dost místa "
+                    f"({_count_slots(dst, items_db)}/{cap}, potřebuješ +{slot_cost}).")
+                return
+
+        # Přesun
+        key = src_entry["id"] if src_entry["type"] == "registered" else src_entry.get("name", item)
+        if src_entry["type"] == "registered":
+            _remove_from_inventory(src, key, qty)
+            _add_to_inventory(dst, key, qty)
+        else:
+            src.remove(src_entry)
+            dst.append(src_entry)
+
+        _save_profiles(profiles)
+        name    = items_db.get(key, {}).get("name", key)
+        v_from  = _storage_visual(odkud, items_db)
+        v_to    = _storage_visual(kam, items_db)
+        qty_str = f" ×{qty}" if qty > 1 else ""
+        await interaction.followup.send(
+            f"✅ **{name}**{qty_str} přesunuto: {v_from['emoji']} {v_from['label']} → {v_to['emoji']} {v_to['label']}.")
+
+    # ══════════════════════════════════════════════════════════════════════════
     # BAG OF HOLDING — hráčské příkazy
     # ══════════════════════════════════════════════════════════════════════════
 
@@ -2022,6 +2350,135 @@ class Inventory(commands.Cog):
         name = items_db.get(item, {}).get("name", item)
         await interaction.followup.send(
             f"✅ **{name}** ×{qty} přesunuto: {arrow} — **{member.display_name}**.")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STORAGE — admin
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @inv_admin.command(name="storage-give",
+                       description="[DM] Dá hráči úložný item (batoh, brašnu, BoH…).")
+    @app_commands.describe(member="Hráč.", storage_item="ID storage itemu z databáze.")
+    @app_commands.autocomplete(storage_item=_ac_database_item)
+    async def inv_admin_storage_give(self, interaction: discord.Interaction,
+                                     member: discord.Member, storage_item: str):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM.")
+            return
+        items_db = _load_items()
+        if not _is_storage_item(storage_item, items_db):
+            await interaction.followup.send(
+                f"❌ `{storage_item}` není storage item (chybí pole `storage` v DB).")
+            return
+        profiles = _load_profiles()
+        profile  = profiles.get(str(member.id))
+        if not profile:
+            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
+            return
+        _ensure_inv_fields(profile)
+        _migrate_storages(profile)
+
+        if _owns_storage_item(profile, storage_item):
+            await interaction.followup.send(
+                f"❌ **{member.display_name}** už tento storage vlastní (1 kus od typu).")
+            return
+
+        # Přidej item do inventáře a založ jeho storage
+        _add_to_inventory(profile["inventory"], storage_item, 1)
+        _ensure_storage(profile, storage_item)
+        _save_profiles(profiles)
+
+        visual = _storage_visual(storage_item, items_db)
+        cap    = _storage_capacity(storage_item, profile, items_db)
+        cap_str = "∞" if cap is None else str(cap)
+        await interaction.followup.send(
+            f"✅ **{member.display_name}** dostal {visual['emoji']} **{visual['label']}** "
+            f"(kapacita: {cap_str}). Úložiště je připraveno.")
+
+    @inv_admin.command(name="storage-add",
+                       description="[DM] Přidá item přímo do konkrétního úložiště hráče.")
+    @app_commands.describe(
+        member="Hráč.",
+        item="ID itemu z databáze.",
+        storage="Cílové úložiště (id storage itemu nebo 'inventory'/'bag_of_holding').",
+        qty="Množství.",
+    )
+    @app_commands.autocomplete(item=_ac_database_item)
+    async def inv_admin_storage_add(self, interaction: discord.Interaction,
+                                    member: discord.Member, item: str,
+                                    storage: str = "inventory", qty: int = 1):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM.")
+            return
+        profiles = _load_profiles()
+        profile  = profiles.get(str(member.id))
+        if not profile:
+            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
+            return
+        _ensure_inv_fields(profile)
+        _migrate_storages(profile)
+        items_db = _load_items()
+        if item not in items_db:
+            await interaction.followup.send(f"❌ Item `{item}` není v databázi.")
+            return
+
+        avail = _available_storages(profile, items_db)
+        if storage not in avail:
+            await interaction.followup.send(
+                f"❌ Hráč nemá úložiště `{storage}`. Dostupná: {', '.join(avail)}")
+            return
+
+        target_stor = _ensure_storage(profile, storage)
+
+        # Kapacita
+        slot_cost = _entry_slot_cost({"type": "registered", "id": item, "qty": qty}, items_db)
+        cap = _storage_capacity(storage, profile, items_db)
+        if cap is not None and slot_cost > 0:
+            if _count_slots(target_stor, items_db) + slot_cost > cap:
+                await interaction.followup.send(
+                    f"❌ Úložiště je plné ({_count_slots(target_stor, items_db)}/{cap}).")
+                return
+
+        _add_to_inventory(target_stor, item, qty)
+        _save_profiles(profiles)
+        visual = _storage_visual(storage, items_db)
+        name   = items_db[item]["name"]
+        await interaction.followup.send(
+            f"✅ Přidáno **{name}** ×{qty} do {visual['emoji']} {visual['label']} — **{member.display_name}**.")
+
+    @inv_admin.command(name="storage-drop",
+                       description="[DM] Odebere hráči storage item i s obsahem.")
+    @app_commands.describe(member="Hráč.", storage_item="ID storage itemu.")
+    @app_commands.autocomplete(storage_item=_ac_database_item)
+    async def inv_admin_storage_drop(self, interaction: discord.Interaction,
+                                     member: discord.Member, storage_item: str):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM.")
+            return
+        profiles = _load_profiles()
+        profile  = profiles.get(str(member.id))
+        if not profile:
+            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
+            return
+        _ensure_inv_fields(profile)
+        _migrate_storages(profile)
+        items_db = _load_items()
+
+        # Odeber item ze všech storage + smaž jeho storage instanci s obsahem
+        for stor in profile["storages"].values():
+            _remove_from_inventory(stor, storage_item, 999)
+        for slot, v in profile.get("equipment", {}).items():
+            if v == storage_item:
+                profile["equipment"][slot] = None
+        _drop_storage(profile, storage_item)
+        _save_profiles(profiles)
+
+        visual = _storage_visual(storage_item, items_db)
+        await interaction.followup.send(
+            f"🗑️ **{member.display_name}** ztratil {visual['emoji']} **{visual['label']}** "
+            f"i s celým obsahem.")
 
 
 async def setup(bot):
