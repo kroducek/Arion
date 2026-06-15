@@ -1268,6 +1268,22 @@ class InvPageView(discord.ui.View):
         self.page += 1
         await self._refresh(interaction)
 
+    @discord.ui.button(label="⚔️ Výbava", style=discord.ButtonStyle.primary, row=0)
+    async def equip_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Vrátí zpět na úvodní equip embed."""
+        profiles = _load_profiles()
+        profile  = profiles.get(str(self.member.id))
+        if profile:
+            _ensure_inv_fields(profile)
+            _migrate_storages(profile)
+            self.profile  = profile
+            self.storages = _available_storages(profile, self.items_db)
+        self.active = "inventory"
+        self.page   = 0
+        self._build_storage_buttons()
+        embed = _build_equip_embed(self.profile, self.member, self.items_db)
+        await interaction.response.edit_message(embed=embed, view=self)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # COG
@@ -1707,6 +1723,8 @@ class Inventory(commands.Cog):
         desc="Popis, lore, perky — volný text.",
         lore_drop="Narativní hláška zobrazená při použití itemu (místo desc).",
         required_perk="Perk nutný pro equipnutí (autocomplete: Výzbroj perky).",
+        storage_capacity="Pokud je item úložiště: počet slotů (0 = neúložiště, -1 = neomezeno jako BoH).",
+        storage_emoji="Emoji úložiště zobrazené na tlačítku /inv (např. 🎒).",
     )
     @app_commands.choices(
         category=[app_commands.Choice(name=c, value=c) for c in CATEGORIES],
@@ -1741,6 +1759,8 @@ class Inventory(commands.Cog):
         desc: Optional[str] = None,
         lore_drop: Optional[str] = None,
         required_perk: Optional[str] = None,
+        storage_capacity: int = 0,
+        storage_emoji: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -1782,10 +1802,20 @@ class Inventory(commands.Cog):
                     equip_bonus[k] = v
         if equip_bonus:    item["equip_bonus"]    = equip_bonus
         if required_perk:  item["required_perk"]  = required_perk
+        # Storage item — capacity 0 = běžný item, -1 = unlimited (BoH styl)
+        if storage_capacity != 0:
+            storage_def: dict = {"capacity": None if storage_capacity < 0 else storage_capacity}
+            if storage_emoji:
+                storage_def["emoji"] = storage_emoji
+            item["storage"] = storage_def
         items_db[item_id] = item
         _save_items(items_db)
+        storage_note = ""
+        if storage_capacity != 0:
+            cap_str = "neomezené ∞" if storage_capacity < 0 else f"{storage_capacity} slotů"
+            storage_note = f"\n📦 Úložiště: {cap_str}"
         await interaction.followup.send(
-            f"✅ Item **{name}** (`{item_id}`) přidán do databáze.")
+            f"✅ Item **{name}** (`{item_id}`) přidán do databáze.{storage_note}")
 
     @inv_db.command(name="edit", description="[DM] Upraví existující item v databázi.")
     @app_commands.describe(
@@ -1806,6 +1836,9 @@ class Inventory(commands.Cog):
         stat_bonus="Bonusy ke statům při equipu, např. STR:3 DEX:1 (stat:0 = odebrat).",
         lore_drop="Narativní hláška při použití (prázdné = beze změny · 'clear' = odebrat).",
         required_perk="Perk nutný pro equipnutí ('clear' = odebrat).",
+        storage_capacity="Úložiště: počet slotů (0 = beze změny, -1 = ∞, 'clear' přes storage_clear).",
+        storage_emoji="Emoji úložiště na tlačítku /inv.",
+        storage_clear="Odebere storage vlastnost (item přestane být úložiště).",
     )
     @app_commands.autocomplete(item_id=_ac_database_item, required_perk=_ac_vyzboj_perk)
     async def inv_db_edit(
@@ -1827,6 +1860,9 @@ class Inventory(commands.Cog):
         mana_bonus: Optional[int] = None,
         stat_bonus: Optional[str] = None,
         required_perk: Optional[str] = None,
+        storage_capacity: Optional[int] = None,
+        storage_emoji: Optional[str] = None,
+        storage_clear: bool = False,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -1882,6 +1918,15 @@ class Inventory(commands.Cog):
         if required_perk is not None:
             if required_perk.lower() == "clear": item.pop("required_perk", None)
             else:                                 item["required_perk"] = required_perk
+        # Storage vlastnost
+        if storage_clear:
+            item.pop("storage", None)
+        elif storage_capacity is not None or storage_emoji is not None:
+            stor = item.setdefault("storage", {"capacity": 0})
+            if storage_capacity is not None:
+                stor["capacity"] = None if storage_capacity < 0 else storage_capacity
+            if storage_emoji is not None:
+                stor["emoji"] = storage_emoji
         _save_items(items_db)
         await interaction.followup.send(
             f"✅ Item **{item['name']}** (`{item_id}`) upraven.")
