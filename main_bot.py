@@ -61,6 +61,7 @@ BOT_COGS = [
     "src.core.bot.gallows",
     "src.core.bot.tarot",
     "src.core.bot.minigames_hub",
+    "src.core.bot.blackjack",
     # Labyrinth (balíček)
     "src.core.bot.labyrinth",
     # Utility
