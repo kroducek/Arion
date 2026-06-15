@@ -910,6 +910,89 @@ def _build_storage_embed(profile: dict, member: discord.Member, items_db: dict,
     return embed, pages
 
 
+def _build_item_detail_embed(entry: dict, items_db: dict) -> discord.Embed:
+    """Plný detail jednoho předmětu (pro select v inventáři)."""
+    if entry["type"] != "registered":
+        # Free / custom item — jen jméno
+        return discord.Embed(
+            title=entry.get("name", "?"),
+            description="*Volný předmět bez databázového záznamu.*",
+            color=EMBED_COLOR,
+        )
+
+    iid     = entry["id"]
+    db_item = items_db.get(iid, {})
+    name    = db_item.get("name", f"[{iid}]")
+    qty     = entry.get("qty", 1)
+
+    embed = discord.Embed(title=name, color=EMBED_COLOR)
+
+    # Lore / popis
+    lore = db_item.get("lore_drop")
+    desc = db_item.get("desc")
+    if desc:
+        embed.description = desc
+    elif lore:
+        embed.description = f"*{lore}*"
+
+    # Statistiky
+    stat_lines = []
+    cat = db_item.get("category")
+    if cat:
+        stat_lines.append(f"📦 Kategorie: **{cat}**")
+    if qty > 1:
+        stat_lines.append(f"🔢 Množství: **{qty}**")
+    slot = db_item.get("slot")
+    if slot:
+        slot_label = SLOT_LABELS.get(slot, slot)
+        ht = db_item.get("hand_type")
+        ht_str = "  *(obouruční)*" if ht == "two" else ("  *(jednoruční)*" if ht == "one" else "")
+        stat_lines.append(f"📍 Slot: **{slot_label}**{ht_str}")
+    if db_item.get("atk"):
+        stat_lines.append(f"⚔️ Útok: **{db_item['atk']}**")
+    if db_item.get("def"):
+        stat_lines.append(f"🛡️ Obrana: **{db_item['def']}**")
+    mods = _parse_modifiers(db_item)
+    if mods:
+        stat_lines.append(f"✨ Efekty: {mods}")
+    for key, label in [("hp_restore", "❤️ Obnova HP"), ("mana_restore", "🔷 Obnova many"),
+                       ("hunger_restore", "🍖 Obnova hladu"), ("mana_cost", "🔷 Cena many")]:
+        if db_item.get(key):
+            stat_lines.append(f"{label}: **{db_item[key]}**")
+    if db_item.get("stackable"):
+        stat_lines.append("📚 Stackovatelné")
+    if db_item.get("consumable"):
+        stat_lines.append("🍽️ Spotřebuje se při použití")
+
+    storage = db_item.get("storage")
+    if isinstance(storage, dict):
+        scap = storage.get("capacity")
+        scap_str = "∞ neomezené" if scap is None else f"{scap} slotů"
+        stat_lines.append(f"{storage.get('emoji', '📦')} Úložiště: **{scap_str}**")
+
+    if stat_lines:
+        embed.add_field(name="Vlastnosti", value="\n".join(stat_lines), inline=False)
+
+    # Požadavky
+    req = db_item.get("requires")
+    if req:
+        req_str = "  ·  ".join(f"{k} {v}" for k, v in req.items())
+        embed.add_field(name="📋 Požadavky", value=req_str, inline=False)
+
+    eb = db_item.get("equip_bonus")
+    if eb:
+        bonus_str = _format_bonus(eb)
+        if bonus_str:
+            embed.add_field(name="🌟 Bonus při equipu", value=bonus_str, inline=False)
+
+    rp = db_item.get("required_perk")
+    if rp:
+        embed.add_field(name="🔒 Vyžaduje perk", value=rp, inline=False)
+
+    embed.set_footer(text=f"ID: {iid}")
+    return embed
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PERMISSION HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1224,10 +1307,60 @@ class InvPageView(discord.ui.View):
                 label=f"{visual['emoji']} {visual['label']}",
                 style=discord.ButtonStyle.success if is_active else discord.ButtonStyle.secondary,
                 custom_id=f"stor_{skey}",
-                row=1 + (i // 5),
+                row=2 + (i // 5),
             )
             btn.callback = self._make_storage_callback(skey)
             self.add_item(btn)
+
+    def _rebuild_item_select(self):
+        """Naplní dropdown itemy z aktuální stránky aktuálního storage (row 1)."""
+        # Smaž starý select
+        for item in [c for c in self.children if getattr(c, "custom_id", "") == "item_detail_select"]:
+            self.remove_item(item)
+
+        storage = self.profile.get("storages", {}).get(self.active, [])
+        start   = self.page * PAGE_SIZE
+        chunk   = storage[start : start + PAGE_SIZE]
+        if not chunk:
+            return
+
+        options = []
+        for idx, entry in enumerate(chunk):
+            name = _item_display_name(entry, self.items_db)
+            qty  = entry.get("qty", 1)
+            label = name if qty <= 1 else f"{name} ×{qty}"
+            label = label[:100]  # Discord limit
+            cat = ""
+            if entry.get("type") == "registered":
+                cat = self.items_db.get(entry["id"], {}).get("category", "")
+            options.append(discord.SelectOption(
+                label=label,
+                value=str(start + idx),    # absolutní index v storage
+                description=cat[:100] if cat else None,
+            ))
+
+        select = discord.ui.Select(
+            placeholder="📋 Zobrazit detail předmětu…",
+            options=options[:25],
+            custom_id="item_detail_select",
+            row=1,
+        )
+        select.callback = self._item_select_callback
+        self.add_item(select)
+
+    async def _item_select_callback(self, interaction: discord.Interaction):
+        # Najdi vybraný index
+        try:
+            sel_idx = int(interaction.data["values"][0])
+        except (KeyError, ValueError, IndexError):
+            await interaction.response.send_message("*Nelze načíst předmět.*", ephemeral=True)
+            return
+        storage = self.profile.get("storages", {}).get(self.active, [])
+        if sel_idx >= len(storage):
+            await interaction.response.send_message("*Předmět už není v úložišti.*", ephemeral=True)
+            return
+        embed = _build_item_detail_embed(storage[sel_idx], self.items_db)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     def _make_storage_callback(self, storage_key: str):
         async def callback(interaction: discord.Interaction):
@@ -1256,6 +1389,7 @@ class InvPageView(discord.ui.View):
             self.profile, self.member, self.items_db, self.active, self.page)
         self.pages = pages
         self._update_nav()
+        self._rebuild_item_select()
         await interaction.response.edit_message(embed=embed, view=self)
 
     @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary, row=0)
@@ -1281,6 +1415,9 @@ class InvPageView(discord.ui.View):
         self.active = "inventory"
         self.page   = 0
         self._build_storage_buttons()
+        # Odeber item select — na equip přehledu nedává smysl
+        for item in [c for c in self.children if getattr(c, "custom_id", "") == "item_detail_select"]:
+            self.remove_item(item)
         embed = _build_equip_embed(self.profile, self.member, self.items_db)
         await interaction.response.edit_message(embed=embed, view=self)
 
