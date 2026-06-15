@@ -122,8 +122,9 @@ def _ensure_inv_fields(profile: dict) -> dict:
     return profile
 
 def _ensure_boh_field(profile: dict) -> None:
-    """Zajistí že profil má pole bag_of_holding."""
+    """Zajistí že profil má pole bag_of_holding a boh_notes."""
     profile.setdefault("bag_of_holding", [])
+    profile.setdefault("boh_notes", [])
 
 
 def _has_boh(profile: dict) -> bool:
@@ -666,7 +667,17 @@ def _build_boh_embed(profile: dict, member: discord.Member,
     chunk = lines[start : start + PAGE_SIZE]
 
     embed.description = "\n".join(chunk) if chunk else "*Prázdná strana.*"
-    embed.set_footer(text=f"👜 Bag of Holding  ·  {total} předmětů  ·  Strana {page + 1}/{pages}")
+
+    # Ostatní / notes sekce (vždy viditelná, max 20 řádků)
+    notes = profile.get("boh_notes", [])
+    if notes:
+        note_lines = [f"`{i+1}.` {n}" for i, n in enumerate(notes)]
+        notes_val  = "\n".join(note_lines[:20])
+        if len(notes) > 20:
+            notes_val += f"\n*... a {len(notes) - 20} dalších*"
+        embed.add_field(name="📝 Ostatní", value=notes_val, inline=False)
+
+    embed.set_footer(text=f"👜 Bag of Holding  ·  {total} předmětů · {len(notes)} poznámek  ·  Strana {page + 1}/{pages}")
     return embed, pages
 
 
@@ -1747,6 +1758,70 @@ class Inventory(commands.Cog):
         qty_str  = f" ×{qty}" if qty > 1 else ""
         await interaction.followup.send(
             f"✅ **{name}**{qty_str} přesunuto: 👜 Bag of Holding → Inventář.")
+
+    @app_commands.command(name="inv-boh-note",
+                          description="Přidá poznámku do sekce Ostatní v Bag of Holding.")
+    @app_commands.describe(text="Text poznámky — předmět, nález, informace...")
+    async def inv_boh_note(self, interaction: discord.Interaction, text: str):
+        await interaction.response.defer(ephemeral=True)
+        profiles = _load_profiles()
+        profile  = profiles.get(str(interaction.user.id))
+        if not profile:
+            await interaction.followup.send("❌ Nemáš profil.")
+            return
+        _ensure_boh_field(profile)
+        if not _has_boh(profile):
+            await interaction.followup.send("❌ Nevlastníš **Bag of Holding**.")
+            return
+        profile["boh_notes"].append(text)
+        line_num = len(profile["boh_notes"])
+        _save_profiles(profiles)
+        await interaction.followup.send(
+            f"✅ Přidáno do 👜 BoH jako řádek **{line_num}**: *{text}*")
+
+    @app_commands.command(name="inv-boh-note-edit",
+                          description="Upraví poznámku v sekci Ostatní Bag of Holding.")
+    @app_commands.describe(cislo="Číslo řádku (viz /inv → BoH → Ostatní).", text="Nový text.")
+    async def inv_boh_note_edit(self, interaction: discord.Interaction,
+                                cislo: int, text: str):
+        await interaction.response.defer(ephemeral=True)
+        profiles = _load_profiles()
+        profile  = profiles.get(str(interaction.user.id))
+        if not profile:
+            await interaction.followup.send("❌ Nemáš profil.")
+            return
+        _ensure_boh_field(profile)
+        notes = profile["boh_notes"]
+        if cislo < 1 or cislo > len(notes):
+            await interaction.followup.send(
+                f"❌ Řádek {cislo} neexistuje. Máš {len(notes)} poznámek v BoH.")
+            return
+        old              = notes[cislo - 1]
+        notes[cislo - 1] = text
+        _save_profiles(profiles)
+        await interaction.followup.send(
+            f"✅ BoH řádek **{cislo}** upraven.\n~~{old}~~ → *{text}*")
+
+    @app_commands.command(name="inv-boh-note-remove",
+                          description="Odebere poznámku ze sekce Ostatní Bag of Holding.")
+    @app_commands.describe(cislo="Číslo řádku (viz /inv → BoH → Ostatní).")
+    async def inv_boh_note_remove(self, interaction: discord.Interaction, cislo: int):
+        await interaction.response.defer(ephemeral=True)
+        profiles = _load_profiles()
+        profile  = profiles.get(str(interaction.user.id))
+        if not profile:
+            await interaction.followup.send("❌ Nemáš profil.")
+            return
+        _ensure_boh_field(profile)
+        notes = profile["boh_notes"]
+        if cislo < 1 or cislo > len(notes):
+            await interaction.followup.send(
+                f"❌ Řádek {cislo} neexistuje. Máš {len(notes)} poznámek v BoH.")
+            return
+        removed = notes.pop(cislo - 1)
+        _save_profiles(profiles)
+        await interaction.followup.send(
+            f"✅ BoH řádek **{cislo}** odebrán: ~~{removed}~~")
 
     # ══════════════════════════════════════════════════════════════════════════
     # ADMIN COMMANDY (DM only)
