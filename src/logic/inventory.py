@@ -1136,7 +1136,10 @@ def _make_ac_storage_items(param_name: str):
     return _ac
 
 
-
+async def _ac_equip_slot(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Kontextový autocomplete pro slot v /equip — závisí na zvoleném itemu."""
     items_db = _load_items()
     profile  = _get_profile(interaction.user.id)
     item_id  = getattr(interaction.namespace, "item", None)
