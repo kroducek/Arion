@@ -1222,6 +1222,195 @@ class PerkEditModal(discord.ui.Modal, title="Upravit perk"):
 
 # ── Cog ───────────────────────────────────────────────────────────────────────
 
+# ── Pagination view pro /perks list ──────────────────────────────────────────
+
+SPIRIT_NAMES: dict[str, list[str]] = {
+    "svetlo":  ["Světluška", "Auron", "Blýskan", "Lunar", "Záře"],
+    "temnota": ["Stín", "Umbra", "Mrak", "Nocturna", "Šepot"],
+    "ohen":    ["Ember", "Jiskra", "Žar", "Blazen", "Výheň"],
+    "voda":    ["Vlna", "Kapka", "Pramen", "Nix", "Příboj"],
+    "zeme":    ["Kámen", "Hlína", "Kořen", "Terra", "Hrouda"],
+    "vzduch":  ["Vánek", "Dech", "Vír", "Zefýr", "Šelest"],
+}
+
+ODHALENI_ELEMENTS = ["svetlo", "temnota", "ohen", "voda", "zeme", "vzduch"]
+
+def _fury_from_roll(roll: int) -> int:
+    """Převede výsledek 1d20 na získanou furioku ducha."""
+    if roll == 1:   return 2
+    if roll <= 5:   return roll + 3
+    if roll <= 10:  return roll + 5
+    if roll <= 15:  return roll + 8
+    if roll <= 19:  return roll + 12
+    return 40  # nat20
+
+
+class PerkListView(discord.ui.View):
+    """Stránkovaný seznam perků pro /perks list."""
+
+    def __init__(self, pages: list[tuple[str, str, int]], requester_id: int):
+        super().__init__(timeout=120)
+        self.pages       = pages   # [(group_name, text_content, color), ...]
+        self.idx         = 0
+        self.requester_id = requester_id
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.prev_btn.disabled = (self.idx == 0)
+        self.next_btn.disabled = (self.idx == len(self.pages) - 1)
+
+    def _build_embed(self) -> discord.Embed:
+        group, content, color = self.pages[self.idx]
+        embed = discord.Embed(
+            title=f"📋 Databáze perků — {group}",
+            description=content,
+            color=color,
+        )
+        embed.set_footer(text=f"Strana {self.idx + 1}/{len(self.pages)}  ·  ⭐ {ARION_NAME}")
+        return embed
+
+    @discord.ui.button(emoji="◀️", style=discord.ButtonStyle.secondary, custom_id="perklist_prev")
+    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.requester_id:
+            await interaction.response.send_message("*Toto není tvůj seznam.*", ephemeral=True)
+            return
+        self.idx -= 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+    @discord.ui.button(emoji="▶️", style=discord.ButtonStyle.secondary, custom_id="perklist_next")
+    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.requester_id:
+            await interaction.response.send_message("*Toto není tvůj seznam.*", ephemeral=True)
+            return
+        self.idx += 1
+        self._update_buttons()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+
+# ── Odhalení flow ─────────────────────────────────────────────────────────────
+
+class OdhaleniRollView(discord.ui.View):
+    """Druhý krok — hráč hodí 1d20 a duch se přidá do kolekce."""
+
+    def __init__(self, uid: str, element: str, spirit_name: str):
+        super().__init__(timeout=60)
+        self.uid         = uid
+        self.element     = element
+        self.spirit_name = spirit_name
+        self.done        = False
+
+    @discord.ui.button(label="🎲 Hodit 1d20", style=discord.ButtonStyle.primary)
+    async def roll_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if str(interaction.user.id) != self.uid:
+            await interaction.response.send_message("*Tohle není tvoje aktivace.*", ephemeral=True)
+            return
+        if self.done:
+            return
+        self.done = True
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(view=self)
+
+        import random as _rnd
+        roll  = _rnd.randint(1, 20)
+        fury  = _fury_from_roll(roll)
+        nat20 = roll == 20
+        nat1  = roll == 1
+
+        # Přidej ducha do profilu
+        from src.utils.json_utils import load_json, save_json
+        from src.utils.paths import PROFILES as _PF
+        import datetime
+
+        data    = load_json(_PF, default={})
+        profile = data.setdefault(self.uid, {})
+        spirits = profile.setdefault("spirits", [])
+
+        from src.logic.spirits import rank_xp_threshold  # type: ignore
+        new_spirit = {
+            "name":         self.spirit_name,
+            "rank":         1,
+            "fury":         fury,
+            "element":      self.element,
+            "description":  "Duch zjevený skrze Odhalení.",
+            "xp":           0,
+            "xp_threshold": rank_xp_threshold(1),
+            "total_xp":     0,
+            "created_at":   datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        }
+        spirits.append(new_spirit)
+        save_json(_PF, data)
+
+        from src.logic.spirits import ELEMENTS as _ELEMS  # type: ignore
+        elem_info  = _ELEMS.get(self.element, {})
+        elem_emoji = elem_info.get("emoji", "👻")
+        color      = elem_info.get("color", 0x7B68EE)
+
+        nat_line = ""
+        if nat20: nat_line = "\n✨ **NATURAL 20! Duch je výjimečně silný!**"
+        elif nat1: nat_line = "\n💀 **Natural 1 — duch je velmi slabý...**"
+
+        embed = discord.Embed(
+            title=f"{elem_emoji} {self.spirit_name} byl pohlcen!",
+            description=(
+                f"Hodil/a jsi **{roll}** na 1d20.{nat_line}\n\n"
+                f"Duch **{self.spirit_name}** ({self.element}) přichází s **{fury} furioku**.\n"
+                f"Přidán do tvé kolekce — použij `/duch-seznam` pro přehled."
+            ),
+            color=color,
+        )
+        await interaction.followup.send(embed=embed)
+
+
+class OdhaleniView(discord.ui.View):
+    """První krok — výběr jednoho ze tří duchů."""
+
+    def __init__(self, uid: str, spirits: list[tuple[str, str]]):
+        """spirits = [(element, name), ...]"""
+        super().__init__(timeout=60)
+        self.uid     = uid
+        self.chosen  = False
+        for element, name in spirits:
+            info  = __import__("src.logic.spirits", fromlist=["ELEMENTS"]).ELEMENTS.get(element, {})
+            emoji = info.get("emoji", "👻")
+            btn   = discord.ui.Button(
+                label=f"{emoji} {name}",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"odhaleni_{element}",
+            )
+            btn.callback = self._make_callback(element, name)
+            self.add_item(btn)
+
+    def _make_callback(self, element: str, name: str):
+        async def callback(interaction: discord.Interaction):
+            if str(interaction.user.id) != self.uid:
+                await interaction.response.send_message("*Tohle není tvoje aktivace.*", ephemeral=True)
+                return
+            if self.chosen:
+                return
+            self.chosen = True
+            for item in self.children:
+                item.disabled = True
+            await interaction.response.edit_message(view=self)
+
+            from src.logic.spirits import ELEMENTS as _ELEMS  # type: ignore
+            info  = _ELEMS.get(element, {})
+            emoji = info.get("emoji", "👻")
+            color = info.get("color", 0x7B68EE)
+
+            embed = discord.Embed(
+                title=f"{emoji} Zvolil/a jsi {name}!",
+                description=f"Duch **{name}** ({element}) přistoupil blíže.\n\nHoď 1d20 — výsledek určí jeho furioku.",
+                color=color,
+            )
+            await interaction.followup.send(
+                embed=embed,
+                view=OdhaleniRollView(uid=self.uid, element=element, spirit_name=name),
+            )
+        return callback
+
+
 class PerksCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -1360,18 +1549,22 @@ class PerksCog(commands.Cog):
         groups: dict[str, list[tuple[str, dict]]] = {}
         ungrouped: list[tuple[str, dict]] = []
         for pid, p in perks.items():
+            if pid == "_connections":
+                continue
             g = p.get("group", "")
             if g in GROUP_ORDER:
                 groups.setdefault(g, []).append((pid, p))
             else:
                 ungrouped.append((pid, p))
 
-        lines: list[str] = []
+        # Sestav stránky — každá skupina = jedna stránka
+        pages: list[tuple[str, str, int]] = []
         for g in GROUP_ORDER:
             if g not in groups:
                 continue
             gemoji = GROUP_EMOJI.get(g, "▸")
-            lines.append(f"\n{gemoji} **{g}**")
+            color  = GROUP_COLOR.get(g, 0x7B68EE)
+            lines: list[str] = []
             for pid, p in groups[g]:
                 passive_tag = " *(pasivní)*" if p.get("passive") else ""
                 unique_tag  = " ⭐" if p.get("unique") else ""
@@ -1379,16 +1572,23 @@ class PerksCog(commands.Cog):
                 cd_tag      = f" · ⏳ {max_}×/den" if max_ > 0 else ""
                 lines.append(f"▸ **{p['name']}**{passive_tag}{unique_tag}{cd_tag}")
                 lines.append(f"-# `{pid}`")
+            pages.append((f"{gemoji} {g}", "\n".join(lines), color))
+
         if ungrouped:
-            lines.append("\n✨ **Ostatní**")
+            lines = []
             for pid, p in ungrouped:
                 lines.append(f"▸ **{p['name']}**")
                 lines.append(f"-# `{pid}`")
+            pages.append(("✨ Ostatní", "\n".join(lines), 0x7B68EE))
 
-        desc = f"### 📋 Databáze perků — {len(perks)} celkem" + "\n".join(lines)
-        embed = discord.Embed(description=desc[:4000], color=0x7B68EE)
-        embed.set_footer(text=f"⭐ {ARION_NAME}  ·  /perks give <id> @hráč — přiřaď perk")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        if not pages:
+            await interaction.response.send_message("Databáze perků je prázdná.", ephemeral=True)
+            return
+
+        view  = PerkListView(pages, requester_id=interaction.user.id)
+        embed = view._build_embed()
+        embed.set_author(name=f"Celkem perků: {len(perks)}")
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     # ── /give-random-perk ─────────────────────────────────────────────────────
 
@@ -1888,6 +2088,35 @@ class PerksCog(commands.Cog):
         today = date.today().isoformat()
         cd    = player["cooldowns"].get(perk_id, {})
         used  = cd.get("used", 0) if cd.get("date") == today else 0
+
+        # ── Speciální handling: Furioku: Odhalení ─────────────────────────────
+        if perk_id == "furioku_odhaleni":
+            import random as _rnd
+            elements   = _rnd.sample(ODHALENI_ELEMENTS, 3)
+            selections = []
+            for elem in elements:
+                names = SPIRIT_NAMES.get(elem, ["Duch"])
+                selections.append((elem, _rnd.choice(names)))
+
+            from src.logic.spirits import ELEMENTS as _ELEMS  # type: ignore
+            lines = []
+            for elem, name in selections:
+                info = _ELEMS.get(elem, {})
+                lines.append(f"{info.get('emoji','👻')} **{name}** — *{elem}*")
+
+            embed = discord.Embed(
+                title="👻 Furioku: Odhalení",
+                description=(
+                    "Okolo tvé ruky se zjeví tři malí duchové.\n"
+                    "Vyber jednoho — poté hodíš **1d20** a podle výsledku se určí jeho furioku.\n\n"
+                    + "\n".join(lines)
+                ),
+                color=0x7B68EE,
+            )
+            embed.set_footer(text=f"⏳ {_cooldown_bar(used, perk.get('cooldown_uses', 2))} dnes  ·  ⭐ {ARION_NAME}")
+            view = OdhaleniView(uid=str(interaction.user.id), spirits=selections)
+            await interaction.response.send_message(embed=embed, view=view)
+            return
 
         embed = _perk_announce_embed(interaction.user, perk_id, perk, used)
         await interaction.response.send_message(embed=embed)

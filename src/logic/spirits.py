@@ -17,15 +17,15 @@ FU_EMO       = "<:furioku:1490160933081972866>"
 SPIRIT_EMO   = "👻"
 
 ELEMENTS: dict[str, dict] = {
-    "voda":      {"emoji": "💧", "color": 0x2980b9},
-    "zeme":      {"emoji": "🪨", "color": 0x8B6914},
-    "ohen":      {"emoji": "🔥", "color": 0xe74c3c},
-    "vzduch":    {"emoji": "🌬️", "color": 0x99d6ea},
-    "svetlo":    {"emoji": "✨", "color": 0xf9e547},
-    "temnota":   {"emoji": "🌑", "color": 0x2c2c3e},
-    "rovnovaha": {"emoji": "⚖️", "color": 0x1d9e75},
-    "prazdnota": {"emoji": "🌀", "color": 0x8e44ad},
-    "chaos":     {"emoji": "💥", "color": 0xe67e22},
+    "voda":      {"emoji": "💧", "color": 0x2980b9, "furioku_type": "Vodní furioka"},
+    "zeme":      {"emoji": "🪨", "color": 0x8B6914, "furioku_type": "Zemní furioka"},
+    "ohen":      {"emoji": "🔥", "color": 0xe74c3c, "furioku_type": "Ohnivá furioka"},
+    "vzduch":    {"emoji": "🌬️", "color": 0x99d6ea, "furioku_type": "Vzdušná furioka"},
+    "svetlo":    {"emoji": "✨", "color": 0xf9e547, "furioku_type": "Světelná furioka"},
+    "temnota":   {"emoji": "🌑", "color": 0x2c2c3e, "furioku_type": "Temná furioka"},
+    "rovnovaha": {"emoji": "⚖️", "color": 0x1d9e75, "furioku_type": "Vyvážená furioka"},
+    "prazdnota": {"emoji": "🌀", "color": 0x8e44ad, "furioku_type": "Prázdná furioka"},
+    "chaos":     {"emoji": "💥", "color": 0xe67e22, "furioku_type": "Chaotická furioka"},
 }
 
 def rank_xp_threshold(rank: int) -> int:
