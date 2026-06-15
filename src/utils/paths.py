@@ -265,3 +265,6 @@ TUTORIAL_MSG = data("tutorial_msg.json")
 
 # ── Tierlistry ───────────────────────────────────────────────
 TIERLISTS = data("tierlists.json")
+
+# ── Furioku: Odhalení loot pool ──────────────────────────────
+ODHALENI_POOL = data("odhaleni_pool.json")
