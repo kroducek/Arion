@@ -35,6 +35,365 @@ def _hours_cz(n: int) -> str:
     if n <= 4: return "hodiny"
     return "hodin"
 
+# ============================================================
+#  KRONIKA — interaktivní rozcestník (/kronika)
+# ============================================================
+#  Struktura: HOME -> BOT -> KATEGORIE -> příkazy
+#  Pro doplnění příkazů uprav slovník KRONIKA níže — UI se
+#  vygeneruje samo (tlačítka, embedy, řádky).
+# ============================================================
+
+KRONIKA_TIMEOUT = 180  # sekund, než tlačítka zšednou
+
+KRONIKA = {
+    "ariondnd": {
+        "label": "ArionDND",
+        "emoji": "⚔️",
+        "color": 0xFFA500,
+        "intro": "*Arion otevře tlustou živoucí knihu D&D mechanik a začne listovat...*",
+        "footer": "ArionDND · Aurionis Act II",
+        "categories": {
+            "roll": {
+                "label": "Roll & Check",
+                "emoji": "🎲",
+                "commands": (
+                    "`/roll` — Hod kostkami (1d20+2d4+5...)\n"
+                    "`/roll check:` — Check atributu (porovná s tvým statem)\n"
+                    "`/roll check: check2:` — Kombinovaný check (průměr dvou statů)\n"
+                    "`/show_rolls` — Statistiky tvých hodů"
+                ),
+            },
+            "combat": {
+                "label": "Combat",
+                "emoji": "⚔️",
+                "commands": (
+                    "`/combat_start` — Zahájit boj\n"
+                    "`/combat_join` — Zapojit se do boje\n"
+                    "`/combat_add_npc` — Přidat NPC/potvoru\n"
+                    "`/next` — Předat tah dalšímu\n"
+                    "`/combat_end` — Ukončit boj"
+                ),
+            },
+            "party": {
+                "label": "Party",
+                "emoji": "🤝",
+                "commands": (
+                    "`/party` — Zobraz svou partu\n"
+                    "`/party set` — Nastavení party"
+                ),
+            },
+            "postava": {
+                "label": "Postava & Deník",
+                "emoji": "📖",
+                "commands": (
+                    "`/profile` — Průkaz dobrodruha\n"
+                    "`/profile-edit` — Upravit průkaz\n"
+                    "`/eat` — Sněz jídlo z inventáře\n"
+                    "`/diary add/show` — Deník postavy\n"
+                    "`/memory show/add/remove/edit` — Vzpomínky postavy"
+                ),
+            },
+            "quest": {
+                "label": "Quest",
+                "emoji": "📜",
+                "commands": (
+                    "`/quests` — Aktivní questy\n"
+                    "`/quest add` — Přidat quest\n"
+                    "`/quest status` — Změnit stav questu\n"
+                    "`/quest log` — Záznam průběhu questu"
+                ),
+            },
+            "inventar": {
+                "label": "Inventář",
+                "emoji": "🎒",
+                "commands": (
+                    "`/inv` — Zobraz inventář a equipment\n"
+                    "`/equip` — Equipni item\n"
+                    "`/unequip` — Sundej item ze slotu\n"
+                    "`/use` — Použij consumable (lektvar, jídlo...)\n"
+                    "`/inv-give` — Pošli item jinému hráči\n"
+                    "`/inv-inspect` — Detail itemu z databáze"
+                ),
+            },
+            "gold": {
+                "label": "Gold & Shop",
+                "emoji": "💰",
+                "commands": (
+                    "`/g` — Tvůj aktuální zůstatek\n"
+                    "`/gsend` — Pošli zlato hráči\n"
+                    "`/gleaderboard` — Žebříček bohatství\n"
+                    "`/gshop open` — Otevři shop"
+                ),
+            },
+            "reputace": {
+                "label": "Reputace",
+                "emoji": "🏅",
+                "commands": (
+                    "`/rep show` — Zobraz reputaci u frakcí\n"
+                    "`/rep list` — Přehled hráčů ve frakci"
+                ),
+            },
+            "rp": {
+                "label": "RP místnosti",
+                "emoji": "🎭",
+                "commands": (
+                    "`/rp create` — Vytvoř soukromou RP místnost\n"
+                    "`/rp join` — Vstup pomocí hesla\n"
+                    "`/rp spectate` — Pozvi diváka (vidí + reaguje, nepíše)\n"
+                    "`/rp unspectate` — Odeber diváka\n"
+                    "`/rp kick` — Vyhoď hráče nebo diváka\n"
+                    "`/rp mute` — Ztichni místnost"
+                ),
+            },
+            "turnaj": {
+                "label": "Turnaj & Vyvolení",
+                "emoji": "🏆",
+                "commands": (
+                    "`/tournament list` — Postupující do 2. kola\n"
+                    "`/vyvoleni list` — Všichni zapsaní dobrodruzi"
+                ),
+            },
+        },
+    },
+    "arionbot": {
+        "label": "ArionBOT",
+        "emoji": "🎮",
+        "color": 0x5865F2,
+        "intro": "*Arion zamňouká a rozhodí po stole karty a herní kostky...*",
+        "footer": "ArionBOT · Minihry & karty",
+        "categories": {
+            "minihry": {
+                "label": "Minihry",
+                "emoji": "🎲",
+                "commands": (
+                    "*(Doplň příkazy ArionBOTa)*\n"
+                    "`/...` — popis"
+                ),
+            },
+            "karty": {
+                "label": "Karty",
+                "emoji": "🃏",
+                "commands": (
+                    "*(Doplň příkazy ArionBOTa)*\n"
+                    "`/...` — popis"
+                ),
+            },
+        },
+    },
+    "labyrinth": {
+        "label": "Labyrinth",
+        "emoji": "🌀",
+        "color": 0x2ECC71,
+        "intro": "*Arion zmizí ve stínech a otevírá bránu do Labyrintu...*",
+        "footer": "Labyrinth",
+        "categories": {
+            "main": {
+                "label": "Příkazy",
+                "emoji": "🗺️",
+                "commands": (
+                    "*(Doplň příkazy Labyrinthu)*\n"
+                    "`/...` — popis"
+                ),
+            },
+        },
+    },
+}
+
+# --- Admin sekce (zamčená) -------------------------------------------------
+KRONIKA_ADMIN = [
+    ("🌍 Postavy & svět", (
+        "`/vliv` — Uděl hráči Vliv (Světlo/Temnota/Rovnováha)\n"
+        "`/takedown` — Arion provede Takedown\n"
+        "`/timeskip` — Přeskok v čase (narativní utilita)\n"
+        "`/erase all` — Smaže všechny zprávy v místnosti\n"
+        "`/hunger-balance` — Simulace hladu v čase\n"
+        "`/profile-admin-hp/mana/fury/vliv` — Nastav staty hráče"
+    )),
+    ("🎒 Reputace & inventář", (
+        "`/rep create/add/set/delete` — Správa reputace frakcí\n"
+        "`/inv-db-add/edit/find/list` — Databáze itemů\n"
+        "`/inv-admin-add/remove/slots` — Inventář hráčů"
+    )),
+    ("📜 Questy, RP & combat", (
+        "`/quest add/status/remove` — Správa questů\n"
+        "`/rp info/remove` — Přehled RP místností\n"
+        "`/combat_sethp/setdef/remove/setorder` — Combat admin"
+    )),
+    ("💰 Ekonomika & turnaj", (
+        "`/gshop create/edit/close` — Správa shopu\n"
+        "`/gadd` `/gremove` — Zlato hráčům\n"
+        "`/tournament add/remove` — Správa turnaje\n"
+        "`/admin-tutorial-reset` — Reset tutoriálu hráče\n"
+        "`/memory admin` — Správa vzpomínek hráčů"
+    )),
+]
+
+
+def _build_home_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="📖 Kronika Aurionis",
+        description=(
+            "🐾 *Arion nastraží uši a otevře živoucí knihu.*\n\n"
+            "**„Ahoj, vítej v kronice! S čím, že ti to mám pomoct?“**\n\n"
+            "Vyber si svět níže 👇"
+        ),
+        color=0xFFD700,
+    )
+    embed.add_field(name="⚔️ ArionDND", value="D&D mechaniky, boj, postavy, questy", inline=True)
+    embed.add_field(name="🎮 ArionBOT", value="Minihry & karty", inline=True)
+    embed.add_field(name="🌀 Labyrinth", value="Labyrint a jeho tajemství", inline=True)
+    embed.set_footer(text="Aurionis · Act II · klikni na tlačítko")
+    return embed
+
+
+def _build_bot_embed(bot_key: str, cat_key=None) -> discord.Embed:
+    bot = KRONIKA[bot_key]
+    if cat_key is None:
+        embed = discord.Embed(
+            title=f"{bot['emoji']} {bot['label']} — Kronika",
+            description=bot["intro"],
+            color=bot["color"],
+        )
+        lines = [f"{c['emoji']} **{c['label']}**" for c in bot["categories"].values()]
+        embed.add_field(name="Vyber kapitolu níže 👇", value="\n".join(lines), inline=False)
+        embed.set_footer(text=bot["footer"])
+        return embed
+
+    cat = bot["categories"][cat_key]
+    embed = discord.Embed(
+        title=f"{cat['emoji']} {cat['label']}",
+        description=f"*{bot['label']} — kronika*",
+        color=bot["color"],
+    )
+    embed.add_field(name="Příkazy", value=cat["commands"], inline=False)
+    embed.set_footer(text=f"{bot['footer']} · ⬅️ Zpět pro výběr světa")
+    return embed
+
+
+def _build_admin_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="🔒 Admin — Kronika správců",
+        description="*Arion ti pokývla — máš klíč ke správcovské části knihy.*",
+        color=0xE74C3C,
+    )
+    for name, value in KRONIKA_ADMIN:
+        embed.add_field(name=name, value=value, inline=False)
+    embed.set_footer(text="Aurionis · jen pro správce · ⬅️ Zpět")
+    return embed
+
+
+class _NavButton(discord.ui.Button):
+    """Univerzální navigační tlačítko kroniky."""
+    def __init__(self, *, label, emoji, style, action, target=None, row=None):
+        super().__init__(label=label, emoji=emoji, style=style, row=row)
+        self.action = action
+        self.target = target
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.view.handle(interaction, self.action, self.target)
+
+
+class KronikaView(discord.ui.View):
+    """Stavová view: HOME -> BOT -> KATEGORIE / ADMIN."""
+    def __init__(self, author_id: int, *, bot_key=None, cat_key=None, admin=False):
+        super().__init__(timeout=KRONIKA_TIMEOUT)
+        self.author_id = author_id
+        self.bot_key = bot_key
+        self.cat_key = cat_key
+        self.admin = admin
+        self.message = None  # discord.Message, nastaví se po odeslání
+        self._build()
+
+    # --- sestavení tlačítek podle aktuálního stavu ---
+    def _build(self):
+        self.clear_items()
+
+        if self.admin:
+            self.add_item(_NavButton(label="Zpět", emoji="⬅️",
+                                     style=discord.ButtonStyle.primary,
+                                     action="home", row=0))
+            return
+
+        if self.bot_key is None:
+            # HOME — tři boti + admin
+            self.add_item(_NavButton(label="ArionDND", emoji="⚔️",
+                                     style=discord.ButtonStyle.primary,
+                                     action="bot", target="ariondnd", row=0))
+            self.add_item(_NavButton(label="ArionBOT", emoji="🎮",
+                                     style=discord.ButtonStyle.success,
+                                     action="bot", target="arionbot", row=0))
+            self.add_item(_NavButton(label="Labyrinth", emoji="🌀",
+                                     style=discord.ButtonStyle.secondary,
+                                     action="bot", target="labyrinth", row=0))
+            self.add_item(_NavButton(label="Admin", emoji="🔒",
+                                     style=discord.ButtonStyle.danger,
+                                     action="admin", row=1))
+            return
+
+        # BOT menu — kategorie + zpět
+        bot = KRONIKA[self.bot_key]
+        cats = list(bot["categories"].items())
+        for idx, (ckey, cat) in enumerate(cats):
+            self.add_item(_NavButton(label=cat["label"], emoji=cat["emoji"],
+                                     style=discord.ButtonStyle.secondary,
+                                     action="category", target=ckey,
+                                     row=min(idx // 5, 3)))
+        back_row = min((len(cats) - 1) // 5 + 1, 4)
+        self.add_item(_NavButton(label="Zpět", emoji="⬅️",
+                                 style=discord.ButtonStyle.primary,
+                                 action="home", row=back_row))
+
+    # --- jen autor smí ovládat ---
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                "🐾 *Tahle kronika patří někomu jinému.* Otevři si vlastní přes `/kronika`.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
+    # --- routing kliknutí ---
+    async def handle(self, interaction: discord.Interaction, action: str, target):
+        if action == "home":
+            self.bot_key = self.cat_key = None
+            self.admin = False
+            self._build()
+            await interaction.response.edit_message(embed=_build_home_embed(), view=self)
+
+        elif action == "bot":
+            self.bot_key, self.cat_key, self.admin = target, None, False
+            self._build()
+            await interaction.response.edit_message(embed=_build_bot_embed(target, None), view=self)
+
+        elif action == "category":
+            self.cat_key = target
+            await interaction.response.edit_message(
+                embed=_build_bot_embed(self.bot_key, target), view=self
+            )
+
+        elif action == "admin":
+            perms = getattr(interaction.user, "guild_permissions", None)
+            if not (perms and perms.administrator):
+                await interaction.response.send_message(
+                    "🔒 *Arion ti tlapkou zastoupí cestu.* Tahle část kroniky je jen pro **správce**.",
+                    ephemeral=True,
+                )
+                return
+            self.admin, self.bot_key, self.cat_key = True, None, None
+            self._build()
+            await interaction.response.edit_message(embed=_build_admin_embed(), view=self)
+
+
 class Aurionis(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -127,135 +486,11 @@ class Aurionis(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Chyba při mazání: {str(e)}", ephemeral=True)
 
-    @app_commands.command(name="kronika", description="ArionDND kronika — D&D příkazy")
+    @app_commands.command(name="kronika", description="Otevři Kroniku Aurionis — rozcestník všech příkazů")
     async def help(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="⚔️ ArionDND — Kronika",
-            description="*Arion otevře tlustou živoucí knihu a začne listovat...*",
-            color=0xFFA500
-        )
-        embed.add_field(
-            name="🎲 ROLL & CHECK",
-            value=(
-                "`/roll` — Hod kostkami (1d20+2d4+5...)\n"
-                "`/roll check:` — Check atributu (porovná s tvým statem)\n"
-                "`/roll check: check2:` — Kombinovaný check (průměr dvou statů)\n"
-                "`/show_rolls` — Statistiky tvých hodů"
-            ),
-            inline=False
-        )
-        embed.add_field(
-            name="⚔️ COMBAT",
-            value=(
-                "`/combat_start` — Zahájit boj\n"
-                "`/combat_join` — Zapojit se do boje\n"
-                "`/combat_add_npc` — Přidat NPC/potvoru\n"
-                "`/next` — Předat tah dalšímu\n"
-                "`/combat_end` — Ukončit boj"
-            ),
-            inline=True
-        )
-        embed.add_field(
-            name="🤝 PARTY",
-            value=(
-                "`/party` — Zobraz svou partu\n"
-                "`/party set` — Nastavení party"
-            ),
-            inline=True
-        )
-        embed.add_field(
-            name="📖 POSTAVA & DENÍK",
-            value=(
-                "`/profile` — Průkaz dobrodruha\n"
-                "`/profile-edit` — Upravit průkaz\n"
-                "`/eat` — Sněz jídlo z inventáře\n"
-                "`/diary add/show` — Deník postavy\n"
-                "`/memory show/add/remove/edit` — Vzpomínky postavy\n"
-                "`/quests` — Aktivní questy\n"
-                "`/quest add/status/log` — Správa questů"
-            ),
-            inline=False
-        )
-        embed.add_field(
-            name="🎒 INVENTÁŘ",
-            value=(
-                "`/inv` — Zobraz inventář a equipment\n"
-                "`/equip` — Equipni item\n"
-                "`/unequip` — Sundej item ze slotu\n"
-                "`/use` — Použij consumable (lektvar, jídlo...)\n"
-                "`/inv-give` — Pošli item jinému hráči\n"
-                "`/inv-inspect` — Detail itemu z databáze"
-            ),
-            inline=True
-        )
-        embed.add_field(
-            name="💰 GOLD & SHOP",
-            value=(
-                "`/g` — Tvůj aktuální zůstatek\n"
-                "`/gsend` — Pošli zlato hráči\n"
-                "`/gleaderboard` — Žebříček bohatství\n"
-                "`/gshop open` — Otevři shop"
-            ),
-            inline=True
-        )
-        embed.add_field(
-            name="🏅 REPUTACE",
-            value=(
-                "`/rep show` — Zobraz reputaci u frakcí\n"
-                "`/rep list` — Přehled hráčů ve frakci"
-            ),
-            inline=True
-        )
-        embed.add_field(
-            name="🎭 RP MÍSTNOSTI",
-            value=(
-                "`/rp create` — Vytvoř soukromou RP místnost\n"
-                "`/rp join` — Vstup pomocí hesla\n"
-                "`/rp spectate` — Pozvi diváka (vidí + reaguje, nepíše)\n"
-                "`/rp unspectate` — Odeber diváka\n"
-                "`/rp kick` — Vyhoď hráče nebo diváka\n"
-                "`/rp mute` — Ztichni místnost"
-            ),
-            inline=False
-        )
-        embed.add_field(
-            name="🏆 TURNAJ & VYVOLENÍ",
-            value=(
-                "`/tournament list` — Postupující do 2. kola\n"
-                "`/vyvoleni list` — Všichni zapsaní dobrodruzi"
-            ),
-            inline=True
-        )
-        embed.add_field(
-            name="⚙️ DM / ADMIN",
-            value=(
-                "`/vliv` — Uděl hráči Vliv (Světlo/Temnota/Rovnováha)\n"
-                "`/takedown` — Arion provede Takedown\n"
-                "`/timeskip` — Přeskok v čase (narativní utilita)\n"
-                "`/erase all` — Smaže všechny zprávy v místnosti\n"
-                "`/hunger-balance` — Simulace hladu v čase\n"
-                "`/profile-admin-hp/mana/fury/vliv` — Nastav staty hráče\n"
-                "`/rep create/add/set/delete` — Správa reputace frakcí\n"
-                "`/inv-db-add/edit/find/list` — Databáze itemů\n"
-                "`/inv-admin-add/remove/slots` — Inventář hráčů\n"
-                "`/quest add/status/remove` — Správa questů\n"
-                "`/rp info/remove` — Přehled RP místností\n"
-                "`/combat_sethp/setdef/remove/setorder` — Combat admin\n"
-                "`/gshop create/edit/close` — Správa shopu\n"
-                "`/gadd` `/gremove` — Zlato hráčům\n"
-                "`/tournament add/remove` — Správa turnaje\n"
-                "`/admin-tutorial-reset` — Reset tutoriálu hráče\n"
-                "`/memory admin` — Správa vzpomínek hráčů"
-            ),
-            inline=False
-        )
-        embed.add_field(
-            name="🎮 Minihry & karty",
-            value="Viz `/kronika` v **ArionBOT**",
-            inline=False
-        )
-        embed.set_footer(text="ArionDND · Aurionis Act II · /kronika pro ArionBOT minihry")
-        await interaction.response.send_message(embed=embed)
+        view = KronikaView(author_id=interaction.user.id)
+        await interaction.response.send_message(embed=_build_home_embed(), view=view)
+        view.message = await interaction.original_response()
 
     # --- VYVOLENÍ (Seznam postav) ---
 
