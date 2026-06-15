@@ -830,6 +830,25 @@ async def _ac_use_item(
     return choices[:25]
 
 
+async def _ac_boh_item(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Autocomplete pro věci v Bag of Holding hráče."""
+    items_db = _load_items()
+    profile  = _get_profile(interaction.user.id)
+    if not profile:
+        return []
+    _ensure_boh_field(profile)
+    cur     = current.lower()
+    choices = []
+    for entry in profile["bag_of_holding"]:
+        name = _item_display_name(entry, items_db)
+        key  = entry["id"] if entry["type"] == "registered" else entry.get("name", "")
+        if cur in name.lower() or cur in key.lower():
+            choices.append(app_commands.Choice(name=name, value=key))
+    return choices[:25]
+
+
 async def _ac_equip_slot(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[str]]:
@@ -1658,6 +1677,76 @@ class Inventory(commands.Cog):
                 lines.append(f"**{iv['name']}**  `{iid}`{tag_str}")
             embed.add_field(name=cat, value="\n".join(lines), inline=False)
         await interaction.followup.send(embed=embed)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # BAG OF HOLDING — hráčské příkazy
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @app_commands.command(name="inv-boh-put",
+                          description="Přesune item z inventáře do Bag of Holding.")
+    @app_commands.describe(
+        item="Item z inventáře.",
+        qty="Množství (výchozí: 1).",
+    )
+    @app_commands.autocomplete(item=_ac_inventory_item)
+    async def inv_boh_put(self, interaction: discord.Interaction,
+                          item: str, qty: int = 1):
+        await interaction.response.defer(ephemeral=True)
+        profiles = _load_profiles()
+        profile  = profiles.get(str(interaction.user.id))
+        if not profile:
+            await interaction.followup.send("❌ Nemáš profil.")
+            return
+        _ensure_inv_fields(profile)
+        _ensure_boh_field(profile)
+        if not _has_boh(profile):
+            await interaction.followup.send("❌ Nevlastníš **Bag of Holding**.")
+            return
+        ok = _remove_from_inventory(profile["inventory"], item, qty)
+        if not ok:
+            await interaction.followup.send(
+                f"❌ Nemáš dost kusů **{item}** v inventáři.")
+            return
+        _add_to_inventory(profile["bag_of_holding"], item, qty)
+        _save_profiles(profiles)
+        items_db = _load_items()
+        name     = items_db.get(item, {}).get("name", item)
+        qty_str  = f" ×{qty}" if qty > 1 else ""
+        await interaction.followup.send(
+            f"✅ **{name}**{qty_str} přesunuto: Inventář → 👜 Bag of Holding.")
+
+    @app_commands.command(name="inv-boh-take",
+                          description="Přesune item z Bag of Holding do inventáře.")
+    @app_commands.describe(
+        item="Item z Bag of Holding.",
+        qty="Množství (výchozí: 1).",
+    )
+    @app_commands.autocomplete(item=_ac_boh_item)
+    async def inv_boh_take(self, interaction: discord.Interaction,
+                           item: str, qty: int = 1):
+        await interaction.response.defer(ephemeral=True)
+        profiles = _load_profiles()
+        profile  = profiles.get(str(interaction.user.id))
+        if not profile:
+            await interaction.followup.send("❌ Nemáš profil.")
+            return
+        _ensure_inv_fields(profile)
+        _ensure_boh_field(profile)
+        if not _has_boh(profile):
+            await interaction.followup.send("❌ Nevlastníš **Bag of Holding**.")
+            return
+        ok = _remove_from_inventory(profile["bag_of_holding"], item, qty)
+        if not ok:
+            await interaction.followup.send(
+                f"❌ Nemáš dost kusů **{item}** v Bag of Holding.")
+            return
+        _add_to_inventory(profile["inventory"], item, qty)
+        _save_profiles(profiles)
+        items_db = _load_items()
+        name     = items_db.get(item, {}).get("name", item)
+        qty_str  = f" ×{qty}" if qty > 1 else ""
+        await interaction.followup.send(
+            f"✅ **{name}**{qty_str} přesunuto: 👜 Bag of Holding → Inventář.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # ADMIN COMMANDY (DM only)
