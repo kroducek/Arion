@@ -1294,6 +1294,7 @@ class InvPageView(discord.ui.View):
         self.page     = 0
         self.pages    = 1
         self._build_storage_buttons()
+        self._rebuild_item_select()
 
     def _build_storage_buttons(self):
         """Přidá tlačítko pro každý dostupný storage (row 1+)."""
@@ -1449,11 +1450,12 @@ class Inventory(commands.Cog):
         _migrate_storages(profile)
         items_db = _load_items()
 
-        # Equip embed jako úvodní pohled
-        equip_embed = _build_equip_embed(profile, target, items_db)
+        # Otevři rovnou inventář (se select dropdownem); equip je dostupný tlačítkem
         view = InvPageView(profile, target, items_db, start_storage="inventory")
-        # Při otevření ukáž rovnou equip + tlačítka storage
-        await interaction.followup.send(embed=equip_embed, view=view)
+        embed, pages = _build_storage_embed(profile, target, items_db, "inventory", 0)
+        view.pages = pages
+        view._update_nav()
+        await interaction.followup.send(embed=embed, view=view)
 
     # ── /inv-note ─────────────────────────────────────────────────────────────
     @app_commands.command(name="inv-note",
