@@ -2,7 +2,7 @@
 
 ## 📋 Executive Summary
 
-Kompletní code review a error handling refactor. Vyřešeno **10 kritických problémů** s JSON persistencí, loggingem a error handlingem.
+Kompletní code review a error handling refactor. Vyřešeno **10 kritických problémů** s JSOoN persistencí, loggingem a error handlingem.
 
 ---
 
