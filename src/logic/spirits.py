@@ -371,12 +371,16 @@ class BreedConfirmView(discord.ui.View):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class Spirits(commands.Cog):
+    # Jedna skupina /duch se v limitu 100 globálních příkazů počítá jako 1 slot,
+    # ne jako 9. Subpříkazy (až 25) se do limitu nezapočítávají.
+    duch = app_commands.Group(name="duch", description="Strážní duchové — správa, šlechtění a info.")
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # ── /duch-pridat ──────────────────────────────────────────────────────────
+    # ── /duch pridat ──────────────────────────────────────────────────────────
 
-    @app_commands.command(name="duch-pridat", description="[DM] Přidá hráči nového strážného ducha.")
+    @duch.command(name="pridat", description="[DM] Přidá hráči nového strážného ducha.")
     @app_commands.describe(
         member="Hráč", name="Jméno ducha",
         rank="Počáteční rank (1 = slabý, 10+ = mytický)",
@@ -415,12 +419,12 @@ class Spirits(commands.Cog):
         _save(data)
 
         embed = _spirit_embed(spirit, title=f"✅ Duch přidán — {name}")
-        embed.description = f"Přidán hráči **{member.display_name}**. Použij `/duch-equip` k equipnutí."
+        embed.description = f"Přidán hráči **{member.display_name}**. Použij `/duch equip` k equipnutí."
         await interaction.followup.send(embed=embed)
 
-    # ── /duch-xp ──────────────────────────────────────────────────────────────
+    # ── /duch xp ──────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="duch-xp", description="[DM] Přidej duchovi XP.")
+    @duch.command(name="xp", description="[DM] Přidej duchovi XP.")
     @app_commands.describe(member="Hráč", amount="Množství XP")
     async def duch_xp(
         self, interaction: discord.Interaction,
@@ -500,9 +504,9 @@ class Spirits(commands.Cog):
                 ephemeral=True,
             )
 
-    # ── /duch-slechtit ────────────────────────────────────────────────────────
+    # ── /duch slechtit ────────────────────────────────────────────────────────
 
-    @app_commands.command(name="duch-slechtit", description="Pokus o šlechtění dvou duchů — silnější může pohltit slabšího!")
+    @duch.command(name="slechtit", description="Pokus o šlechtění dvou duchů — silnější může pohltit slabšího!")
     @app_commands.describe(jmeno_a="Jméno prvního ducha", jmeno_b="Jméno druhého ducha")
     async def duch_slechtit(
         self, interaction: discord.Interaction,
@@ -574,9 +578,9 @@ class Spirits(commands.Cog):
         view = BreedConfirmView(uid, idx_a, idx_b, a["name"], b["name"], warn_chance)
         await interaction.followup.send(embed=confirm_embed, view=view)
 
-    # ── /duch-equip ───────────────────────────────────────────────────────────
+    # ── /duch equip ───────────────────────────────────────────────────────────
 
-    @app_commands.command(name="duch-equip", description="[DM] Equipni hráči strážného ducha.")
+    @duch.command(name="equip", description="[DM] Equipni hráči strážného ducha.")
     @app_commands.describe(member="Hráč", name="Jméno ducha")
     async def duch_equip(
         self, interaction: discord.Interaction,
@@ -616,9 +620,9 @@ class Spirits(commands.Cog):
             f"({rank_label(spirit['rank'])}, {spirit['fury']} {FU_EMO}).{old_str}"
         )
 
-    # ── /duch-unequip ─────────────────────────────────────────────────────────
+    # ── /duch unequip ─────────────────────────────────────────────────────────
 
-    @app_commands.command(name="duch-unequip", description="[DM] Odequipni strážného ducha hráče.")
+    @duch.command(name="unequip", description="[DM] Odequipni strážného ducha hráče.")
     @app_commands.describe(member="Hráč")
     async def duch_unequip(
         self, interaction: discord.Interaction,
@@ -645,9 +649,9 @@ class Spirits(commands.Cog):
         _save(data)
         await interaction.followup.send(f"✅ Duch **{spirit['name']}** odequipnut. Zůstává v kolekci.")
 
-    # ── /duch-upravit ─────────────────────────────────────────────────────────
+    # ── /duch upravit ─────────────────────────────────────────────────────────
 
-    @app_commands.command(name="duch-upravit", description="[DM] Uprav hodnoty existujícího ducha.")
+    @duch.command(name="upravit", description="[DM] Uprav hodnoty existujícího ducha.")
     @app_commands.describe(
         member="Hráč", name="Jméno ducha",
         nove_fury="Nová hodnota furioku",
@@ -712,9 +716,9 @@ class Spirits(commands.Cog):
             + "\n".join(f"• {c}" for c in changes)
         )
 
-    # ── /duch-odebrat ─────────────────────────────────────────────────────────
+    # ── /duch odebrat ─────────────────────────────────────────────────────────
 
-    @app_commands.command(name="duch-odebrat", description="[DM] Trvale odebere ducha z kolekce hráče.")
+    @duch.command(name="odebrat", description="[DM] Trvale odebere ducha z kolekce hráče.")
     @app_commands.describe(member="Hráč", name="Jméno ducha")
     async def duch_odebrat(
         self, interaction: discord.Interaction,
@@ -749,9 +753,9 @@ class Spirits(commands.Cog):
         _save(data)
         await interaction.followup.send(f"✅ Duch **{name}** trvale odebrán hráči **{member.display_name}**.")
 
-    # ── /duch-seznam ──────────────────────────────────────────────────────────
+    # ── /duch seznam ──────────────────────────────────────────────────────────
 
-    @app_commands.command(name="duch-seznam", description="Zobraz seznam strážných duchů hráče.")
+    @duch.command(name="seznam", description="Zobraz seznam strážných duchů hráče.")
     @app_commands.describe(member="Hráč (výchozí: ty)")
     async def duch_seznam(
         self, interaction: discord.Interaction,
@@ -789,9 +793,9 @@ class Spirits(commands.Cog):
         embed.set_footer(text=f"Celkem duchů: {len(spirits)}")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    # ── /duch-info ────────────────────────────────────────────────────────────
+    # ── /duch info ────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="duch-info", description="Zobraz detailní info o konkrétním duchovi.")
+    @duch.command(name="info", description="Zobraz detailní info o konkrétním duchovi.")
     @app_commands.describe(name="Jméno ducha", member="Hráč (výchozí: ty)")
     async def duch_info(
         self, interaction: discord.Interaction,
