@@ -1492,7 +1492,7 @@ class Inventory(commands.Cog):
     @inv_note.command(name="add",
                       description="Přidá poznámku do sekce Ostatní (věci mimo databázi).")
     @app_commands.describe(text="Text poznámky — předmět, nález, informace...")
-    async def inv_note(self, interaction: discord.Interaction, text: str):
+    async def inv_note_add(self, interaction: discord.Interaction, text: str):
         await interaction.response.defer(ephemeral=True)
         profiles = _load_profiles()
         profile  = profiles.get(str(interaction.user.id))
@@ -2310,7 +2310,7 @@ class Inventory(commands.Cog):
     @inv_boh_note.command(name="add",
                           description="Přidá poznámku do sekce Ostatní v Bag of Holding.")
     @app_commands.describe(text="Text poznámky — předmět, nález, informace...")
-    async def inv_boh_note(self, interaction: discord.Interaction, text: str):
+    async def inv_boh_note_add(self, interaction: discord.Interaction, text: str):
         await interaction.response.defer(ephemeral=True)
         profiles = _load_profiles()
         profile  = profiles.get(str(interaction.user.id))
