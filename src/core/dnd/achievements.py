@@ -66,6 +66,12 @@ ACHIEVEMENTS_DEF: dict[str, dict] = {
         "auto":        False,
         "rarity":      "Common",
     },
+    "Naplno vyzbrojený!": {
+        "emoji":       "🦾",
+        "description": "Obsadil jsi úplně všechny sloty výbavy najednou.",
+        "auto":        True,
+        "rarity":      "Epic",
+    },
 }
 
 RARITY_COLOR = {
@@ -153,6 +159,20 @@ async def track_minigame_loss(user_id: int, amount: int, member: discord.Member,
     if data[uid]["minigame_gold_lost"] >= 10_000 and not has_achievement(user_id, "Kočičí dlužník"):
         if grant_achievement(user_id, "Kočičí dlužník"):
             await announce_achievement(member, channel, "Kočičí dlužník")
+
+def is_fully_equipped(equipment: dict, active_slots: list[str]) -> bool:
+    """True pokud jsou VŠECHNY aktivní sloty výbavy obsazené (full equip)."""
+    if not active_slots:
+        return False
+    return all(equipment.get(slot) for slot in active_slots)
+
+async def check_full_equip_achievement(member: discord.Member, channel,
+                                       equipment: dict, active_slots: list[str]) -> None:
+    """Voláno po equipnutí. Udělí 'Naplno vyzbrojený!' když má hráč plnou výbavu."""
+    name = "Naplno vyzbrojený!"
+    if is_fully_equipped(equipment, active_slots) and not has_achievement(member.id, name):
+        if grant_achievement(member.id, name):
+            await announce_achievement(member, channel, name)
 
 # ── Cog ───────────────────────────────────────────────────────────────────────
 

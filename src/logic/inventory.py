@@ -1841,6 +1841,14 @@ class Inventory(commands.Cog):
         ok, msg  = _equip_item(profile, item, slot, items_db, str(interaction.user.id))
         if ok:
             _save_profiles(profiles)
+            # Achievement: plná výbava (všechny sloty obsazené)
+            try:
+                from src.logic.achievements import check_full_equip_achievement
+                await check_full_equip_achievement(
+                    interaction.user, interaction.channel,
+                    profile["equipment"], _active_slots(profile))
+            except Exception:
+                pass
         await interaction.followup.send(f"{'✅' if ok else '❌'} {msg}")
 
     # ── /unequip ──────────────────────────────────────────────────────────────
