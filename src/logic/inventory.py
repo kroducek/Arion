@@ -141,6 +141,32 @@ def _ensure_boh_field(profile: dict) -> None:
     profile["boh_notes"] = profile["storage_notes"]["bag_of_holding"]
 
 
+def _inv_notes(profile: dict) -> list:
+    """Jediný zdroj pravdy pro inventářové poznámky.
+
+    Zobrazení (`/inv`) čte ze `storage_notes['inventory']`, ale staré zápisy
+    šly do `profile['notes']`. Po JSON round-tripu se z toho stala dvě nezávislá
+    pole → přidané poznámky se nezobrazovaly. Tahle funkce obě pole sjednotí na
+    jeden živý list a vrátí ho (stejný princip jako `_ensure_boh_field` u BoH).
+    """
+    sn     = profile.setdefault("storage_notes", {})
+    legacy = profile.get("notes")
+    legacy = legacy if isinstance(legacy, list) else []
+    canon  = sn.get("inventory")
+
+    if not isinstance(canon, list):
+        # první inicializace — převezmi staré pole
+        canon = list(legacy)
+    elif legacy and legacy != canon:
+        # historický bug: zápisy šly do profile['notes'], čtení z canon.
+        # Pravdivá data jsou v legacy → sjednoť na ně.
+        canon = list(legacy)
+
+    sn["inventory"] = canon
+    profile["notes"] = canon          # živá reference pro zpětnou kompatibilitu
+    return canon
+
+
 def _has_boh(profile: dict) -> bool:
     """True pokud hráč vlastní Bag of Holding (v inventáři nebo equipnutý)."""
     return _owns_storage_item(profile, BOH_ITEM_ID)
@@ -866,7 +892,10 @@ def _build_storage_embed(profile: dict, member: discord.Member, items_db: dict,
                          storage_key: str, page: int = 0) -> tuple[discord.Embed, int]:
     """Univerzální embed pro libovolný storage (inventory, BoH, batoh, brašna…)."""
     storage = _ensure_storage(profile, storage_key)
-    notes   = profile.setdefault("storage_notes", {}).setdefault(storage_key, [])
+    if storage_key == "inventory":
+        notes = _inv_notes(profile)   # sjednocený zdroj pravdy (viz fix bugu s poznámkami)
+    else:
+        notes = profile.setdefault("storage_notes", {}).setdefault(storage_key, [])
     visual  = _storage_visual(storage_key, items_db)
     cap     = _storage_capacity(storage_key, profile, items_db)
     used    = _count_slots(storage, items_db)
@@ -1428,8 +1457,10 @@ class InvPageView(discord.ui.View):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class Inventory(commands.Cog):
-    inv_db    = app_commands.Group(name="inv-db",    description="[DM] Správa databáze itemů")
-    inv_admin = app_commands.Group(name="inv-admin", description="[DM] Admin operace s inventářem")
+    inv_db       = app_commands.Group(name="inv-db",       description="[DM] Správa databáze itemů")
+    inv_admin    = app_commands.Group(name="inv-admin",    description="[DM] Admin operace s inventářem")
+    inv_note     = app_commands.Group(name="inv-note",     description="Poznámky v inventáři (sekce Ostatní)")
+    inv_boh_note = app_commands.Group(name="boh-note", description="Poznámky v Bag of Holding (sekce Ostatní)")
 
     def __init__(self, bot):
         self.bot = bot
@@ -1457,9 +1488,9 @@ class Inventory(commands.Cog):
         view._update_nav()
         await interaction.followup.send(embed=embed, view=view)
 
-    # ── /inv-note ─────────────────────────────────────────────────────────────
-    @app_commands.command(name="inv-note",
-                          description="Přidá poznámku do sekce Ostatní (věci mimo databázi).")
+    # ── /inv-note add ─────────────────────────────────────────────────────────
+    @inv_note.command(name="add",
+                      description="Přidá poznámku do sekce Ostatní (věci mimo databázi).")
     @app_commands.describe(text="Text poznámky — předmět, nález, informace...")
     async def inv_note(self, interaction: discord.Interaction, text: str):
         await interaction.response.defer(ephemeral=True)
@@ -1469,15 +1500,16 @@ class Inventory(commands.Cog):
             await interaction.followup.send("❌ Nemáš profil. Nejdřív `/start`.")
             return
         _ensure_inv_fields(profile)
-        profile["notes"].append(text)
-        line_num = len(profile["notes"])
+        notes = _inv_notes(profile)
+        notes.append(text)
+        line_num = len(notes)
         _save_profiles(profiles)
         await interaction.followup.send(
             f"✅ Přidáno jako řádek **{line_num}**: *{text}*")
 
-    # ── /inv-note-edit ────────────────────────────────────────────────────────
-    @app_commands.command(name="inv-note-edit",
-                          description="Upraví poznámku v sekci Ostatní dle čísla řádku.")
+    # ── /inv-note edit ────────────────────────────────────────────────────────
+    @inv_note.command(name="edit",
+                      description="Upraví poznámku v sekci Ostatní dle čísla řádku.")
     @app_commands.describe(
         cislo="Číslo řádku (viz /inv → Ostatní).",
         text="Nový text.",
@@ -1491,7 +1523,7 @@ class Inventory(commands.Cog):
             await interaction.followup.send("❌ Nemáš profil.")
             return
         _ensure_inv_fields(profile)
-        notes = profile["notes"]
+        notes = _inv_notes(profile)
         if cislo < 1 or cislo > len(notes):
             await interaction.followup.send(
                 f"❌ Řádek {cislo} neexistuje. Máš {len(notes)} poznámek.")
@@ -1502,9 +1534,9 @@ class Inventory(commands.Cog):
         await interaction.followup.send(
             f"✅ Řádek **{cislo}** upraven.\n~~{old}~~ → *{text}*")
 
-    # ── /inv-note-remove ──────────────────────────────────────────────────────
-    @app_commands.command(name="inv-note-remove",
-                          description="Odebere poznámku z Ostatní dle čísla řádku.")
+    # ── /inv-note remove ──────────────────────────────────────────────────────
+    @inv_note.command(name="remove",
+                      description="Odebere poznámku z Ostatní dle čísla řádku.")
     @app_commands.describe(cislo="Číslo řádku (viz /inv → Ostatní).")
     async def inv_note_remove(self, interaction: discord.Interaction, cislo: int):
         await interaction.response.defer(ephemeral=True)
@@ -1514,7 +1546,7 @@ class Inventory(commands.Cog):
             await interaction.followup.send("❌ Nemáš profil.")
             return
         _ensure_inv_fields(profile)
-        notes = profile["notes"]
+        notes = _inv_notes(profile)
         if cislo < 1 or cislo > len(notes):
             await interaction.followup.send(
                 f"❌ Řádek {cislo} neexistuje. Máš {len(notes)} poznámek.")
@@ -1591,8 +1623,9 @@ class Inventory(commands.Cog):
             _add_to_inventory(recvr_p["inventory"], entry["id"], qty)
         else:
             # Legacy volný item — přidej jako poznámku
+            recvr_notes = _inv_notes(recvr_p)
             for _ in range(qty):
-                recvr_p["notes"].append(entry.get("name", item))
+                recvr_notes.append(entry.get("name", item))
 
         _save_profiles(profiles)
         qty_str = f" ×{qty}" if qty > 1 else ""
@@ -2274,7 +2307,7 @@ class Inventory(commands.Cog):
         await interaction.followup.send(
             f"✅ **{name}**{qty_str} přesunuto: 👜 Bag of Holding → Inventář.")
 
-    @app_commands.command(name="inv-boh-note",
+    @inv_boh_note.command(name="add",
                           description="Přidá poznámku do sekce Ostatní v Bag of Holding.")
     @app_commands.describe(text="Text poznámky — předmět, nález, informace...")
     async def inv_boh_note(self, interaction: discord.Interaction, text: str):
@@ -2294,7 +2327,7 @@ class Inventory(commands.Cog):
         await interaction.followup.send(
             f"✅ Přidáno do 👜 BoH jako řádek **{line_num}**: *{text}*")
 
-    @app_commands.command(name="inv-boh-note-edit",
+    @inv_boh_note.command(name="edit",
                           description="Upraví poznámku v sekci Ostatní Bag of Holding.")
     @app_commands.describe(cislo="Číslo řádku (viz /inv → BoH → Ostatní).", text="Nový text.")
     async def inv_boh_note_edit(self, interaction: discord.Interaction,
@@ -2317,7 +2350,7 @@ class Inventory(commands.Cog):
         await interaction.followup.send(
             f"✅ BoH řádek **{cislo}** upraven.\n~~{old}~~ → *{text}*")
 
-    @app_commands.command(name="inv-boh-note-remove",
+    @inv_boh_note.command(name="remove",
                           description="Odebere poznámku ze sekce Ostatní Bag of Holding.")
     @app_commands.describe(cislo="Číslo řádku (viz /inv → BoH → Ostatní).")
     async def inv_boh_note_remove(self, interaction: discord.Interaction, cislo: int):
@@ -2370,9 +2403,10 @@ class Inventory(commands.Cog):
             _add_to_inventory(profile["inventory"], item, qty)
         else:
             # Volný item → do sekce Ostatní jako poznámka
-            name     = note or item
+            name      = note or item
+            inv_notes = _inv_notes(profile)
             for _ in range(qty):
-                profile["notes"].append(name)
+                inv_notes.append(name)
         _save_profiles(profiles)
         qty_str = f" ×{qty}" if qty > 1 else ""
         await interaction.followup.send(
