@@ -601,6 +601,18 @@ def _equip_item(profile: dict, item_id: str, preferred_slot: str | None,
         bonus_line = f"\n✨ Bonus: {bonus_str}" if bonus_str else ""
         return True, f"Equipoval jsi **{db_item['name']}** do slotu **{slot_label}**.{freed_msg}{bonus_line}"
 
+    # ── Munice ────────────────────────────────────────────────────────────────
+    # Munice na rozdíl od ostatní výbavy NEMIZÍ z inventáře (lze ji mít ×N kusů) —
+    # equip jen nastaví ukazatel na "aktivní" munici, stejně jako /inv-ammo.
+    if slot_target == "ammo":
+        old = equipment.get("ammo")
+        equipment["ammo"] = item_id
+        msg = f"Vybavil jsi munici **{db_item['name']}** (zůstává v inventáři)."
+        if old and old != item_id:
+            old_name = items_db.get(old, {}).get("name", old)
+            msg += f"\nPředešlá munice **{old_name}** odložena."
+        return True, msg
+
     # ── Prsteny / amulety ─────────────────────────────────────────────────────
     if slot_target in ("ring", "amulet"):
         active = _active_ring_slots(profile) if slot_target == "ring" else _active_amulet_slots(profile)
@@ -1936,6 +1948,15 @@ class Inventory(commands.Cog):
             return
 
         _save_profiles(profiles)
+        if item:
+            # Achievement: plná výbava — munice vybavená i přes /inv-ammo se počítá.
+            try:
+                from src.logic.achievements import check_full_equip_achievement
+                await check_full_equip_achievement(
+                    interaction.user, interaction.channel,
+                    profile["equipment"], _active_slots(profile))
+            except Exception:
+                pass
         if number != 0:
             delta = f"−{abs(number)}" if number < 0 else f"+{number}"
             await interaction.followup.send(f"🏹 **{target_name}**  ×{have_after}  ({delta})")
@@ -1983,6 +2004,7 @@ class Inventory(commands.Cog):
             app_commands.Choice(name="Boty",           value="boots"),
             app_commands.Choice(name="Plášť",          value="cloak"),
             app_commands.Choice(name="Opasek",         value="belt"),
+            app_commands.Choice(name="Munice",         value="ammo"),
             app_commands.Choice(name="Prsten",         value="ring"),
             app_commands.Choice(name="Amulet",         value="amulet"),
             app_commands.Choice(name="—",              value="none"),
@@ -2103,6 +2125,7 @@ class Inventory(commands.Cog):
             app_commands.Choice(name="Boty",               value="boots"),
             app_commands.Choice(name="Plášť",              value="cloak"),
             app_commands.Choice(name="Opasek",             value="belt"),
+            app_commands.Choice(name="Munice",             value="ammo"),
             app_commands.Choice(name="Prsten",             value="ring"),
             app_commands.Choice(name="Amulet",             value="amulet"),
             app_commands.Choice(name="— (nelze equipnout)", value="none"),
