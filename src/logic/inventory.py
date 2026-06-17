@@ -852,7 +852,7 @@ def _build_boh_embed(profile: dict, member: discord.Member,
     )
 
     if not boh:
-        embed.description = "*Pytel je prázdný...*\n-# DM může přidat věci přes `/inv-admin boh-add`."
+        embed.description = "*Pytel je prázdný...*\n-# DM může přidat věci přes `/inv-admin storage-add` (storage: bag_of_holding)."
         return embed, 1
 
     lines: list[str] = []
@@ -1179,25 +1179,6 @@ async def _ac_use_item(
         name = db_item["name"]
         if cur in name.lower() or cur in entry["id"].lower():
             choices.append(app_commands.Choice(name=name, value=entry["id"]))
-    return choices[:25]
-
-
-async def _ac_boh_item(
-    interaction: discord.Interaction, current: str
-) -> list[app_commands.Choice[str]]:
-    """Autocomplete pro věci v Bag of Holding hráče."""
-    items_db = _load_items()
-    profile  = _get_profile(interaction.user.id)
-    if not profile:
-        return []
-    _ensure_boh_field(profile)
-    cur     = current.lower()
-    choices = []
-    for entry in profile["bag_of_holding"]:
-        name = _item_display_name(entry, items_db)
-        key  = entry["id"] if entry["type"] == "registered" else entry.get("name", "")
-        if cur in name.lower() or cur in key.lower():
-            choices.append(app_commands.Choice(name=name, value=key))
     return choices[:25]
 
 
@@ -2241,72 +2222,6 @@ class Inventory(commands.Cog):
     # BAG OF HOLDING — hráčské příkazy
     # ══════════════════════════════════════════════════════════════════════════
 
-    @app_commands.command(name="inv-boh-put",
-                          description="Přesune item z inventáře do Bag of Holding.")
-    @app_commands.describe(
-        item="Item z inventáře.",
-        qty="Množství (výchozí: 1).",
-    )
-    @app_commands.autocomplete(item=_ac_inventory_item)
-    async def inv_boh_put(self, interaction: discord.Interaction,
-                          item: str, qty: int = 1):
-        await interaction.response.defer(ephemeral=True)
-        profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
-        if not profile:
-            await interaction.followup.send("❌ Nemáš profil.")
-            return
-        _ensure_inv_fields(profile)
-        _ensure_boh_field(profile)
-        if not _has_boh(profile):
-            await interaction.followup.send("❌ Nevlastníš **Bag of Holding**.")
-            return
-        ok = _remove_from_inventory(profile["inventory"], item, qty)
-        if not ok:
-            await interaction.followup.send(
-                f"❌ Nemáš dost kusů **{item}** v inventáři.")
-            return
-        _add_to_inventory(profile["bag_of_holding"], item, qty)
-        _save_profiles(profiles)
-        items_db = _load_items()
-        name     = items_db.get(item, {}).get("name", item)
-        qty_str  = f" ×{qty}" if qty > 1 else ""
-        await interaction.followup.send(
-            f"✅ **{name}**{qty_str} přesunuto: Inventář → 👜 Bag of Holding.")
-
-    @app_commands.command(name="inv-boh-take",
-                          description="Přesune item z Bag of Holding do inventáře.")
-    @app_commands.describe(
-        item="Item z Bag of Holding.",
-        qty="Množství (výchozí: 1).",
-    )
-    @app_commands.autocomplete(item=_ac_boh_item)
-    async def inv_boh_take(self, interaction: discord.Interaction,
-                           item: str, qty: int = 1):
-        await interaction.response.defer(ephemeral=True)
-        profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
-        if not profile:
-            await interaction.followup.send("❌ Nemáš profil.")
-            return
-        _ensure_inv_fields(profile)
-        _ensure_boh_field(profile)
-        if not _has_boh(profile):
-            await interaction.followup.send("❌ Nevlastníš **Bag of Holding**.")
-            return
-        ok = _remove_from_inventory(profile["bag_of_holding"], item, qty)
-        if not ok:
-            await interaction.followup.send(
-                f"❌ Nemáš dost kusů **{item}** v Bag of Holding.")
-            return
-        _add_to_inventory(profile["inventory"], item, qty)
-        _save_profiles(profiles)
-        items_db = _load_items()
-        name     = items_db.get(item, {}).get("name", item)
-        qty_str  = f" ×{qty}" if qty > 1 else ""
-        await interaction.followup.send(
-            f"✅ **{name}**{qty_str} přesunuto: 👜 Bag of Holding → Inventář.")
-
     @inv_boh_note.command(name="add",
                           description="Přidá poznámku do sekce Ostatní v Bag of Holding.")
     @app_commands.describe(text="Text poznámky — předmět, nález, informace...")
@@ -2472,71 +2387,18 @@ class Inventory(commands.Cog):
             f"✅ **{member.display_name}** má teď {count}× {label} slot.")
 
 
-    @inv_admin.command(name="boh-add", description="[DM] Přidá item do Bag of Holding hráče.")
-    @app_commands.describe(member="Hráč.", item="ID registrovaného itemu.", qty="Množství.")
-    @app_commands.autocomplete(item=_ac_database_item)
-    async def inv_admin_boh_add(self, interaction: discord.Interaction,
-                                member: discord.Member, item: str, qty: int = 1):
-        await interaction.response.defer(ephemeral=True)
-        if not _is_dm(interaction):
-            await interaction.followup.send("❌ Jen DM.")
-            return
-        profiles = _load_profiles()
-        profile  = profiles.get(str(member.id))
-        if not profile:
-            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
-            return
-        _ensure_inv_fields(profile)
-        _ensure_boh_field(profile)
-        items_db = _load_items()
-        if item not in items_db:
-            await interaction.followup.send(f"❌ Item `{item}` není v databázi.")
-            return
-        _add_to_inventory(profile["bag_of_holding"], item, qty)
-        _save_profiles(profiles)
-        name = items_db[item]["name"]
-        await interaction.followup.send(
-            f"✅ Přidáno **{name}** ×{qty} do 👜 BoH hráče **{member.display_name}**.")
-
-    @inv_admin.command(name="boh-remove", description="[DM] Odebere item z Bag of Holding hráče.")
-    @app_commands.describe(member="Hráč.", item="ID itemu.", qty="Množství.")
-    @app_commands.autocomplete(item=_ac_database_item)
-    async def inv_admin_boh_remove(self, interaction: discord.Interaction,
-                                   member: discord.Member, item: str, qty: int = 1):
-        await interaction.response.defer(ephemeral=True)
-        if not _is_dm(interaction):
-            await interaction.followup.send("❌ Jen DM.")
-            return
-        profiles = _load_profiles()
-        profile  = profiles.get(str(member.id))
-        if not profile:
-            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
-            return
-        _ensure_boh_field(profile)
-        ok = _remove_from_inventory(profile["bag_of_holding"], item, qty)
-        if not ok:
-            await interaction.followup.send(
-                f"❌ **{member.display_name}** nemá dost kusů **{item}** v BoH.")
-            return
-        _save_profiles(profiles)
-        await interaction.followup.send(
-            f"✅ Odebráno **{item}** ×{qty} z 👜 BoH hráče **{member.display_name}**.")
-
-    @inv_admin.command(name="boh-move", description="[DM] Přesune item mezi inventářem a BoH.")
+    @inv_admin.command(name="storage-remove",
+                       description="[DM] Odebere item z konkrétního úložiště hráče.")
     @app_commands.describe(
         member="Hráč.",
         item="ID itemu.",
+        storage="Úložiště (id storage itemu nebo 'inventory'/'bag_of_holding').",
         qty="Množství.",
-        direction="Směr přesunu.",
     )
-    @app_commands.choices(direction=[
-        app_commands.Choice(name="Inventář → BoH", value="to_boh"),
-        app_commands.Choice(name="BoH → Inventář", value="to_inv"),
-    ])
     @app_commands.autocomplete(item=_ac_database_item)
-    async def inv_admin_boh_move(self, interaction: discord.Interaction,
-                                 member: discord.Member, item: str,
-                                 direction: str, qty: int = 1):
+    async def inv_admin_storage_remove(self, interaction: discord.Interaction,
+                                       member: discord.Member, item: str,
+                                       storage: str = "inventory", qty: int = 1):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
             await interaction.followup.send("❌ Jen DM.")
@@ -2547,30 +2409,98 @@ class Inventory(commands.Cog):
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
             return
         _ensure_inv_fields(profile)
-        _ensure_boh_field(profile)
+        _migrate_storages(profile)
         items_db = _load_items()
 
-        if direction == "to_boh":
-            ok = _remove_from_inventory(profile["inventory"], item, qty)
-            if not ok:
+        avail = _available_storages(profile, items_db)
+        if storage not in avail:
+            await interaction.followup.send(
+                f"❌ Hráč nemá úložiště `{storage}`. Dostupná: {', '.join(avail)}")
+            return
+
+        target = _ensure_storage(profile, storage)
+        ok = _remove_from_inventory(target, item, qty)
+        if not ok:
+            await interaction.followup.send(
+                f"❌ **{member.display_name}** nemá dost kusů **{item}** v `{storage}`.")
+            return
+        _save_profiles(profiles)
+        visual = _storage_visual(storage, items_db)
+        name   = items_db.get(item, {}).get("name", item)
+        await interaction.followup.send(
+            f"✅ Odebráno **{name}** ×{qty} z {visual['emoji']} {visual['label']} — **{member.display_name}**.")
+
+    @inv_admin.command(name="storage-move",
+                       description="[DM] Přesune item mezi úložišti hráče (inventář, BoH, batoh…).")
+    @app_commands.describe(
+        member="Hráč.",
+        odkud="Zdrojové úložiště.",
+        item="ID itemu ze zdroje.",
+        kam="Cílové úložiště.",
+        qty="Množství.",
+    )
+    @app_commands.autocomplete(item=_ac_database_item)
+    async def inv_admin_storage_move(self, interaction: discord.Interaction,
+                                     member: discord.Member, odkud: str,
+                                     item: str, kam: str, qty: int = 1):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM.")
+            return
+        profiles = _load_profiles()
+        profile  = profiles.get(str(member.id))
+        if not profile:
+            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
+            return
+        _ensure_inv_fields(profile)
+        _migrate_storages(profile)
+        items_db = _load_items()
+
+        avail = _available_storages(profile, items_db)
+        if odkud not in avail or kam not in avail:
+            await interaction.followup.send(
+                f"❌ Neplatné úložiště. Dostupná: {', '.join(avail)}")
+            return
+        if odkud == kam:
+            await interaction.followup.send("❌ Zdroj a cíl jsou stejné.")
+            return
+
+        src = _ensure_storage(profile, odkud)
+        dst = _ensure_storage(profile, kam)
+
+        src_entry = _find_inv_entry(src, item)
+        if not src_entry or src_entry.get("qty", 1) < qty:
+            await interaction.followup.send(
+                f"❌ Hráč nemá dost kusů **{item}** v `{odkud}`.")
+            return
+
+        slot_cost = _entry_slot_cost({"type": "registered", "id": item, "qty": qty}, items_db) \
+            if src_entry["type"] == "registered" else 0
+        cap = _storage_capacity(kam, profile, items_db)
+        if cap is not None and slot_cost > 0:
+            if _count_slots(dst, items_db) + slot_cost > cap:
+                visual = _storage_visual(kam, items_db)
                 await interaction.followup.send(
-                    f"❌ Hráč nemá dost kusů **{item}** v inventáři.")
+                    f"❌ **{visual['label']}** nemá dost místa "
+                    f"({_count_slots(dst, items_db)}/{cap}, potřebuješ +{slot_cost}).")
                 return
-            _add_to_inventory(profile["bag_of_holding"], item, qty)
-            arrow = "Inventář → 👜 BoH"
+
+        key = src_entry["id"] if src_entry["type"] == "registered" else src_entry.get("name", item)
+        if src_entry["type"] == "registered":
+            _remove_from_inventory(src, key, qty)
+            _add_to_inventory(dst, key, qty)
         else:
-            ok = _remove_from_inventory(profile["bag_of_holding"], item, qty)
-            if not ok:
-                await interaction.followup.send(
-                    f"❌ Hráč nemá dost kusů **{item}** v BoH.")
-                return
-            _add_to_inventory(profile["inventory"], item, qty)
-            arrow = "👜 BoH → Inventář"
+            src.remove(src_entry)
+            dst.append(src_entry)
 
         _save_profiles(profiles)
-        name = items_db.get(item, {}).get("name", item)
+        name    = items_db.get(key, {}).get("name", key)
+        v_from  = _storage_visual(odkud, items_db)
+        v_to    = _storage_visual(kam, items_db)
+        qty_str = f" ×{qty}" if qty > 1 else ""
         await interaction.followup.send(
-            f"✅ **{name}** ×{qty} přesunuto: {arrow} — **{member.display_name}**.")
+            f"✅ **{name}**{qty_str} přesunuto: {v_from['emoji']} {v_from['label']} → "
+            f"{v_to['emoji']} {v_to['label']} — **{member.display_name}**.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # STORAGE — admin
