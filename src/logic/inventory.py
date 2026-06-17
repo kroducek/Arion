@@ -14,7 +14,8 @@ from src.utils.json_utils import load_json, save_json
 
 EQUIPMENT_SLOTS = [
     "hand_l", "hand_r",
-    "helmet", "armor", "boots", "cloak", "belt",
+    "helmet", "headwear", "armor", "gloves", "wrists", "boots", "cloak", "belt",
+    "ammo",
     "ring_1", "ring_2",
     "amulet_1", "amulet_2",
 ]
@@ -23,10 +24,14 @@ SLOT_LABELS = {
     "hand_l":   "Zbraň L",
     "hand_r":   "Zbraň P",
     "helmet":   "Helma",
+    "headwear": "Pokrývka hlavy",
     "armor":    "Zbroj",
+    "gloves":   "Rukavice",
+    "wrists":   "Zápěstí",
     "boots":    "Boty",
     "cloak":    "Plášť",
     "belt":     "Opasek",
+    "ammo":     "Munice",
     "ring_1":   "Prsten 1",
     "ring_2":   "Prsten 2",
     "amulet_1": "Amulet 1",
@@ -37,10 +42,14 @@ SLOT_EMOJIS = {
     "hand_l":   "🗡️",
     "hand_r":   "🗡️",
     "helmet":   "🪖",
+    "headwear": "🧣",
     "armor":    "🛡️",
+    "gloves":   "🧤",
+    "wrists":   "🔗",
     "boots":    "👢",
     "cloak":    "🧥",
     "belt":     "🪢",
+    "ammo":     "🏹",
     "ring_1":   "💍",
     "ring_2":   "💍",
     "amulet_1": "📿",
@@ -54,6 +63,22 @@ CATEGORIES = [
     "brnění", "amulety", "prsteny", "pásky",
     "jídlo", "lektvary", "unikátní", "ostatní",
 ]
+
+# Široké skupiny pro automatické řazení v inventáři/úložištích.
+# (emoji, nadpis, [jemné kategorie patřící do skupiny]) — pořadí = pořadí zobrazení.
+CATEGORY_GROUPS = [
+    ("⚔️", "Zbraně",     ["dýky", "jednoruční", "obouruční", "luky_kuše", "střelné", "hůlky_hole"]),
+    ("🎯", "Munice",      ["náboje"]),
+    ("🛡️", "Zbroje",     ["brnění", "pásky"]),
+    ("💍", "Doplňky",     ["amulety", "prsteny"]),
+    ("📜", "Magie",       ["runy_krystaly", "svitky"]),
+    ("🍖", "Spotřební",   ["jídlo", "lektvary"]),
+    ("✨", "Speciální",   ["speciální", "unikátní"]),
+    ("📦", "Ostatní",     ["ostatní"]),
+]
+# Rychlá mapa: jemná kategorie → index skupiny (pro řazení).
+_CAT_TO_GROUP = {cat: gi for gi, (_e, _l, cats) in enumerate(CATEGORY_GROUPS) for cat in cats}
+_OSTATNI_GROUP = len(CATEGORY_GROUPS) - 1  # fallback skupina pro neznámé/volné itemy
 
 # Sloty které zabírá full_set item
 FULL_SET_SLOTS = ["helmet", "armor", "boots", "cloak", "belt"]
@@ -115,7 +140,8 @@ def _ensure_inv_fields(profile: dict) -> dict:
     profile.setdefault("ring_slots", 2)
     profile.setdefault("amulet_slots", 2)
     # Zajisti že všechny sloty existují (i v případě starého/částečného profilu)
-    for s in ["hand_l", "hand_r", "helmet", "armor", "boots", "cloak", "belt"]:
+    for s in ["hand_l", "hand_r", "helmet", "headwear", "armor",
+              "gloves", "wrists", "boots", "cloak", "belt", "ammo"]:
         profile["equipment"].setdefault(s, None)
     for i in range(1, profile["ring_slots"] + 1):
         profile["equipment"].setdefault(f"ring_{i}", None)
@@ -130,6 +156,14 @@ def _ensure_inv_fields(profile: dict) -> dict:
     profile.setdefault("mana_cur",   0)
     profile.setdefault("fury_max",   0)
     profile.setdefault("fury_cur",   0)
+    # Auto-vyčisti ukazatel munice, pokud vybavená munice už není v inventáři
+    # (např. po /inv-give, storage-move nebo storage-drop).
+    ammo_id = profile["equipment"].get("ammo")
+    if ammo_id:
+        have = sum(e.get("qty", 1) for e in profile["inventory"]
+                   if e.get("type") == "registered" and e.get("id") == ammo_id)
+        if have <= 0:
+            profile["equipment"]["ammo"] = None
     return profile
 
 def _ensure_boh_field(profile: dict) -> None:
@@ -365,7 +399,8 @@ def _active_amulet_slots(profile: dict) -> list[str]:
     return [f"amulet_{i+1}" for i in range(profile.get("amulet_slots", 2))]
 
 def _active_slots(profile: dict) -> list[str]:
-    base = ["hand_l", "hand_r", "helmet", "armor", "boots", "cloak", "belt"]
+    base = ["hand_l", "hand_r", "helmet", "headwear", "armor",
+            "gloves", "wrists", "boots", "cloak", "belt", "ammo"]
     return base + _active_ring_slots(profile) + _active_amulet_slots(profile)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -604,6 +639,13 @@ def _unequip_slot(profile: dict, slot: str, items_db: dict) -> tuple[bool, str]:
     if not item_id:
         return False, f"Slot **{SLOT_LABELS.get(slot, slot)}** je prázdný."
 
+    # Munice žije pořád v inventáři — slot je jen ukazatel na aktivní munici.
+    # Sundání = jen zrušit ukazatel, NIC nepřidávat zpět (jinak by se duplikovala).
+    if slot == "ammo":
+        equipment["ammo"] = None
+        name = items_db.get(item_id, {}).get("name", item_id)
+        return True, f"Munice **{name}** odložena (zůstává v inventáři)."
+
     db_item     = items_db.get(item_id, {})
     name        = db_item.get("name", item_id)
     hand_type   = db_item.get("hand_type")
@@ -647,6 +689,19 @@ def _build_equip_embed(profile: dict, member: discord.Member,
         label   = SLOT_LABELS.get(slot, slot)
         emoji   = SLOT_EMOJIS.get(slot, "▪️")
         item_id = equipment.get(slot)
+        # Munice: ukazatel na aktivní munici v inventáři — zobraz s živým počtem.
+        if slot == "ammo":
+            if not item_id:
+                equip_lines.append(f"{emoji} **{label}**  —")
+            else:
+                ammo_name = (items_db.get(item_id) or {}).get("name", f"[{item_id}]")
+                inv_entry = _find_inv_entry(profile["inventory"], item_id)
+                count     = inv_entry.get("qty", 0) if inv_entry else 0
+                if count <= 0:
+                    equip_lines.append(f"{emoji} **{label}**  {ammo_name} *(prázdné)*")
+                else:
+                    equip_lines.append(f"{emoji} **{label}**  {ammo_name} ×{count}")
+            continue
         if not item_id:
             equip_lines.append(f"{emoji} **{label}**  —")
         else:
@@ -685,98 +740,6 @@ def _build_equip_embed(profile: dict, member: discord.Member,
 
     embed.set_footer(text="🪶 = lehký předmět (nezabírá slot)  ·  Aurionis")
     return embed
-
-
-def _build_inv_embed(profile: dict, member: discord.Member,
-                     items_db: dict, page: int = 0) -> tuple[discord.Embed, int]:
-    _ensure_inv_fields(profile)
-    equipment = profile["equipment"]
-    inventory = profile["inventory"]
-    notes     = profile.get("notes", [])
-
-    embed = discord.Embed(color=EMBED_COLOR)
-    embed.set_author(name=f"{member.display_name} — Inventář",
-                     icon_url=member.display_avatar.url)
-
-    # ── Equipment sekce ───────────────────────────────────────────────────────
-    equip_lines = []
-    total_def   = 0
-    seen_items  = set()
-    for slot in _active_slots(profile):
-        label   = SLOT_LABELS.get(slot, slot)
-        emoji   = SLOT_EMOJIS.get(slot, "▪️")
-        item_id = equipment.get(slot)
-        if not item_id:
-            equip_lines.append(f"{emoji} **{label}**  —")
-        else:
-            if slot == "hand_r" and equipment.get("hand_l") == item_id:
-                continue
-            db_item = items_db.get(item_id) or {}
-            name    = db_item.get("name", f"[{item_id}]")
-            suffix  = "  *(obouruční)*" if db_item.get("hand_type") == "two" else ""
-            def_val = db_item.get("def", 0)
-            atk_val = db_item.get("atk", 0)
-            mods    = _parse_modifiers(db_item)
-            stat_str = ""
-            if atk_val: stat_str += f"  ⚔️{atk_val}"
-            if mods:    stat_str += f"  {mods}"
-            if def_val: stat_str += f"  🛡️{def_val}"
-            if item_id not in seen_items:
-                total_def += def_val
-                seen_items.add(item_id)
-            equip_lines.append(f"{emoji} **{label}**  {name}{suffix}{stat_str}")
-
-    totals_str = f"  ·  🛡️ DEF celkem: **{total_def}**" if total_def else ""
-    embed.add_field(
-        name=f"⚔️  Equipment{totals_str}",
-        value="\n".join(equip_lines) or "—",
-        inline=False,
-    )
-
-    # ── Inventář sekce ────────────────────────────────────────────────────────
-    total = len(inventory)
-    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
-    page  = max(0, min(page, pages - 1))
-    chunk = inventory[page * PAGE_SIZE : (page + 1) * PAGE_SIZE]
-
-    if not inventory:
-        inv_text = "*Inventář je prázdný.*"
-    else:
-        lines = []
-        for entry in chunk:
-            name    = _item_display_name(entry, items_db)
-            qty     = entry.get("qty", 1)
-            qty_str = f"  ×{qty}" if qty > 1 else ""
-            tags   = []
-            combat = ""
-            if entry["type"] == "registered":
-                db_item = items_db.get(entry["id"], {})
-                if db_item.get("atk"):    combat += f"  ⚔️{db_item['atk']}"
-                mods = _parse_modifiers(db_item)
-                if mods:                  combat += f"  {mods}"
-                if db_item.get("def"):    combat += f"  🛡️{db_item['def']}"
-                if db_item.get("consumable"): tags.append("consumable")
-            tag_str = f"  *{', '.join(tags)}*" if tags else ""
-            lines.append(f"**{name}**{qty_str}{combat}{tag_str}")
-        inv_text = "\n".join(lines)
-
-    footer_page = f"  ·  strana {page+1}/{pages}" if pages > 1 else ""
-    embed.add_field(
-        name=f"📦  Inventář  ({total} položek){footer_page}",
-        value=inv_text,
-        inline=False,
-    )
-
-    # ── Ostatní / poznámky ────────────────────────────────────────────────────
-    if notes:
-        note_lines = [f"{i+1}. {text}" for i, text in enumerate(notes)]
-        embed.add_field(
-            name="📝  Ostatní",
-            value="\n".join(note_lines),
-            inline=False,
-        )
-
-    return embed, pages
 
 
 def _build_inspect_embed(item_id: str, items_db: dict,
@@ -839,53 +802,95 @@ def _build_inspect_embed(item_id: str, items_db: dict,
     embed.set_footer(text=f"ID: {item_id}  ·  slot: {slot_label or '—'}")
     return embed
 
-def _build_boh_embed(profile: dict, member: discord.Member,
-                     items_db: dict, page: int = 0) -> tuple[discord.Embed, int]:
-    """Sestaví embed pro Bag of Holding."""
-    _ensure_boh_field(profile)
-    boh = profile["bag_of_holding"]
 
-    embed = discord.Embed(color=BOH_COLOR)
-    embed.set_author(
-        name=f"{member.display_name} — 👜 Bag of Holding  ∞",
-        icon_url=member.display_avatar.url,
-    )
+def _entry_line(entry: dict, items_db: dict) -> tuple[int, str]:
+    """Vrátí (index_skupiny, vykreslený_řádek) pro jeden předmět."""
+    name    = _item_display_name(entry, items_db)
+    qty     = entry.get("qty", 1)
+    qty_str = f" ×{qty}" if qty > 1 else ""
+    if entry.get("type") == "registered":
+        db_item = items_db.get(entry["id"], {})
+        cat     = db_item.get("category", "")
+        light   = " 🪶" if cat in WEIGHTLESS_CATEGORIES else ""
+        gi      = _CAT_TO_GROUP.get(cat, _OSTATNI_GROUP)
+        return gi, f"▸ **{name}**{qty_str}{light}"
+    return _OSTATNI_GROUP, f"▸ {name}{qty_str}"
 
-    if not boh:
-        embed.description = "*Pytel je prázdný...*\n-# DM může přidat věci přes `/inv-admin storage-add` (storage: bag_of_holding)."
-        return embed, 1
 
+def _render_storage_lines(storage: list, items_db: dict) -> list[str]:
+    """Řádky předmětů seskupené a seřazené podle širokých kategorií (bez stránkování)."""
+    buckets: dict[int, list[str]] = {}
+    for entry in storage:
+        gi, line = _entry_line(entry, items_db)
+        buckets.setdefault(gi, []).append(line)
     lines: list[str] = []
-    for entry in boh:
-        name    = _item_display_name(entry, items_db)
-        qty     = entry.get("qty", 1)
-        qty_str = f" ×{qty}" if qty > 1 else ""
-        if entry["type"] == "registered":
-            db_item = items_db.get(entry["id"], {})
-            cat     = db_item.get("category", "")
-            cat_str = f"  *{cat}*" if cat else ""
-            lines.append(f"▸ **{name}**{qty_str}{cat_str}")
-        else:
-            lines.append(f"▸ {name}")
+    for gi, (emoji, label, _cats) in enumerate(CATEGORY_GROUPS):
+        items = buckets.get(gi)
+        if not items:
+            continue
+        items.sort(key=str.lower)
+        lines.append(f"**{emoji} {label}**")
+        lines.extend(items)
+    return lines
 
-    total = len(lines)
-    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
-    start = page * PAGE_SIZE
-    chunk = lines[start : start + PAGE_SIZE]
 
-    embed.description = "\n".join(chunk) if chunk else "*Prázdná strana.*"
+def _paginate_storage(storage: list, items_db: dict,
+                      page_size: int = PAGE_SIZE) -> list[dict]:
+    """Group-aware stránkování úložiště.
 
-    # Ostatní / notes sekce (vždy viditelná, max 20 řádků)
-    notes = profile.get("boh_notes", [])
-    if notes:
-        note_lines = [f"`{i+1}.` {n}" for i, n in enumerate(notes)]
-        notes_val  = "\n".join(note_lines[:20])
-        if len(notes) > 20:
-            notes_val += f"\n*... a {len(notes) - 20} dalších*"
-        embed.add_field(name="📝 Ostatní", value=notes_val, inline=False)
+    Vrací list stránek: [{"lines": [...], "entries": [abs_idx, ...]}].
+    Skupiny nepřetékají — nadpis zůstává se svými předměty na stejné stránce.
+    Skupina delší než stránka se rozdělí a nadpis se zopakuje s '(pokr.)'.
+    `entries` drží absolutní indexy do `storage` pro detail-dropdown.
+    """
+    buckets: dict[int, list[tuple[int, str]]] = {}
+    for abs_idx, entry in enumerate(storage):
+        gi, line = _entry_line(entry, items_db)
+        buckets.setdefault(gi, []).append((abs_idx, line))
 
-    embed.set_footer(text=f"👜 Bag of Holding  ·  {total} předmětů · {len(notes)} poznámek  ·  Strana {page + 1}/{pages}")
-    return embed, pages
+    ordered: list[tuple[str, list[tuple[int, str]]]] = []
+    for gi, (emoji, label, _cats) in enumerate(CATEGORY_GROUPS):
+        items = buckets.get(gi)
+        if not items:
+            continue
+        items.sort(key=lambda t: t[1].lower())
+        ordered.append((f"**{emoji} {label}**", items))
+
+    pages: list[dict] = []
+    cur = {"lines": [], "entries": []}
+    cur_count = 0
+
+    def flush():
+        nonlocal cur, cur_count
+        if cur["lines"]:
+            pages.append(cur)
+        cur = {"lines": [], "entries": []}
+        cur_count = 0
+
+    for header, items in ordered:
+        # Skupina delší než stránka → rozděl, nadpis opakuj s "(pokr.)"
+        if len(items) > page_size:
+            if cur_count:
+                flush()
+            for ci in range(0, len(items), page_size):
+                chunk = items[ci:ci + page_size]
+                cur["lines"].append(header if ci == 0 else f"{header} *(pokr.)*")
+                for abs_idx, line in chunk:
+                    cur["lines"].append(line)
+                    cur["entries"].append(abs_idx)
+                cur_count = len(chunk)
+                flush()
+            continue
+        # Skupina se vejde celá — když se nevejde na současnou stránku, začni novou
+        if cur_count and cur_count + len(items) > page_size:
+            flush()
+        cur["lines"].append(header)
+        for abs_idx, line in items:
+            cur["lines"].append(line)
+            cur["entries"].append(abs_idx)
+        cur_count += len(items)
+    flush()
+    return pages or [{"lines": [], "entries": []}]
 
 
 def _build_storage_embed(profile: dict, member: discord.Member, items_db: dict,
@@ -907,24 +912,10 @@ def _build_storage_embed(profile: dict, member: discord.Member, items_db: dict,
         icon_url=member.display_avatar.url,
     )
 
-    lines: list[str] = []
-    for entry in storage:
-        name    = _item_display_name(entry, items_db)
-        qty     = entry.get("qty", 1)
-        qty_str = f" ×{qty}" if qty > 1 else ""
-        if entry.get("type") == "registered":
-            db_item   = items_db.get(entry["id"], {})
-            cat       = db_item.get("category", "")
-            light     = " 🪶" if cat in WEIGHTLESS_CATEGORIES else ""
-            cat_str   = f"  *{cat}*" if cat else ""
-            lines.append(f"▸ **{name}**{qty_str}{cat_str}{light}")
-        else:
-            lines.append(f"▸ {name}")
-
-    total = len(lines)
-    pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
-    start = page * PAGE_SIZE
-    chunk = lines[start : start + PAGE_SIZE]
+    pages_data  = _paginate_storage(storage, items_db)
+    total_pages = len(pages_data)
+    page        = max(0, min(page, total_pages - 1))
+    chunk       = pages_data[page]["lines"]
     embed.description = "\n".join(chunk) if chunk else "*Prázdné...*"
 
     if notes:
@@ -935,8 +926,8 @@ def _build_storage_embed(profile: dict, member: discord.Member, items_db: dict,
         embed.add_field(name="📝 Ostatní", value=notes_val, inline=False)
 
     cap_footer = "∞ neomezeno" if cap is None else f"{used}/{cap} slotů"
-    embed.set_footer(text=f"{visual['emoji']} {visual['label']}  ·  {cap_footer}  ·  Strana {page + 1}/{pages}")
-    return embed, pages
+    embed.set_footer(text=f"{visual['emoji']} {visual['label']}  ·  {cap_footer}  ·  Strana {page + 1}/{total_pages}")
+    return embed, total_pages
 
 
 def _build_item_detail_embed(entry: dict, items_db: dict) -> discord.Embed:
@@ -1081,6 +1072,29 @@ async def _ac_inventory_item(
         key  = entry["id"] if entry["type"] == "registered" else entry.get("name", "")
         if cur in name.lower() or cur in key.lower():
             choices.append(app_commands.Choice(name=name, value=key))
+    return choices[:25]
+
+
+async def _ac_ammo_item(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Autocomplete pro munici v inventáři (kategorie 'náboje' — i throwable jako granáty)."""
+    items_db = _load_items()
+    profile  = _get_profile(interaction.user.id)
+    if not profile:
+        return []
+    _ensure_inv_fields(profile)
+    cur     = current.lower()
+    choices = []
+    for entry in profile["inventory"]:
+        if entry.get("type") != "registered":
+            continue
+        db_item = items_db.get(entry["id"], {})
+        if db_item.get("category") != "náboje":
+            continue
+        name = _item_display_name(entry, items_db)
+        if cur in name.lower() or cur in entry["id"].lower():
+            choices.append(app_commands.Choice(name=name, value=entry["id"]))
     return choices[:25]
 
 
@@ -1324,29 +1338,30 @@ class InvPageView(discord.ui.View):
             self.add_item(btn)
 
     def _rebuild_item_select(self):
-        """Naplní dropdown itemy z aktuální stránky aktuálního storage (row 1)."""
+        """Naplní dropdown itemy z aktuální stránky (sladěno s group-aware stránkováním)."""
         # Smaž starý select
         for item in [c for c in self.children if getattr(c, "custom_id", "") == "item_detail_select"]:
             self.remove_item(item)
 
-        storage = self.profile.get("storages", {}).get(self.active, [])
-        start   = self.page * PAGE_SIZE
-        chunk   = storage[start : start + PAGE_SIZE]
-        if not chunk:
+        storage    = self.profile.get("storages", {}).get(self.active, [])
+        pages_data = _paginate_storage(storage, self.items_db)
+        page       = max(0, min(self.page, len(pages_data) - 1))
+        entry_idxs = pages_data[page]["entries"]
+        if not entry_idxs:
             return
 
         options = []
-        for idx, entry in enumerate(chunk):
-            name = _item_display_name(entry, self.items_db)
-            qty  = entry.get("qty", 1)
-            label = name if qty <= 1 else f"{name} ×{qty}"
-            label = label[:100]  # Discord limit
-            cat = ""
+        for abs_idx in entry_idxs:
+            entry = storage[abs_idx]
+            name  = _item_display_name(entry, self.items_db)
+            qty   = entry.get("qty", 1)
+            label = (name if qty <= 1 else f"{name} ×{qty}")[:100]
+            cat   = ""
             if entry.get("type") == "registered":
                 cat = self.items_db.get(entry["id"], {}).get("category", "")
             options.append(discord.SelectOption(
                 label=label,
-                value=str(start + idx),    # absolutní index v storage
+                value=str(abs_idx),        # absolutní index v storage
                 description=cat[:100] if cat else None,
             ))
 
@@ -1850,6 +1865,75 @@ class Inventory(commands.Cog):
             _save_profiles(profiles)
         await interaction.followup.send(f"{'✅' if ok else '❌'} {msg}")
 
+    @app_commands.command(
+        name="inv-ammo",
+        description="Vybav munici nebo uprav její počet (např. -1 po výstřelu).")
+    @app_commands.describe(
+        item="Munice z inventáře (prázdné = použije se už vybavená).",
+        number="Změna počtu: záporné odebere (−1 po výstřelu), kladné přidá.",
+    )
+    @app_commands.autocomplete(item=_ac_ammo_item)
+    async def inv_ammo(self, interaction: discord.Interaction,
+                       item: Optional[str] = None, number: int = 0):
+        await interaction.response.defer(ephemeral=True)
+        profiles = _load_profiles()
+        profile  = profiles.get(str(interaction.user.id))
+        if not profile:
+            await interaction.followup.send("❌ Nemáš profil. Nejdřív `/start`.")
+            return
+        _ensure_inv_fields(profile)
+        items_db  = _load_items()
+        equipment = profile["equipment"]
+        inventory = profile["inventory"]
+
+        def _count(item_id: str) -> int:
+            return sum(e.get("qty", 1) for e in inventory
+                       if e.get("type") == "registered" and e.get("id") == item_id)
+
+        # Zadaný item → vybav ho jako aktivní munici (musí být v inventáři a kategorie náboje)
+        if item:
+            entry = _find_inv_entry(inventory, item)
+            if not entry or entry.get("type") != "registered":
+                await interaction.followup.send(f"❌ **{item}** nemáš v inventáři.")
+                return
+            if items_db.get(item, {}).get("category") != "náboje":
+                nm = items_db.get(item, {}).get("name", item)
+                await interaction.followup.send(f"❌ **{nm}** není munice (kategorie *náboje*).")
+                return
+            equipment["ammo"] = item
+
+        target = equipment.get("ammo")
+        if not target:
+            await interaction.followup.send(
+                "❌ Nemáš vybavenou munici. Vyber ji: `/inv-ammo item:<munice>`.")
+            return
+        target_name = items_db.get(target, {}).get("name", target)
+
+        have = _count(target)
+
+        # Úprava počtu
+        if number < 0:
+            _remove_from_inventory(inventory, target, min(have, -number))
+        elif number > 0:
+            _add_to_inventory(inventory, target, number)
+
+        have_after = _count(target)
+
+        # Munice došla → smaž z inventáře (už je odebraná) a uvolni slot
+        if have_after <= 0:
+            equipment["ammo"] = None
+            _save_profiles(profiles)
+            await interaction.followup.send(
+                f"🏹 **{target_name}** došla — odebráno z inventáře, slot munice uvolněn.")
+            return
+
+        _save_profiles(profiles)
+        if number != 0:
+            delta = f"−{abs(number)}" if number < 0 else f"+{number}"
+            await interaction.followup.send(f"🏹 **{target_name}**  ×{have_after}  ({delta})")
+        else:
+            await interaction.followup.send(f"🏹 Vybavená munice: **{target_name}**  ×{have_after}")
+
     # ══════════════════════════════════════════════════════════════════════════
     # DATABASE COMMANDY (DM only)
     # ══════════════════════════════════════════════════════════════════════════
@@ -1882,15 +1966,18 @@ class Inventory(commands.Cog):
     @app_commands.choices(
         category=[app_commands.Choice(name=c, value=c) for c in CATEGORIES],
         slot=[
-            app_commands.Choice(name="Zbraň",  value="weapon"),
-            app_commands.Choice(name="Helma",  value="helmet"),
-            app_commands.Choice(name="Zbroj",  value="armor"),
-            app_commands.Choice(name="Boty",   value="boots"),
-            app_commands.Choice(name="Plášť",  value="cloak"),
-            app_commands.Choice(name="Opasek", value="belt"),
-            app_commands.Choice(name="Prsten", value="ring"),
-            app_commands.Choice(name="Amulet", value="amulet"),
-            app_commands.Choice(name="—",      value="none"),
+            app_commands.Choice(name="Zbraň",          value="weapon"),
+            app_commands.Choice(name="Helma",          value="helmet"),
+            app_commands.Choice(name="Pokrývka hlavy", value="headwear"),
+            app_commands.Choice(name="Zbroj",          value="armor"),
+            app_commands.Choice(name="Rukavice",       value="gloves"),
+            app_commands.Choice(name="Zápěstí",        value="wrists"),
+            app_commands.Choice(name="Boty",           value="boots"),
+            app_commands.Choice(name="Plášť",          value="cloak"),
+            app_commands.Choice(name="Opasek",         value="belt"),
+            app_commands.Choice(name="Prsten",         value="ring"),
+            app_commands.Choice(name="Amulet",         value="amulet"),
+            app_commands.Choice(name="—",              value="none"),
         ],
         hand_type=[
             app_commands.Choice(name="Jednoruční", value="one"),
@@ -1974,6 +2061,9 @@ class Inventory(commands.Cog):
     @app_commands.describe(
         item_id="ID itemu k úpravě.",
         name="Nové jméno (prázdné = beze změny).",
+        category="Nová kategorie (prázdné = beze změny).",
+        slot="Nový equip slot (prázdné = beze změny).",
+        hand_type="Jednoruční/obouruční, nebo — pro odebrání (prázdné = beze změny).",
         desc="Nový popis (prázdné = beze změny).",
         atk="Nová útočná hodnota (0 = odebrat).",
         defense="Nová obranná hodnota (0 = odebrat).",
@@ -1993,11 +2083,36 @@ class Inventory(commands.Cog):
         storage_emoji="Emoji úložiště na tlačítku /inv.",
         storage_clear="Odebere storage vlastnost (item přestane být úložiště).",
     )
+    @app_commands.choices(
+        category=[app_commands.Choice(name=c, value=c) for c in CATEGORIES],
+        slot=[
+            app_commands.Choice(name="Zbraň",              value="weapon"),
+            app_commands.Choice(name="Helma",              value="helmet"),
+            app_commands.Choice(name="Pokrývka hlavy",     value="headwear"),
+            app_commands.Choice(name="Zbroj",              value="armor"),
+            app_commands.Choice(name="Rukavice",           value="gloves"),
+            app_commands.Choice(name="Zápěstí",            value="wrists"),
+            app_commands.Choice(name="Boty",               value="boots"),
+            app_commands.Choice(name="Plášť",              value="cloak"),
+            app_commands.Choice(name="Opasek",             value="belt"),
+            app_commands.Choice(name="Prsten",             value="ring"),
+            app_commands.Choice(name="Amulet",             value="amulet"),
+            app_commands.Choice(name="— (nelze equipnout)", value="none"),
+        ],
+        hand_type=[
+            app_commands.Choice(name="Jednoruční",  value="one"),
+            app_commands.Choice(name="Obouruční",   value="two"),
+            app_commands.Choice(name="— (odebrat)", value="clear"),
+        ],
+    )
     @app_commands.autocomplete(item_id=_ac_database_item, required_perk=_ac_vyzboj_perk)
     async def inv_db_edit(
         self, interaction: discord.Interaction,
         item_id: str,
         name: Optional[str] = None,
+        category: Optional[str] = None,
+        slot: Optional[str] = None,
+        hand_type: Optional[str] = None,
         desc: Optional[str] = None,
         lore_drop: Optional[str] = None,
         atk: Optional[int] = None,
@@ -2027,6 +2142,13 @@ class Inventory(commands.Cog):
             await interaction.followup.send(f"❌ Item `{item_id}` neexistuje.")
             return
         if name       is not None: item["name"]       = name
+        if category   is not None: item["category"]   = category
+        if slot       is not None:
+            # "weapon" je alias pro "hand_l", "none" = nelze equipnout
+            item["slot"] = None if slot == "none" else ("hand_l" if slot == "weapon" else slot)
+        if hand_type  is not None:
+            if hand_type == "clear": item.pop("hand_type", None)
+            else:                    item["hand_type"] = hand_type
         if desc       is not None: item["desc"]       = desc
         if lore_drop  is not None:
             if lore_drop.lower() == "clear": item.pop("lore_drop", None)
