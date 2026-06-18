@@ -132,9 +132,29 @@ def _get_profile(uid: int) -> dict | None:
 def _default_equipment() -> dict:
     return {slot: None for slot in EQUIPMENT_SLOTS}
 
+def _link_inventory(profile: dict) -> list:
+    """Sjednotí profile['inventory'] a storages['inventory'] na JEDEN živý list.
+
+    Po uložení/načtení z JSONu se tato dvě pole rozpojí (JSON neumí sdílené
+    reference). Část příkazů píše do profile['inventory'], zobrazení čte
+    storages['inventory'] → přidané itemy se nezobrazovaly. profile['inventory']
+    je vždy nejčerstvější (žádný příkaz nepíše do storages['inventory'], aniž by
+    ho přes _ensure_storage zároveň přelinkoval), takže ho bereme za zdroj pravdy.
+    """
+    profile.setdefault("storages", {})
+    legacy = profile.get("inventory")
+    if not isinstance(legacy, list):
+        legacy = profile["storages"].get("inventory")
+        if not isinstance(legacy, list):
+            legacy = []
+    profile["storages"]["inventory"] = legacy   # kanonický zdroj pro zobrazení
+    profile["inventory"] = legacy               # živá reference pro zpětnou kompatibilitu
+    return legacy
+
+
 def _ensure_inv_fields(profile: dict) -> dict:
     """Zajistí že profil má všechna potřebná pole inventáře."""
-    profile.setdefault("inventory", [])
+    _link_inventory(profile)
     profile.setdefault("notes", [])
     profile.setdefault("equipment", {})
     profile.setdefault("ring_slots", 2)
@@ -216,9 +236,8 @@ def _migrate_storages(profile: dict) -> None:
     profile.setdefault("storage_notes", {})
 
     storages = profile["storages"]
-    # Migrace inventáře
-    if "inventory" not in storages:
-        storages["inventory"] = profile.get("inventory", [])
+    # Inventář: jeden živý list (profile['inventory'] == storages['inventory'])
+    _link_inventory(profile)
     if "bag_of_holding" not in storages and profile.get("bag_of_holding"):
         storages["bag_of_holding"] = profile.get("bag_of_holding", [])
 
@@ -228,8 +247,7 @@ def _migrate_storages(profile: dict) -> None:
     if profile.get("boh_notes"):
         notes.setdefault("bag_of_holding", profile.get("boh_notes", []))
 
-    # Drž zpětnou kompatibilitu — inventory i bag_of_holding jsou živé reference
-    profile["inventory"] = storages["inventory"]
+    # Drž zpětnou kompatibilitu — bag_of_holding je živá reference
     if "bag_of_holding" in storages:
         profile["bag_of_holding"] = storages["bag_of_holding"]
 
