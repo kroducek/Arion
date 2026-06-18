@@ -56,22 +56,11 @@ GAME_INFO = [
     {
         "id":      "blackjack",
         "label":   "🃏 Blackjack",
-        "desc":    "Poraz dealera — 21 nebo nejblíž bere pot",
+        "desc":    "Poraz dealera — 21 nebo nejblíž; sázky probíhají u stolu",
         "players": "1–6",
-        "bet":     True,
-        # TODO: ověř přesný název cog třídy a lobby handleru blackjacku.
-        #       (ostatní hry: GuessCog/guess_start, Kostky/kostky_match, …)
+        "bet":     False,   # sázení řeší samotný stůl (betting fáze), lobby se otevře rovnou
         "cog":     "BlackjackCog",
-        "handler": "blackjack_start",
-    },
-    {
-        "id":      "labyrinth",
-        "label":   "🚪 Door Labyrinth",
-        "desc":    "Sociálně-dedukční — unikni nebo odhal vraha",
-        "players": "4–10",
-        "bet":     False,
-        "cog":     "LabyrinthCog",
-        "handler": "labyrinth_start",
+        "handler": "bj_start",
     },
 ]
 
@@ -86,6 +75,11 @@ def _hub_embed() -> discord.Embed:
         title="🎮 Minihry — Arion",
         description="\n".join(lines).strip(),
         color=0x5865F2,
+    )
+    embed.add_field(
+        name="🚪 Door Labyrinth",
+        value="Chceš zjistit tajemství labyrinthu? `/lobby`..",
+        inline=False,
     )
     embed.set_footer(text="Klikni na tlačítko pro otevření lobby")
     return embed

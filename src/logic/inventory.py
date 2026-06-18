@@ -16,46 +16,43 @@ logger = logging.getLogger(__name__)
 
 EQUIPMENT_SLOTS = [
     "hand_l", "hand_r",
-    "helmet", "headwear", "armor", "gloves", "wrists", "boots", "cloak", "belt",
-    "ammo",
+    "helmet", "headwear", "armor", "gloves", "wrists", "kalhoty", "boots", "cloak", "belt",
     "ring_1", "ring_2",
-    "amulet_1", "amulet_2",
+    "amulet_1",
 ]
 
 SLOT_LABELS = {
     "hand_l":   "Zbraň L",
     "hand_r":   "Zbraň P",
-    "helmet":   "Helma",
-    "headwear": "Pokrývka hlavy",
+    "helmet":   "Hlava",
+    "headwear": "Obličej",
     "armor":    "Zbroj",
     "gloves":   "Rukavice",
     "wrists":   "Zápěstí",
+    "kalhoty":  "Kalhoty",
     "boots":    "Boty",
     "cloak":    "Plášť",
     "belt":     "Opasek",
-    "ammo":     "Munice",
     "ring_1":   "Prsten 1",
     "ring_2":   "Prsten 2",
-    "amulet_1": "Amulet 1",
-    "amulet_2": "Amulet 2",
+    "amulet_1": "Amulet",
 }
 
 SLOT_EMOJIS = {
     "hand_l":   "🗡️",
     "hand_r":   "🗡️",
     "helmet":   "🪖",
-    "headwear": "🧣",
+    "headwear": "👓",
     "armor":    "🛡️",
     "gloves":   "🧤",
     "wrists":   "🔗",
+    "kalhoty":  "👖",
     "boots":    "👢",
     "cloak":    "🧥",
     "belt":     "🪢",
-    "ammo":     "🏹",
     "ring_1":   "💍",
     "ring_2":   "💍",
     "amulet_1": "📿",
-    "amulet_2": "📿",
 }
 
 CATEGORIES = [
@@ -109,6 +106,7 @@ WEIGHTLESS_CATEGORIES = ["jídlo", "lektvary", "náboje"]  # nezabírají sloty
 STORAGE_VISUALS = {
     "inventory":     {"emoji": "🎒", "label": "Inventář",        "color": EMBED_COLOR},
     "bag_of_holding":{"emoji": "👜", "label": "Bag of Holding",  "color": BOH_COLOR},
+    "toulec":        {"emoji": "🏹", "label": "Toulec",          "color": 0x7a5230},
     "_default":      {"emoji": "📦", "label": "Úložiště",        "color": 0x5a6b3b},
 }
 
@@ -160,15 +158,22 @@ def _ensure_inv_fields(profile: dict) -> dict:
     profile.setdefault("notes", [])
     profile.setdefault("equipment", {})
     profile.setdefault("ring_slots", 2)
-    profile.setdefault("amulet_slots", 2)
+    profile["amulet_slots"] = 1   # jediný amulet slot
     # Zajisti že všechny sloty existují (i v případě starého/částečného profilu)
     for s in ["hand_l", "hand_r", "helmet", "headwear", "armor",
-              "gloves", "wrists", "boots", "cloak", "belt", "ammo"]:
+              "gloves", "wrists", "kalhoty", "boots", "cloak", "belt"]:
         profile["equipment"].setdefault(s, None)
     for i in range(1, profile["ring_slots"] + 1):
         profile["equipment"].setdefault(f"ring_{i}", None)
-    for i in range(1, profile["amulet_slots"] + 1):
-        profile["equipment"].setdefault(f"amulet_{i}", None)
+    profile["equipment"].setdefault("amulet_1", None)
+    # Migrace: zrušený ammo slot — munice teď žije v Toulci, ukazatel jen zahoď
+    profile["equipment"].pop("ammo", None)
+    # Migrace: zrušené druhé+ amulet sloty — případné itemy vrať do inventáře
+    for key in [k for k in list(profile["equipment"])
+                if k.startswith("amulet_") and k != "amulet_1"]:
+        extra = profile["equipment"].pop(key, None)
+        if extra:
+            _add_to_inventory(profile["inventory"], extra, 1)
     # Vitální pole — nutná pro /use efekty
     profile.setdefault("hp_max",     50)
     profile.setdefault("hp_cur",     profile.get("hp_max", 50))
@@ -178,14 +183,6 @@ def _ensure_inv_fields(profile: dict) -> dict:
     profile.setdefault("mana_cur",   0)
     profile.setdefault("fury_max",   0)
     profile.setdefault("fury_cur",   0)
-    # Auto-vyčisti ukazatel munice, pokud vybavená munice už není v inventáři
-    # (např. po /inv-give, storage-move nebo storage-drop).
-    ammo_id = profile["equipment"].get("ammo")
-    if ammo_id:
-        have = sum(e.get("qty", 1) for e in profile["inventory"]
-                   if e.get("type") == "registered" and e.get("id") == ammo_id)
-        if have <= 0:
-            profile["equipment"]["ammo"] = None
     return profile
 
 def _ensure_boh_field(profile: dict) -> None:
@@ -292,9 +289,9 @@ def _owns_storage_item(profile: dict, item_id: str) -> bool:
 
 
 def _available_storages(profile: dict, items_db: dict) -> list[str]:
-    """Vrátí seznam storage klíčů které hráč může používat (inventory + vlastněné storage itemy)."""
-    keys = ["inventory"]
-    seen = {"inventory"}
+    """Vrátí seznam storage klíčů které hráč může používat (inventory + Toulec + vlastněné storage itemy)."""
+    keys = ["inventory", "toulec"]   # Toulec je vestavěný (každý hráč má na munici)
+    seen = set(keys)
     # Projdi všechny itemy které hráč má a najdi storage typy
     for stor in profile.get("storages", {}).values():
         for entry in stor:
@@ -336,6 +333,30 @@ def _storage_visual(storage_key: str, items_db: dict) -> dict:
         "label": db_item.get("name", storage_key),
         "color": STORAGE_VISUALS["_default"]["color"],
     }
+
+
+def _sort_ammo_to_toulec(profile: dict, items_db: dict) -> bool:
+    """Přesune veškerou munici (kategorie 'náboje') z inventáře do Toulce.
+
+    Toulec je vestavěné úložiště jen na munici — jakmile se náboje objeví
+    v inventáři, automaticky se sem sloučí. Vrací True pokud se něco přesunulo.
+    """
+    inv = profile.setdefault("storages", {}).setdefault("inventory", [])
+    profile["inventory"] = inv  # drž živou referenci
+    moved = False
+    remaining = []
+    for entry in inv:
+        is_ammo = (entry.get("type") == "registered"
+                   and items_db.get(entry.get("id"), {}).get("category") == "náboje")
+        if is_ammo:
+            toulec = profile["storages"].setdefault("toulec", [])
+            _add_to_inventory(toulec, entry["id"], entry.get("qty", 1))
+            moved = True
+        else:
+            remaining.append(entry)
+    if moved:
+        inv[:] = remaining  # uprav in-place, ať zůstane živá reference
+    return moved
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -416,11 +437,11 @@ def _active_ring_slots(profile: dict) -> list[str]:
     return [f"ring_{i+1}" for i in range(profile.get("ring_slots", 2))]
 
 def _active_amulet_slots(profile: dict) -> list[str]:
-    return [f"amulet_{i+1}" for i in range(profile.get("amulet_slots", 2))]
+    return ["amulet_1"]   # jeden pevný amulet slot
 
 def _active_slots(profile: dict) -> list[str]:
     base = ["hand_l", "hand_r", "helmet", "headwear", "armor",
-            "gloves", "wrists", "boots", "cloak", "belt", "ammo"]
+            "gloves", "wrists", "kalhoty", "boots", "cloak", "belt"]
     return base + _active_ring_slots(profile) + _active_amulet_slots(profile)
 
 
@@ -635,18 +656,6 @@ def _equip_item(profile: dict, item_id: str, preferred_slot: str | None,
         bonus_line = f"\n✨ Bonus: {bonus_str}" if bonus_str else ""
         return True, f"Equipoval jsi **{db_item['name']}** do slotu **{slot_label}**.{freed_msg}{bonus_line}"
 
-    # ── Munice ────────────────────────────────────────────────────────────────
-    # Munice na rozdíl od ostatní výbavy NEMIZÍ z inventáře (lze ji mít ×N kusů) —
-    # equip jen nastaví ukazatel na "aktivní" munici, stejně jako /inv-ammo.
-    if slot_target == "ammo":
-        old = equipment.get("ammo")
-        equipment["ammo"] = item_id
-        msg = f"Vybavil jsi munici **{db_item['name']}** (zůstává v inventáři)."
-        if old and old != item_id:
-            old_name = items_db.get(old, {}).get("name", old)
-            msg += f"\nPředešlá munice **{old_name}** odložena."
-        return True, msg
-
     # ── Prsteny / amulety ─────────────────────────────────────────────────────
     if slot_target in ("ring", "amulet"):
         active = _active_ring_slots(profile) if slot_target == "ring" else _active_amulet_slots(profile)
@@ -684,13 +693,6 @@ def _unequip_slot(profile: dict, slot: str, items_db: dict) -> tuple[bool, str]:
 
     if not item_id:
         return False, f"Slot **{SLOT_LABELS.get(slot, slot)}** je prázdný."
-
-    # Munice žije pořád v inventáři — slot je jen ukazatel na aktivní munici.
-    # Sundání = jen zrušit ukazatel, NIC nepřidávat zpět (jinak by se duplikovala).
-    if slot == "ammo":
-        equipment["ammo"] = None
-        name = items_db.get(item_id, {}).get("name", item_id)
-        return True, f"Munice **{name}** odložena (zůstává v inventáři)."
 
     db_item     = items_db.get(item_id, {})
     name        = db_item.get("name", item_id)
@@ -735,19 +737,6 @@ def _build_equip_embed(profile: dict, member: discord.Member,
         label   = SLOT_LABELS.get(slot, slot)
         emoji   = SLOT_EMOJIS.get(slot, "▪️")
         item_id = equipment.get(slot)
-        # Munice: ukazatel na aktivní munici v inventáři — zobraz s živým počtem.
-        if slot == "ammo":
-            if not item_id:
-                equip_lines.append(f"{emoji} **{label}**  —")
-            else:
-                ammo_name = (items_db.get(item_id) or {}).get("name", f"[{item_id}]")
-                inv_entry = _find_inv_entry(profile["inventory"], item_id)
-                count     = inv_entry.get("qty", 0) if inv_entry else 0
-                if count <= 0:
-                    equip_lines.append(f"{emoji} **{label}**  {ammo_name} *(prázdné)*")
-                else:
-                    equip_lines.append(f"{emoji} **{label}**  {ammo_name} ×{count}")
-            continue
         if not item_id:
             equip_lines.append(f"{emoji} **{label}**  —")
         else:
@@ -1124,23 +1113,30 @@ async def _ac_inventory_item(
 async def _ac_ammo_item(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[str]]:
-    """Autocomplete pro munici v inventáři (kategorie 'náboje' — i throwable jako granáty)."""
+    """Autocomplete pro munici v Toulci/inventáři (kategorie 'náboje' — i throwable jako granáty)."""
     items_db = _load_items()
     profile  = _get_profile(interaction.user.id)
     if not profile:
         return []
     _ensure_inv_fields(profile)
-    cur     = current.lower()
-    choices = []
-    for entry in profile["inventory"]:
+    cur      = current.lower()
+    storages = profile.get("storages", {})
+    pool     = list(storages.get("toulec", [])) + list(profile.get("inventory", []))
+    seen     = set()
+    choices  = []
+    for entry in pool:
         if entry.get("type") != "registered":
             continue
-        db_item = items_db.get(entry["id"], {})
+        iid = entry["id"]
+        if iid in seen:
+            continue
+        db_item = items_db.get(iid, {})
         if db_item.get("category") != "náboje":
             continue
         name = _item_display_name(entry, items_db)
-        if cur in name.lower() or cur in entry["id"].lower():
-            choices.append(app_commands.Choice(name=name, value=entry["id"]))
+        if cur in name.lower() or cur in iid.lower():
+            choices.append(app_commands.Choice(name=name, value=iid))
+            seen.add(iid)
     return choices[:25]
 
 
@@ -1335,7 +1331,7 @@ async def _ac_equip_slot(
                 choices.append(_slot_choice(s))
 
     elif slot_target == "amulet":
-        active = _active_amulet_slots(profile) if profile else ["amulet_1", "amulet_2"]
+        active = _active_amulet_slots(profile) if profile else ["amulet_1"]
         for s in active:
             if not cur or cur in SLOT_LABELS.get(s, s).lower() or cur in s:
                 choices.append(_slot_choice(s))
@@ -1513,8 +1509,9 @@ class Inventory(commands.Cog):
     async def inv(self, interaction: discord.Interaction,
                   member: Optional[discord.Member] = None):
         await interaction.response.defer()
-        target  = member or interaction.user
-        profile = _get_profile(target.id)
+        target   = member or interaction.user
+        profiles = _load_profiles()
+        profile  = profiles.get(str(target.id))
         if not profile:
             await interaction.followup.send(
                 f"❌ **{target.display_name}** nemá profil.", ephemeral=True)
@@ -1522,6 +1519,8 @@ class Inventory(commands.Cog):
         _ensure_inv_fields(profile)
         _migrate_storages(profile)
         items_db = _load_items()
+        if _sort_ammo_to_toulec(profile, items_db):
+            _save_profiles(profiles)
 
         # Otevři rovnou inventář (se select dropdownem); equip je dostupný tlačítkem
         view = InvPageView(profile, target, items_db, start_storage="inventory")
@@ -1667,6 +1666,7 @@ class Inventory(commands.Cog):
         name = _item_display_name(entry, items_db)
         if entry["type"] == "registered":
             _add_to_inventory(recvr_p["inventory"], entry["id"], qty)
+            _sort_ammo_to_toulec(recvr_p, items_db)   # munice příjemci rovnou do Toulce
         else:
             # Legacy volný item — přidej jako poznámku
             recvr_notes = _inv_notes(recvr_p)
@@ -1919,14 +1919,14 @@ class Inventory(commands.Cog):
 
     @app_commands.command(
         name="inv-ammo",
-        description="Vybav munici nebo uprav její počet (např. -1 po výstřelu).")
+        description="Uprav počet munice v Toulci (např. −1 po výstřelu).")
     @app_commands.describe(
-        item="Munice z inventáře (prázdné = použije se už vybavená).",
+        item="Munice z Toulce.",
         number="Změna počtu: záporné odebere (−1 po výstřelu), kladné přidá.",
     )
     @app_commands.autocomplete(item=_ac_ammo_item)
     async def inv_ammo(self, interaction: discord.Interaction,
-                       item: Optional[str] = None, number: int = 0):
+                       item: str, number: int = -1):
         await interaction.response.defer(ephemeral=True)
         profiles = _load_profiles()
         profile  = profiles.get(str(interaction.user.id))
@@ -1934,60 +1934,38 @@ class Inventory(commands.Cog):
             await interaction.followup.send("❌ Nemáš profil. Nejdřív `/start`.")
             return
         _ensure_inv_fields(profile)
-        items_db  = _load_items()
-        equipment = profile["equipment"]
-        inventory = profile["inventory"]
+        items_db = _load_items()
+        _sort_ammo_to_toulec(profile, items_db)   # sjednoť munici do Toulce
+        toulec = profile.setdefault("storages", {}).setdefault("toulec", [])
 
-        def _count(item_id: str) -> int:
-            return sum(e.get("qty", 1) for e in inventory
-                       if e.get("type") == "registered" and e.get("id") == item_id)
-
-        # Zadaný item → vybav ho jako aktivní munici (musí být v inventáři a kategorie náboje)
-        if item:
-            entry = _find_inv_entry(inventory, item)
-            if not entry or entry.get("type") != "registered":
-                await interaction.followup.send(f"❌ **{item}** nemáš v inventáři.")
-                return
-            if items_db.get(item, {}).get("category") != "náboje":
-                nm = items_db.get(item, {}).get("name", item)
-                await interaction.followup.send(f"❌ **{nm}** není munice (kategorie *náboje*).")
-                return
-            equipment["ammo"] = item
-
-        target = equipment.get("ammo")
-        if not target:
-            await interaction.followup.send(
-                "❌ Nemáš vybavenou munici. Vyber ji: `/inv-ammo item:<munice>`.")
+        if items_db.get(item, {}).get("category") != "náboje":
+            nm = items_db.get(item, {}).get("name", item)
+            await interaction.followup.send(f"❌ **{nm}** není munice (kategorie *náboje*).")
             return
-        target_name = items_db.get(target, {}).get("name", target)
 
-        have = _count(target)
+        def _count() -> int:
+            return sum(e.get("qty", 1) for e in toulec
+                       if e.get("type") == "registered" and e.get("id") == item)
 
-        # Úprava počtu
+        have = _count()
+        if have <= 0:
+            nm = items_db.get(item, {}).get("name", item)
+            await interaction.followup.send(f"❌ **{nm}** nemáš v Toulci.")
+            return
+
         if number < 0:
-            _remove_from_inventory(inventory, target, min(have, -number))
+            _remove_from_inventory(toulec, item, min(have, -number))
         elif number > 0:
-            _add_to_inventory(inventory, target, number)
+            _add_to_inventory(toulec, item, number)
 
-        have_after = _count(target)
-
-        # Munice došla → smaž z inventáře (už je odebraná) a uvolni slot
-        if have_after <= 0:
-            equipment["ammo"] = None
-            _save_profiles(profiles)
-            await interaction.followup.send(
-                f"🏹 **{target_name}** došla — odebráno z inventáře, slot munice uvolněn.")
-            return
-
+        have_after = _count()
         _save_profiles(profiles)
-        if item:
-            # Achievement: plná výbava — munice vybavená i přes /inv-ammo se počítá.
-            await _check_full_equip(interaction.user, interaction.channel, profile)
-        if number != 0:
-            delta = f"−{abs(number)}" if number < 0 else f"+{number}"
-            await interaction.followup.send(f"🏹 **{target_name}**  ×{have_after}  ({delta})")
+        name  = items_db.get(item, {}).get("name", item)
+        if have_after <= 0:
+            await interaction.followup.send(f"🏹 **{name}** došla — odebrána z Toulce.")
         else:
-            await interaction.followup.send(f"🏹 Vybavená munice: **{target_name}**  ×{have_after}")
+            delta = f"−{abs(number)}" if number < 0 else f"+{number}"
+            await interaction.followup.send(f"🏹 **{name}**  ×{have_after}  ({delta})")
 
     # ══════════════════════════════════════════════════════════════════════════
     # DATABASE COMMANDY (DM only)
@@ -2021,19 +1999,19 @@ class Inventory(commands.Cog):
     @app_commands.choices(
         category=[app_commands.Choice(name=c, value=c) for c in CATEGORIES],
         slot=[
-            app_commands.Choice(name="Zbraň",          value="weapon"),
-            app_commands.Choice(name="Helma",          value="helmet"),
-            app_commands.Choice(name="Pokrývka hlavy", value="headwear"),
-            app_commands.Choice(name="Zbroj",          value="armor"),
-            app_commands.Choice(name="Rukavice",       value="gloves"),
-            app_commands.Choice(name="Zápěstí",        value="wrists"),
-            app_commands.Choice(name="Boty",           value="boots"),
-            app_commands.Choice(name="Plášť",          value="cloak"),
-            app_commands.Choice(name="Opasek",         value="belt"),
-            app_commands.Choice(name="Munice",         value="ammo"),
-            app_commands.Choice(name="Prsten",         value="ring"),
-            app_commands.Choice(name="Amulet",         value="amulet"),
-            app_commands.Choice(name="—",              value="none"),
+            app_commands.Choice(name="Zbraň",     value="weapon"),
+            app_commands.Choice(name="Hlava",     value="helmet"),
+            app_commands.Choice(name="Obličej",   value="headwear"),
+            app_commands.Choice(name="Zbroj",     value="armor"),
+            app_commands.Choice(name="Rukavice",  value="gloves"),
+            app_commands.Choice(name="Zápěstí",   value="wrists"),
+            app_commands.Choice(name="Kalhoty",   value="kalhoty"),
+            app_commands.Choice(name="Boty",      value="boots"),
+            app_commands.Choice(name="Plášť",     value="cloak"),
+            app_commands.Choice(name="Opasek",    value="belt"),
+            app_commands.Choice(name="Prsten",    value="ring"),
+            app_commands.Choice(name="Amulet",    value="amulet"),
+            app_commands.Choice(name="—",         value="none"),
         ],
         hand_type=[
             app_commands.Choice(name="Jednoruční", value="one"),
@@ -2143,15 +2121,15 @@ class Inventory(commands.Cog):
         category=[app_commands.Choice(name=c, value=c) for c in CATEGORIES],
         slot=[
             app_commands.Choice(name="Zbraň",              value="weapon"),
-            app_commands.Choice(name="Helma",              value="helmet"),
-            app_commands.Choice(name="Pokrývka hlavy",     value="headwear"),
+            app_commands.Choice(name="Hlava",              value="helmet"),
+            app_commands.Choice(name="Obličej",            value="headwear"),
             app_commands.Choice(name="Zbroj",              value="armor"),
             app_commands.Choice(name="Rukavice",           value="gloves"),
             app_commands.Choice(name="Zápěstí",            value="wrists"),
+            app_commands.Choice(name="Kalhoty",            value="kalhoty"),
             app_commands.Choice(name="Boty",               value="boots"),
             app_commands.Choice(name="Plášť",              value="cloak"),
             app_commands.Choice(name="Opasek",             value="belt"),
-            app_commands.Choice(name="Munice",             value="ammo"),
             app_commands.Choice(name="Prsten",             value="ring"),
             app_commands.Choice(name="Amulet",             value="amulet"),
             app_commands.Choice(name="— (nelze equipnout)", value="none"),
@@ -2501,6 +2479,7 @@ class Inventory(commands.Cog):
             inv_notes = _inv_notes(profile)
             for _ in range(qty):
                 inv_notes.append(name)
+        _sort_ammo_to_toulec(profile, items_db)   # munice rovnou do Toulce
         _save_profiles(profiles)
         qty_str = f" ×{qty}" if qty > 1 else ""
         await interaction.followup.send(
@@ -2530,21 +2509,23 @@ class Inventory(commands.Cog):
         await interaction.followup.send(
             f"✅ Odebráno **{item}** ×{qty} od **{member.display_name}**.")
 
-    @inv_admin.command(name="slots", description="[DM] Nastaví počet ring/amulet slotů hráči.")
+    @inv_admin.command(name="slots", description="[DM] Nastaví počet prstenových slotů hráči.")
     @app_commands.describe(
         member="Hráč.",
-        slot_type="ring nebo amulet.",
+        slot_type="ring (amulet je teď pevně jeden).",
         count="Počet slotů (1–6).",
     )
     @app_commands.choices(slot_type=[
         app_commands.Choice(name="Prsteny", value="ring"),
-        app_commands.Choice(name="Amulety", value="amulet"),
     ])
     async def inv_admin_slots(self, interaction: discord.Interaction,
                               member: discord.Member, slot_type: str, count: int):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
             await interaction.followup.send("❌ Jen DM.")
+            return
+        if slot_type != "ring":
+            await interaction.followup.send("❌ Nastavovat lze jen prstenové sloty (amulet je pevně jeden).")
             return
         if count < 1 or count > 6:
             await interaction.followup.send("❌ Počet slotů musí být 1–6.")
@@ -2556,14 +2537,12 @@ class Inventory(commands.Cog):
                 f"❌ **{member.display_name}** nemá profil.")
             return
         _ensure_inv_fields(profile)
-        key   = f"{slot_type}_slots"
-        label = "prsten" if slot_type == "ring" else "amulet"
-        profile[key] = count
+        profile["ring_slots"] = count
         for i in range(1, count + 1):
-            profile["equipment"].setdefault(f"{slot_type}_{i}", None)
+            profile["equipment"].setdefault(f"ring_{i}", None)
         _save_profiles(profiles)
         await interaction.followup.send(
-            f"✅ **{member.display_name}** má teď {count}× {label} slot.")
+            f"✅ **{member.display_name}** má teď {count}× prsten slot.")
 
 
     @inv_admin.command(name="storage-remove",
