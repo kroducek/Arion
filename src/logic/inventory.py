@@ -8,6 +8,8 @@ from typing import Optional
 from src.utils.paths import PROFILES as PROFILES_FILE, ITEMS as ITEMS_FILE
 from src.utils.json_utils import load_json, save_json
 
+logger = logging.getLogger(__name__)
+
 # ══════════════════════════════════════════════════════════════════════════════
 # KONFIGURACE
 # ══════════════════════════════════════════════════════════════════════════════
@@ -420,6 +422,20 @@ def _active_slots(profile: dict) -> list[str]:
     base = ["hand_l", "hand_r", "helmet", "headwear", "armor",
             "gloves", "wrists", "boots", "cloak", "belt", "ammo"]
     return base + _active_ring_slots(profile) + _active_amulet_slots(profile)
+
+
+async def _check_full_equip(member, channel, profile: dict) -> None:
+    """Bezpečně zkontroluje achievement 'Naplno vyzbrojený!' (plná výbava).
+
+    Chybu LOGUJE (ne tiše spolkne), aby šlo diagnostikovat — a nikdy neshodí
+    příkaz, který ji volá.
+    """
+    try:
+        from src.logic.achievements import check_full_equip_achievement
+        await check_full_equip_achievement(
+            member, channel, profile["equipment"], _active_slots(profile))
+    except Exception:
+        logger.exception("check_full_equip_achievement selhal (achievement 'Naplno vyzbrojený!')")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # EQUIPMENT HELPERS
@@ -1514,6 +1530,10 @@ class Inventory(commands.Cog):
         view._update_nav()
         await interaction.followup.send(embed=embed, view=view)
 
+        # Achievement: plná výbava — záchytný trigger při zobrazení vlastního inv.
+        if target.id == interaction.user.id:
+            await _check_full_equip(interaction.user, interaction.channel, profile)
+
     # ── /inv-note add ─────────────────────────────────────────────────────────
     @inv_note.command(name="add",
                       description="Přidá poznámku do sekce Ostatní (věci mimo databázi).")
@@ -1872,13 +1892,7 @@ class Inventory(commands.Cog):
         if ok:
             _save_profiles(profiles)
             # Achievement: plná výbava (všechny sloty obsazené)
-            try:
-                from src.logic.achievements import check_full_equip_achievement
-                await check_full_equip_achievement(
-                    interaction.user, interaction.channel,
-                    profile["equipment"], _active_slots(profile))
-            except Exception:
-                pass
+            await _check_full_equip(interaction.user, interaction.channel, profile)
         await interaction.followup.send(f"{'✅' if ok else '❌'} {msg}")
 
     # ── /unequip ──────────────────────────────────────────────────────────────
@@ -1968,13 +1982,7 @@ class Inventory(commands.Cog):
         _save_profiles(profiles)
         if item:
             # Achievement: plná výbava — munice vybavená i přes /inv-ammo se počítá.
-            try:
-                from src.logic.achievements import check_full_equip_achievement
-                await check_full_equip_achievement(
-                    interaction.user, interaction.channel,
-                    profile["equipment"], _active_slots(profile))
-            except Exception:
-                pass
+            await _check_full_equip(interaction.user, interaction.channel, profile)
         if number != 0:
             delta = f"−{abs(number)}" if number < 0 else f"+{number}"
             await interaction.followup.send(f"🏹 **{target_name}**  ×{have_after}  ({delta})")
