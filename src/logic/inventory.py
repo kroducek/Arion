@@ -431,7 +431,7 @@ async def _check_full_equip(member, channel, profile: dict) -> None:
     příkaz, který ji volá.
     """
     try:
-        from src.logic.achievements import check_full_equip_achievement
+        from src.core.dnd.achievements import check_full_equip_achievement
         await check_full_equip_achievement(
             member, channel, profile["equipment"], _active_slots(profile))
     except Exception:
