@@ -153,6 +153,15 @@ KRONIKA = {
                     "`/vyvoleni list` — Všichni zapsaní dobrodruzi"
                 ),
             },
+            "duchove": {
+                "label": "Strážní duchové",
+                "emoji": "👻",
+                "commands": (
+                    "`/duch seznam` — Tvoji strážní duchové\n"
+                    "`/duch info` — Detail konkrétního ducha\n"
+                    "`/duch slechtit` — Šlechtění dvou duchů (silnější pohltí slabšího)"
+                ),
+            },
         },
     },
     "arionbot": {
@@ -160,22 +169,83 @@ KRONIKA = {
         "emoji": "🎮",
         "color": 0x5865F2,
         "intro": "*Arion zamňouká a rozhodí po stole karty a herní kostky...*",
-        "footer": "ArionBOT · Minihry & karty",
+        "footer": "ArionBOT · Minihry, karty & utility",
         "categories": {
             "minihry": {
                 "label": "Minihry",
                 "emoji": "🎲",
                 "commands": (
-                    "*(Doplň příkazy ArionBOTa)*\n"
-                    "`/...` — popis"
+                    "`/minigames` — Rozcestník všech miniher (lobby jedním klikem)\n"
+                    "`/kostky` — Farkle (sázky, magické kostky, boss mode)\n"
+                    "`/guess` — Hádej kdo (ano/ne otázky)\n"
+                    "`/liardice` — Kostka lháře (bluffování)\n"
+                    "`/liarslots` — Liar Slots (sloty + bluff)\n"
+                    "`/sibenice` — Šibenice (hádej větu)\n"
+                    "`/blackjack` — Blackjack (sázky)"
                 ),
             },
             "karty": {
                 "label": "Karty",
                 "emoji": "🃏",
                 "commands": (
-                    "*(Doplň příkazy ArionBOTa)*\n"
-                    "`/...` — popis"
+                    "`/cards info` — Přehled systému karet\n"
+                    "`/cards inventory` — Tvoje karty\n"
+                    "`/cards show` — Detail konkrétní karty\n"
+                    "`/cards gallery` — Alba kolekcí (sady a karty)\n"
+                    "`/cards list` — Dostupné vzory karet v databázi\n"
+                    "`/cards upgrade` — Nasaď rámeček na kartu\n"
+                    "`/cards frames` — Tvoje rámečky\n"
+                    "`/cards burn` — Spal kartu za Hvězdný prach\n"
+                    "`/cards set_profile` `/cards profile` — Profilová karta"
+                ),
+            },
+            "vypravy": {
+                "label": "Výpravy karet",
+                "emoji": "🗺️",
+                "commands": (
+                    "`/cards work` — Přehled výprav (stav i dostupné expedice)\n"
+                    "`/cards work_send` — Vyšli až 3 karty na výpravu za zlatem\n"
+                    "`/cards work_status` — Stav tvé výpravy\n"
+                    "`/cards work_claim` — Vyzvedni odměnu z dokončené výpravy"
+                ),
+            },
+            "tarot": {
+                "label": "Tarot",
+                "emoji": "🔮",
+                "commands": (
+                    "`/tarot den` — Karta dne (zdarma)\n"
+                    "`/tarot solo` — Soukromý výklad (50 🪙)\n"
+                    "`/tarot session` — Veřejná session"
+                ),
+            },
+            "gold": {
+                "label": "Gold & Shop",
+                "emoji": "💰",
+                "commands": (
+                    "`/g` — Tvůj aktuální zůstatek\n"
+                    "`/gsend` — Pošli zlato hráči\n"
+                    "`/gleaderboard` — Žebříček bohatství\n"
+                    "`/gshop open` — Otevři shop"
+                ),
+            },
+            "news": {
+                "label": "News & Story",
+                "emoji": "📰",
+                "commands": (
+                    "`/news show` — Nástěnka zpráv\n"
+                    "`/story create` — Začni komunitní příběh\n"
+                    "`/story add` — Přidej větu do příběhu\n"
+                    "`/story show` — Zobraz aktuální příběh"
+                ),
+            },
+            "utility": {
+                "label": "Utility",
+                "emoji": "🛠️",
+                "commands": (
+                    "`/poll` — Vytvoř hlasování\n"
+                    "`/countdown` — Odpočet\n"
+                    "`/voice lock/unlock` — Zamkni/odemkni hlasový kanál\n"
+                    "`/voice hide/show` — Skryj/zobraz hlasový kanál"
                 ),
             },
         },
@@ -185,14 +255,13 @@ KRONIKA = {
         "emoji": "🌀",
         "color": 0x2ECC71,
         "intro": "*Arion zmizí ve stínech a otevírá bránu do Labyrintu...*",
-        "footer": "Labyrinth",
+        "footer": "Labyrinth · sociální dedukce",
         "categories": {
             "main": {
                 "label": "Příkazy",
-                "emoji": "🗺️",
+                "emoji": "🚪",
                 "commands": (
-                    "*(Doplň příkazy Labyrinthu)*\n"
-                    "`/...` — popis"
+                    "`/lobby` — Otevři lobby Door Labyrinthu (sociální dedukce, 4–10 hráčů)"
                 ),
             },
         },
@@ -226,7 +295,36 @@ KRONIKA_ADMIN = [
         "`/admin-tutorial-reset` — Reset tutoriálu hráče\n"
         "`/memory admin` — Správa vzpomínek hráčů"
     )),
+    ("👻 Strážní duchové", (
+        "`/duch pridat` — Přidá hráči nového ducha\n"
+        "`/duch xp` — Přidej duchovi XP\n"
+        "`/duch equip` `/duch unequip` — Equip/odequip ducha hráči\n"
+        "`/duch upravit` — Uprav hodnoty ducha\n"
+        "`/duch odebrat` — Trvale odebere ducha z kolekce hráče"
+    )),
+    ("🎮 ArionBOT — news & karty", (
+        "`/news add/delete` — Správa nástěnky zpráv\n"
+        "`/cards print` — Vytiskni novou kartu\n"
+        "`/cards db_add` — Přidej vzor karty do databáze\n"
+        "`/cards give_frame` — Dej rámeček hráči\n"
+        "`/cards remove_card` — Smaž kartu z inventáře\n"
+        "`/cards pool` — Dej hráči náhodnou kartu z poolu"
+    )),
 ]
+
+
+def _count_cmds(commands_text: str) -> int:
+    """Počet příkazů v textu kategorie (počítá výskyty `/…). Placeholder = 0."""
+    if "Doplň" in commands_text:
+        return 0
+    return commands_text.count("`/")
+
+
+def _world_counts(bot_key: str) -> tuple[int, int]:
+    """(počet příkazů, počet kapitol) daného světa."""
+    cats = KRONIKA[bot_key]["categories"]
+    cmds = sum(_count_cmds(c["commands"]) for c in cats.values())
+    return cmds, len(cats)
 
 
 def _build_home_embed() -> discord.Embed:
@@ -239,24 +337,41 @@ def _build_home_embed() -> discord.Embed:
         ),
         color=0xFFD700,
     )
-    embed.add_field(name="⚔️ ArionDND", value="D&D mechaniky, boj, postavy, questy", inline=True)
-    embed.add_field(name="🎮 ArionBOT", value="Minihry & karty", inline=True)
-    embed.add_field(name="🌀 Labyrinth", value="Labyrint a jeho tajemství", inline=True)
-    embed.set_footer(text="Aurionis · Act II · klikni na tlačítko")
+    dnd_c, dnd_k = _world_counts("ariondnd")
+    bot_c, bot_k = _world_counts("arionbot")
+    lab_c, lab_k = _world_counts("labyrinth")
+    embed.add_field(
+        name="⚔️ ArionDND",
+        value=f"D&D mechaniky, boj, postavy, questy\n-# {dnd_c} příkazů · {dnd_k} kapitol",
+        inline=True)
+    embed.add_field(
+        name="🎮 ArionBOT",
+        value=f"Minihry & karty\n-# {bot_c} příkazů · {bot_k} kapitol",
+        inline=True)
+    embed.add_field(
+        name="🌀 Labyrinth",
+        value=f"Labyrint a jeho tajemství\n-# {lab_c} příkazů · {lab_k} kapitol",
+        inline=True)
+    embed.set_footer(text="Aurionis · Act II · klikni na tlačítko · 🔒 Admin sekce dole")
     return embed
 
 
 def _build_bot_embed(bot_key: str, cat_key=None) -> discord.Embed:
     bot = KRONIKA[bot_key]
     if cat_key is None:
+        cmds, kap = _world_counts(bot_key)
         embed = discord.Embed(
             title=f"{bot['emoji']} {bot['label']} — Kronika",
             description=bot["intro"],
             color=bot["color"],
         )
-        lines = [f"{c['emoji']} **{c['label']}**" for c in bot["categories"].values()]
+        lines = []
+        for c in bot["categories"].values():
+            n = _count_cmds(c["commands"])
+            badge = f" · {n}" if n else ""
+            lines.append(f"{c['emoji']} **{c['label']}**{badge}")
         embed.add_field(name="Vyber kapitolu níže 👇", value="\n".join(lines), inline=False)
-        embed.set_footer(text=bot["footer"])
+        embed.set_footer(text=f"{bot['footer']}  ·  {cmds} příkazů v {kap} kapitolách")
         return embed
 
     cat = bot["categories"][cat_key]
