@@ -67,6 +67,7 @@ DND_COGS = [
     "src.core.dnd.achievements",
     "src.core.dnd.perks",
     "src.core.dnd.blacksmith",
+    "src.core.dnd.guilds",
     
     # D&D logika / postavy
     "src.logic.profile",
