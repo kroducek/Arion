@@ -39,6 +39,7 @@ if _data_dir_override:
     _paths.QUEST_LOG        = _paths.data("quest_log.json")
     _paths.SHOP             = _paths.data("shop.json")
     _paths.PARTIES          = _paths.data("parties.json")
+    _paths.GUILDS           = _paths.data("guilds.json")
     _paths.TOURNAMENT       = _paths.data("tournament.json")
     _paths.COMBAT_STATE     = _paths.data("combat_state.json")
     _paths.REPUTATION       = _paths.data("reputation.json")
