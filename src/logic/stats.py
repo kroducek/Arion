@@ -162,6 +162,7 @@ def _ensure_fields(p: dict) -> None:
     p.setdefault("mana_cur",        0)
     p.setdefault("fury_max",        0)
     p.setdefault("fury_cur",        0)
+    p.setdefault("statuses", [])
     p.setdefault("vliv_svetlo",     0)
     p.setdefault("vliv_temnota",    0)
     p.setdefault("vliv_rovnovaha",  0)
@@ -449,6 +450,19 @@ def _build_quicksheet_embed(
         ]
         lines.append("  ·  ".join(parts))
 
+    # ── Aktivní statusy ───────────────────────────────────────────────────────
+    active_statuses = p.get("statuses") or []
+    if active_statuses:
+        try:
+            from src.core.dnd.blacksmith import describe_statuses
+            st_desc = describe_statuses(p)
+        except Exception:
+            st_desc = ""
+        if st_desc:
+            lines.append("")
+            lines.append("🩸 **Aktivní statusy**")
+            lines.append(st_desc)
+
     embed = discord.Embed(
         title=f"📋  *{char_name}*  —  Quick Sheet",
         description="\n".join(lines),
@@ -597,6 +611,62 @@ class QuickSheetView(discord.ui.View):
         items_db = _load_items_db()
         embed = _build_quicksheet_embed(interaction.user, p, items_db)
         await interaction.response.edit_message(embed=embed, view=QuickSheetView(self.user_id))
+
+    @discord.ui.button(label="🩹 Vyléčit statusy", style=discord.ButtonStyle.green, row=1)
+    async def btn_cure(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._guard(interaction):
+            return
+        data = _load()
+        p    = data.get(str(self.user_id), {})
+        _ensure_fields(p)
+        if not (p.get("statuses") or []):
+            return await interaction.response.send_message("✨ Žádné aktivní statusy.", ephemeral=True)
+        try:
+            from src.core.dnd.blacksmith import describe_statuses
+            desc = describe_statuses(p)
+        except Exception:
+            desc = ""
+        await interaction.response.send_message(
+            f"🩹 **Vyléčit statusy** — vyber typ léčení:\n{desc}",
+            view=_CureView(self.user_id), ephemeral=True)
+
+
+class _CureView(discord.ui.View):
+    """Volba typu léčení statusů (fyzické/magické/vše)."""
+    def __init__(self, user_id: int):
+        super().__init__(timeout=120)
+        self.user_id = user_id
+
+    async def _cure(self, interaction: discord.Interaction, cure_type: str):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("❌ Není tvoje.", ephemeral=True)
+        try:
+            from src.core.dnd.blacksmith import cure_statuses
+        except Exception:
+            return await interaction.response.send_message("❌ Status engine nedostupný.", ephemeral=True)
+        data = _load()
+        p    = data.get(str(self.user_id), {})
+        _ensure_fields(p)
+        if cure_type == "vse":
+            removed = [s.get("status") for s in p.get("statuses", [])]
+            p["statuses"] = []
+        else:
+            removed = cure_statuses(p, cure_type)
+        _save(data)
+        await interaction.response.edit_message(
+            content=f"🩹 Sundáno: {', '.join(removed) if removed else 'nic'}.", view=None)
+
+    @discord.ui.button(label="Fyzické", style=discord.ButtonStyle.primary)
+    async def cure_fyz(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._cure(interaction, "fyzické")
+
+    @discord.ui.button(label="Magické", style=discord.ButtonStyle.primary)
+    async def cure_mag(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._cure(interaction, "magické")
+
+    @discord.ui.button(label="Vše", style=discord.ButtonStyle.secondary)
+    async def cure_all(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._cure(interaction, "vse")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

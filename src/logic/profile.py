@@ -50,6 +50,7 @@ def _ensure_player_fields(profile: dict) -> None:
     profile.setdefault("mana_cur",   0)
     profile.setdefault("fury_max",   0)
     profile.setdefault("fury_cur",   0)
+    profile.setdefault("statuses",   [])   # aktivní statusy (jed/krvácení/…)
     profile.setdefault("vliv_svetlo",    0)
     profile.setdefault("vliv_temnota",   0)
     profile.setdefault("vliv_rovnovaha", 0)
@@ -335,6 +336,17 @@ class Profile(commands.Cog):
             fury_display_str = f"{fury_cur}/{fury_max}"
         lines.append(f"{FU_EMO} Furioka:  {fury_bar}  ·  {fury_display_str}")
         lines.append(f"·  **{level_label(level)}**  ·  {XP_EMO}  {xp_bar}  ·  {xp_str}{sp_str}")
+
+        # Aktivní statusy (jed/krvácení/…)
+        active_statuses = profile.get("statuses") or []
+        if active_statuses:
+            try:
+                from src.core.dnd.blacksmith import load_statuses
+                _sreg = load_statuses()
+            except Exception:
+                _sreg = {}
+            icons = "".join(_sreg.get(s.get("status"), {}).get("emoji", "•") for s in active_statuses)
+            lines.append(f"🩸 Statusy:  {icons}  *(detail v `/quicksheet`)*")
 
         # Vliv
         lines.append(f"{VLIV_EMO}  {SVETLO_EMO} **{v_svetlo}**  ·  {TEMNOTA_EMO} **{v_temnota}**  ·  {ROVNO_EMO} **{v_rovno}**")
