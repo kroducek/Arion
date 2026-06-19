@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 EQUIPMENT_SLOTS = [
     "hand_l", "hand_r",
-    "helmet", "headwear", "armor", "gloves", "wrists", "kalhoty", "boots", "cloak", "belt",
+    "helmet", "armor", "gloves", "kalhoty", "boots", "cloak", "belt",
     "ring_1", "ring_2",
     "amulet_1",
 ]
@@ -25,10 +25,8 @@ SLOT_LABELS = {
     "hand_l":   "Zbraň L",
     "hand_r":   "Zbraň P",
     "helmet":   "Hlava",
-    "headwear": "Obličej",
     "armor":    "Zbroj",
     "gloves":   "Rukavice",
-    "wrists":   "Zápěstí",
     "kalhoty":  "Kalhoty",
     "boots":    "Boty",
     "cloak":    "Plášť",
@@ -42,10 +40,8 @@ SLOT_EMOJIS = {
     "hand_l":   "🗡️",
     "hand_r":   "🗡️",
     "helmet":   "🪖",
-    "headwear": "👓",
     "armor":    "🛡️",
     "gloves":   "🧤",
-    "wrists":   "🔗",
     "kalhoty":  "👖",
     "boots":    "👢",
     "cloak":    "🧥",
@@ -97,6 +93,7 @@ EMBED_COLOR  = 0x2b2d31
 PAGE_SIZE    = 15
 BOH_ITEM_ID  = "bag_of_holding"
 BOH_COLOR    = 0x6B4226   # hnědá — barva pytle
+TOULEC_ITEM_ID = "toulec"   # storage item na munici (DM ho vytvoří/dá hráči)
 
 # ── Storage systém ────────────────────────────────────────────────────────────
 BASE_INV_SLOTS = 10                                  # základní sloty (+ STR)
@@ -160,14 +157,19 @@ def _ensure_inv_fields(profile: dict) -> dict:
     profile.setdefault("ring_slots", 2)
     profile["amulet_slots"] = 1   # jediný amulet slot
     # Zajisti že všechny sloty existují (i v případě starého/částečného profilu)
-    for s in ["hand_l", "hand_r", "helmet", "headwear", "armor",
-              "gloves", "wrists", "kalhoty", "boots", "cloak", "belt"]:
+    for s in ["hand_l", "hand_r", "helmet", "armor",
+              "gloves", "kalhoty", "boots", "cloak", "belt"]:
         profile["equipment"].setdefault(s, None)
     for i in range(1, profile["ring_slots"] + 1):
         profile["equipment"].setdefault(f"ring_{i}", None)
     profile["equipment"].setdefault("amulet_1", None)
     # Migrace: zrušený ammo slot — munice teď žije v Toulci, ukazatel jen zahoď
     profile["equipment"].pop("ammo", None)
+    # Migrace: zrušené sloty wrists/headwear — případné itemy vrať do inventáře
+    for dead in ("wrists", "headwear"):
+        gone = profile["equipment"].pop(dead, None)
+        if gone:
+            _add_to_inventory(profile["inventory"], gone, 1)
     # Migrace: zrušené druhé+ amulet sloty — případné itemy vrať do inventáře
     for key in [k for k in list(profile["equipment"])
                 if k.startswith("amulet_") and k != "amulet_1"]:
@@ -289,9 +291,9 @@ def _owns_storage_item(profile: dict, item_id: str) -> bool:
 
 
 def _available_storages(profile: dict, items_db: dict) -> list[str]:
-    """Vrátí seznam storage klíčů které hráč může používat (inventory + Toulec + vlastněné storage itemy)."""
-    keys = ["inventory", "toulec"]   # Toulec je vestavěný (každý hráč má na munici)
-    seen = set(keys)
+    """Vrátí seznam storage klíčů které hráč může používat (inventory + vlastněné storage itemy, vč. Toulce)."""
+    keys = ["inventory"]
+    seen = {"inventory"}
     # Projdi všechny itemy které hráč má a najdi storage typy
     for stor in profile.get("storages", {}).values():
         for entry in stor:
@@ -338,9 +340,11 @@ def _storage_visual(storage_key: str, items_db: dict) -> dict:
 def _sort_ammo_to_toulec(profile: dict, items_db: dict) -> bool:
     """Přesune veškerou munici (kategorie 'náboje') z inventáře do Toulce.
 
-    Toulec je vestavěné úložiště jen na munici — jakmile se náboje objeví
-    v inventáři, automaticky se sem sloučí. Vrací True pokud se něco přesunulo.
+    Toulec je storage item (id 'toulec'). Auto-sort proběhne JEN když ho hráč
+    vlastní — jinak munice zůstane v inventáři. Vrací True pokud se něco přesunulo.
     """
+    if not _owns_storage_item(profile, TOULEC_ITEM_ID):
+        return False
     inv = profile.setdefault("storages", {}).setdefault("inventory", [])
     profile["inventory"] = inv  # drž živou referenci
     moved = False
@@ -349,7 +353,7 @@ def _sort_ammo_to_toulec(profile: dict, items_db: dict) -> bool:
         is_ammo = (entry.get("type") == "registered"
                    and items_db.get(entry.get("id"), {}).get("category") == "náboje")
         if is_ammo:
-            toulec = profile["storages"].setdefault("toulec", [])
+            toulec = profile["storages"].setdefault(TOULEC_ITEM_ID, [])
             _add_to_inventory(toulec, entry["id"], entry.get("qty", 1))
             moved = True
         else:
@@ -374,6 +378,39 @@ def _parse_requires(raw: str) -> dict[str, int]:
             except ValueError:
                 pass
     return result
+
+
+# Klíče pro requires / stat_bonus (staty + Vliv) — pro autocomplete.
+REQUIRE_KEYS = ["STR", "DEX", "CON", "INT", "WIS", "CHA", "INS",
+                "SVETLO", "TEMNOTA", "ROVNOVAHA"]
+
+_ATK_TOKEN_RE = re.compile(r"^\d+(d\d+)?$", re.IGNORECASE)
+
+def _valid_attack(expr: str) -> bool:
+    """True pro číslo, kostky nebo jejich součet: 12, 1d8, 4d6, 2d6+1d4."""
+    expr = expr.replace(" ", "")
+    if not expr:
+        return False
+    return all(_ATK_TOKEN_RE.match(tok) for tok in expr.split("+"))
+
+
+async def _ac_requires(interaction: discord.Interaction, current: str):
+    """Autocomplete pro requires/stat_bonus — postupně nabízí klíče (staty + Vliv)."""
+    parts = current.split()
+    # Pokud poslední token je rozepsaný klíč (bez ':'), doplň ho; jinak nabídni další.
+    if parts and ":" not in parts[-1]:
+        prefix = " ".join(parts[:-1])
+        frag   = parts[-1].upper()
+        base   = (prefix + " ") if prefix else ""
+        keys   = [k for k in REQUIRE_KEYS if k.startswith(frag)] or REQUIRE_KEYS
+    else:
+        base = (current + " ") if current.strip() else ""
+        keys = REQUIRE_KEYS
+    out = []
+    for k in keys:
+        val = f"{base}{k}:"
+        out.append(app_commands.Choice(name=val[:100], value=val[:100]))
+    return out[:25]
 
 def _find_inv_entry(inventory: list, item_key: str) -> dict | None:
     """Najde položku v inventáři dle ID (registrovaný) nebo jména (volný — legacy)."""
@@ -440,8 +477,8 @@ def _active_amulet_slots(profile: dict) -> list[str]:
     return ["amulet_1"]   # jeden pevný amulet slot
 
 def _active_slots(profile: dict) -> list[str]:
-    base = ["hand_l", "hand_r", "helmet", "headwear", "armor",
-            "gloves", "wrists", "kalhoty", "boots", "cloak", "belt"]
+    base = ["hand_l", "hand_r", "helmet", "armor",
+            "gloves", "kalhoty", "boots", "cloak", "belt"]
     return base + _active_ring_slots(profile) + _active_amulet_slots(profile)
 
 
@@ -1027,6 +1064,23 @@ def _build_item_detail_embed(entry: dict, items_db: dict) -> discord.Embed:
 
     if stat_lines:
         embed.add_field(name="Vlastnosti", value="\n".join(stat_lines), inline=False)
+
+    # Runy vyryté na TÉTO instanci itemu (mimo databázi — viz blacksmith.py)
+    runes = entry.get("runes")
+    if isinstance(runes, list) and runes:
+        try:
+            from src.core.dnd.blacksmith import load_runes
+            reg = load_runes()
+        except Exception:
+            reg = {}
+        rune_lines = []
+        for rid in runes:
+            r = reg.get(rid, {})
+            emoji = r.get("emoji", "🔹")
+            nm    = r.get("name", rid)
+            dmg   = f"  +{r['bonus_dmg']} dmg" if r.get("bonus_dmg") else ""
+            rune_lines.append(f"{emoji} **{nm}**{dmg} — {r.get('desc', '—')}")
+        embed.add_field(name="🔮 Runy", value="\n".join(rune_lines), inline=False)
 
     # Požadavky
     req = db_item.get("requires")
@@ -1935,8 +1989,12 @@ class Inventory(commands.Cog):
             return
         _ensure_inv_fields(profile)
         items_db = _load_items()
-        _sort_ammo_to_toulec(profile, items_db)   # sjednoť munici do Toulce
-        toulec = profile.setdefault("storages", {}).setdefault("toulec", [])
+        _sort_ammo_to_toulec(profile, items_db)   # munice do Toulce (pokud ho hráč má)
+        # Munice je v Toulci (pokud ho vlastní), jinak zůstává v inventáři
+        if _owns_storage_item(profile, TOULEC_ITEM_ID):
+            store = profile.setdefault("storages", {}).setdefault(TOULEC_ITEM_ID, [])
+        else:
+            store = profile["inventory"]
 
         if items_db.get(item, {}).get("category") != "náboje":
             nm = items_db.get(item, {}).get("name", item)
@@ -1944,19 +2002,19 @@ class Inventory(commands.Cog):
             return
 
         def _count() -> int:
-            return sum(e.get("qty", 1) for e in toulec
+            return sum(e.get("qty", 1) for e in store
                        if e.get("type") == "registered" and e.get("id") == item)
 
         have = _count()
         if have <= 0:
             nm = items_db.get(item, {}).get("name", item)
-            await interaction.followup.send(f"❌ **{nm}** nemáš v Toulci.")
+            await interaction.followup.send(f"❌ **{nm}** nemáš.")
             return
 
         if number < 0:
-            _remove_from_inventory(toulec, item, min(have, -number))
+            _remove_from_inventory(store, item, min(have, -number))
         elif number > 0:
-            _add_to_inventory(toulec, item, number)
+            _add_to_inventory(store, item, number)
 
         have_after = _count()
         _save_profiles(profiles)
@@ -1978,7 +2036,7 @@ class Inventory(commands.Cog):
         category="Kategorie itemu.",
         slot="Kam lze equipnout (prázdné = nelze).",
         hand_type="Jednoruční / obouruční (jen pro zbraně).",
-        atk="Útočná hodnota (např. 12).",
+        atk="Útočná hodnota — číslo nebo kostky (12, 1d8, 4d6, 2d6+1d4).",
         defense="Obranná hodnota (např. 3).",
         hunger_restore="Kolik hladu obnoví při použití.",
         hp_restore="Kolik HP obnoví při použití (lektvary života).",
@@ -2001,10 +2059,8 @@ class Inventory(commands.Cog):
         slot=[
             app_commands.Choice(name="Zbraň",     value="weapon"),
             app_commands.Choice(name="Hlava",     value="helmet"),
-            app_commands.Choice(name="Obličej",   value="headwear"),
             app_commands.Choice(name="Zbroj",     value="armor"),
             app_commands.Choice(name="Rukavice",  value="gloves"),
-            app_commands.Choice(name="Zápěstí",   value="wrists"),
             app_commands.Choice(name="Kalhoty",   value="kalhoty"),
             app_commands.Choice(name="Boty",      value="boots"),
             app_commands.Choice(name="Plášť",     value="cloak"),
@@ -2018,12 +2074,13 @@ class Inventory(commands.Cog):
             app_commands.Choice(name="Obouruční",  value="two"),
         ],
     )
-    @app_commands.autocomplete(required_perk=_ac_vyzboj_perk)
+    @app_commands.autocomplete(required_perk=_ac_vyzboj_perk,
+                               requires=_ac_requires, stat_bonus=_ac_requires)
     async def inv_db_add(
         self, interaction: discord.Interaction,
         item_id: str, name: str, category: str,
         slot: str = "none", hand_type: Optional[str] = None,
-        atk: int = 0, defense: int = 0,
+        atk: str = "", defense: int = 0,
         hunger_restore: int = 0, hp_restore: int = 0,
         mana_restore: int = 0, mana_cost: int = 0,
         requires: Optional[str] = None,
@@ -2056,7 +2113,14 @@ class Inventory(commands.Cog):
             "consumable": consumable,
         }
         if hand_type:          item["hand_type"]      = hand_type
-        if atk > 0:            item["atk"]            = atk
+        if atk:
+            atk = atk.strip()
+            if not _valid_attack(atk):
+                await interaction.followup.send(
+                    "❌ Neplatná útočná hodnota. Použij číslo nebo kostky "
+                    "(např. `12`, `1d8`, `4d6`, `2d6+1d4`).")
+                return
+            item["atk"] = atk
         if defense > 0:        item["def"]            = defense
         if hunger_restore > 0: item["hunger_restore"] = hunger_restore
         if hp_restore > 0:     item["hp_restore"]     = hp_restore
@@ -2073,7 +2137,8 @@ class Inventory(commands.Cog):
         if stat_bonus:
             for k, v in _parse_requires(stat_bonus).items():
                 if v != 0:
-                    equip_bonus[k] = v
+                    # SVETLO/TEMNOTA/ROVNOVAHA → vliv_*, ostatní = staty
+                    equip_bonus[VLIV_REQUIRES.get(k, k)] = v
         if equip_bonus:    item["equip_bonus"]    = equip_bonus
         if required_perk:  item["required_perk"]  = required_perk
         # Storage item — capacity 0 = běžný item, -1 = unlimited (BoH styl)
@@ -2099,7 +2164,7 @@ class Inventory(commands.Cog):
         slot="Nový equip slot (prázdné = beze změny).",
         hand_type="Jednoruční/obouruční, nebo — pro odebrání (prázdné = beze změny).",
         desc="Nový popis (prázdné = beze změny).",
-        atk="Nová útočná hodnota (0 = odebrat).",
+        atk="Útočná hodnota — číslo/kostky (např. 4d6); prázdné=beze změny, 0=odebrat.",
         defense="Nová obranná hodnota (0 = odebrat).",
         hunger_restore="Obnova hladu při použití (0 = odebrat).",
         hp_restore="Obnova HP při použití (0 = odebrat).",
@@ -2122,10 +2187,8 @@ class Inventory(commands.Cog):
         slot=[
             app_commands.Choice(name="Zbraň",              value="weapon"),
             app_commands.Choice(name="Hlava",              value="helmet"),
-            app_commands.Choice(name="Obličej",            value="headwear"),
             app_commands.Choice(name="Zbroj",              value="armor"),
             app_commands.Choice(name="Rukavice",           value="gloves"),
-            app_commands.Choice(name="Zápěstí",            value="wrists"),
             app_commands.Choice(name="Kalhoty",            value="kalhoty"),
             app_commands.Choice(name="Boty",               value="boots"),
             app_commands.Choice(name="Plášť",              value="cloak"),
@@ -2140,7 +2203,8 @@ class Inventory(commands.Cog):
             app_commands.Choice(name="— (odebrat)", value="clear"),
         ],
     )
-    @app_commands.autocomplete(item_id=_ac_database_item, required_perk=_ac_vyzboj_perk)
+    @app_commands.autocomplete(item_id=_ac_database_item, required_perk=_ac_vyzboj_perk,
+                               requires=_ac_requires, stat_bonus=_ac_requires)
     async def inv_db_edit(
         self, interaction: discord.Interaction,
         item_id: str,
@@ -2150,7 +2214,7 @@ class Inventory(commands.Cog):
         hand_type: Optional[str] = None,
         desc: Optional[str] = None,
         lore_drop: Optional[str] = None,
-        atk: Optional[int] = None,
+        atk: Optional[str] = None,
         defense: Optional[int] = None,
         hunger_restore: Optional[int] = None,
         hp_restore: Optional[int] = None,
@@ -2191,8 +2255,16 @@ class Inventory(commands.Cog):
         if consumable is not None: item["consumable"] = consumable
         if stackable  is not None: item["stackable"]  = stackable
         if atk is not None:
-            if atk > 0:  item["atk"] = atk
-            else:        item.pop("atk", None)
+            atk = atk.strip()
+            if atk in ("", "0", "clear"):
+                item.pop("atk", None)
+            elif _valid_attack(atk):
+                item["atk"] = atk
+            else:
+                await interaction.followup.send(
+                    "❌ Neplatná útočná hodnota. Použij číslo nebo kostky "
+                    "(např. `12`, `1d8`, `4d6`).")
+                return
         if defense is not None:
             if defense > 0: item["def"] = defense
             else:           item.pop("def", None)
@@ -2221,8 +2293,9 @@ class Inventory(commands.Cog):
                 else:               eb.pop("mana_max", None)
             if stat_bonus is not None:
                 for k, v in _parse_requires(stat_bonus).items():
-                    if v != 0: eb[k]         = v
-                    else:      eb.pop(k, None)
+                    bk = VLIV_REQUIRES.get(k, k)   # SVETLO/TEMNOTA/ROVNOVAHA → vliv_*
+                    if v != 0: eb[bk] = v
+                    else:      eb.pop(bk, None)
             if not eb:
                 item.pop("equip_bonus", None)
         if required_perk is not None:
