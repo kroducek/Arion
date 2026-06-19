@@ -217,8 +217,7 @@ QUEST_LOG     = data("quest_log.json")
 SHOP          = data("shop.json")
 SHOPS         = data("shops.json")
 PARTIES       = data("parties.json")
-GUILDS        =
-data("guilds.json")
+GUILDS        = data("guilds.json")
 TOURNAMENT    = data("tournament.json")
 COMBAT_STATE  = data("combat_state.json")
 
