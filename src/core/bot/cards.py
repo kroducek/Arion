@@ -15,7 +15,7 @@ from src.utils.json_utils import load_json, save_json
 from src.utils.embeds import create_error_embed
 from src.logic.profile import load_data as profile_load, save_data as profile_save
 from src.logic.inventory import _load_profiles as inv_load, _save_profiles as inv_save
-from src.logic.economy import _load_economy as load_economy, _save_economy as save_economy
+from src.logic.economy import _load_economy as load_economy, _save_economy as save_economy, add_balance
 
 CARDS_WORK = _data("cards_work.json")
 
@@ -935,23 +935,8 @@ class Cards(commands.Cog):
         total_dust = max(1, int(base_dust * mult))
         card_name = card.get("name", unique_id)
 
-        # Přidej prach do inventáře
-        inv_profiles = inv_load()
-        inv_profile = inv_profiles.get(uid) or {"xp": 0, "level": 1, "balance": 0, "bank": 0}
-        if "inventory" not in inv_profile:
-            inv_profile["inventory"] = []
-
-        dust_added = False
-        for item in inv_profile["inventory"]:
-            if item.get("name") == "Hvězdný prach" and item.get("type") == "free":
-                item["qty"] = item.get("qty", 0) + total_dust
-                dust_added = True
-                break
-        if not dust_added:
-            inv_profile["inventory"].append({"type": "free", "name": "Hvězdný prach", "qty": total_dust})
-
-        inv_profiles[uid] = inv_profile
-        inv_save(inv_profiles)
+        # Připiš prach do economy (nová měna stardust ✨)
+        add_balance(uid, total_dust, "stardust")
 
         # Smaž kartu
         del inv[unique_id]
@@ -1316,4 +1301,49 @@ async def setup(bot):
     """Registruje cog do bota."""
     ensure_cards_data()
     ensure_frames_data()
+    _migrate_stardust_to_economy()
     await bot.add_cog(Cards(bot))
+
+
+def _migrate_stardust_to_economy():
+    """
+    Jednorázový sběr: starý 'Hvězdný prach' jako free item v inventářích
+    převede na novou měnu stardust v economy a item odstraní.
+    Idempotentní — po převedení už žádné itemy nezůstanou, takže opakované
+    spuštění (každý restart) nic neudělá.
+    """
+    try:
+        profiles = inv_load()
+    except Exception:
+        return
+
+    changed = False
+    for uid, profile in profiles.items():
+        if not isinstance(profile, dict):
+            continue
+        # Prach může být v profile["inventory"] i ve storages["inventory"]
+        lists = []
+        if isinstance(profile.get("inventory"), list):
+            lists.append(profile["inventory"])
+        storages = profile.get("storages")
+        if isinstance(storages, dict) and isinstance(storages.get("inventory"), list):
+            if storages["inventory"] is not profile.get("inventory"):
+                lists.append(storages["inventory"])
+
+        total = 0
+        for inv in lists:
+            kept = []
+            for item in inv:
+                if item.get("type") == "free" and item.get("name") == "Hvězdný prach":
+                    total += int(item.get("qty", 0))
+                else:
+                    kept.append(item)
+            inv[:] = kept  # uprav list in-place
+
+        if total > 0:
+            add_balance(uid, total, "stardust")
+            changed = True
+
+    if changed:
+        inv_save(profiles)
+        print("[cards] Migrace Hvězdného prachu do economy dokončena.")

@@ -38,8 +38,8 @@ def _save_economy(data: dict) -> None:
 #   add_balance(uid, dust, "stardust")       # spálení karty
 
 COIN_GOLD     = COIN                      # 🟡 <:goldcoin:1490171741237018795>
-COIN_SILVER   = "⚪"                       # TODO: nahradit za <:silvercoin:ID>
-COIN_STARDUST = "✨"                       # TODO: nahradit za <:stardust:ID>
+COIN_SILVER   = "<:silvercoin:1518334462327390298>"   # ⚪ stříbrňáky
+COIN_STARDUST = "<:stardust:1518334499283533824>"     # ✨ hvězdný prach
 
 _CURRENCY_FILES = {
     "gold":     ECONOMY_FILE,

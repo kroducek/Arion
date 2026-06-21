@@ -6,6 +6,7 @@ from typing import Optional
 from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, ITEMS as ITEMS_FILE, PLAYER_PERKS, ACHIEVEMENTS
 from src.utils.json_utils import load_json, save_json
 from src.logic.stats import get_xp_cap, level_label, add_xp
+from src.logic.economy import get_balance, set_balance, COIN_SILVER, COIN_STARDUST
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DATOVÁ VRSTVA
@@ -281,6 +282,8 @@ class Profile(commands.Cog):
         _ensure_player_fields(profile)
         economy  = load_economy()
         balance  = economy.get(user_id, 0)
+        silver_bal   = get_balance(user_id, "silver")
+        stardust_bal = get_balance(user_id, "stardust")
         items_db = _load_items()
 
         # ── Data ──────────────────────────────────────────────────────────────
@@ -320,7 +323,8 @@ class Profile(commands.Cog):
         lines = []
 
         # Základní info
-        lines.append(f"🎖️ Rank: **{profile.get('rank', 'F3')}**  ·  👤 Jméno: **{char_name}**  ·  {COIN} **{balance}** zlaťáků")
+        lines.append(f"🎖️ Rank: **{profile.get('rank', 'F3')}**  ·  👤 Jméno: **{char_name}**")
+        lines.append(f"-# {COIN} **{balance}**  ·  {COIN_SILVER} **{silver_bal}**  ·  {COIN_STARDUST} **{stardust_bal}**")
         if equipped_spirit:
             spirit_fury_str = f"+{equipped_spirit['fury']}" if equipped_spirit["fury"] > 0 else str(equipped_spirit["fury"])
             lines.append(f"-# {SPIRIT_EMO} *Strážný duch: {equipped_spirit['name']} ({spirit_fury_str} {FU_EMO})*")
@@ -858,6 +862,11 @@ class Profile(commands.Cog):
             if uid in economy:
                 del economy[uid]
                 changes.append("zlaté resetovány")
+
+            if get_balance(member.id, "silver") or get_balance(member.id, "stardust"):
+                set_balance(member.id, 0, "silver")
+                set_balance(member.id, 0, "stardust")
+                changes.append("stříbro a prach resetovány")
 
             if uid in player_perks:
                 del player_perks[uid]
