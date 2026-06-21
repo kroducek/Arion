@@ -167,81 +167,171 @@ async def my_applicant_autocomplete(interaction, current: str) -> List[app_comma
         return []
 
 
+async def my_pending_apps_autocomplete(interaction, current: str) -> List[app_commands.Choice[str]]:
+    """Guildy, kam má hráč čekající přihlášku (pro /guild_withdraw)."""
+    try:
+        cog = _get_cog(interaction)
+        if not cog:
+            return []
+        uid = interaction.user.id
+        cur = (current or "").lower()
+        guilds = cog.guild_db.list_all_guilds()
+        return [
+            app_commands.Choice(name=n, value=n)
+            for n, d in guilds.items()
+            if uid in d.get("applications", []) and cur in n
+        ][:25]
+    except Exception:
+        return []
+
+
 # ============================================================
 # INVITE ACCEPT VIEW (DM pozvánka)
 # ============================================================
 
-class GuildInviteView(discord.ui.View):
-    """View pro přijetí/zamítnutí pozvánky do guildy (posílá se do DM)."""
+class GuildInviteButton(
+    discord.ui.DynamicItem[discord.ui.Button],
+    template=r"gi:(?P<action>a|d):(?P<user>\d+):(?P<guild>.+)",
+):
+    """
+    Persistentní tlačítko pozvánky do guildy.
 
-    def __init__(self, bot, guild_db: GuildManager, guild_name: str, user_id: int):
-        super().__init__(timeout=86400)  # 24 h
-        self.bot = bot
-        self.guild_db = guild_db
-        self.guild_name = guild_name
+    Stav (guilda + komu) je zakódovaný v custom_id, takže tlačítka
+    fungují i po restartu bota (na rozdíl od klasického View s timeoutem).
+    Registruje se přes bot.add_dynamic_items(GuildInviteButton) v cog_load.
+    Vyžaduje discord.py >= 2.4.
+    """
+
+    def __init__(self, action: str, user_id: int, guild_name: str):
+        self.action = action
         self.user_id = user_id
+        self.guild_name = guild_name
+        is_accept = action == "a"
+        super().__init__(
+            discord.ui.Button(
+                label="Přijmout" if is_accept else "Zamítnout",
+                style=discord.ButtonStyle.green if is_accept else discord.ButtonStyle.red,
+                emoji="✅" if is_accept else "✖️",
+                custom_id=f"gi:{action}:{user_id}:{guild_name}",
+            )
+        )
 
-    @discord.ui.button(label="Přijmout", style=discord.ButtonStyle.green, emoji="✅")
-    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(match["action"], int(match["user"]), match["guild"])
+
+    async def callback(self, interaction: discord.Interaction):
+        cog = interaction.client.get_cog("Guilds")
+        if not cog:
+            await interaction.response.send_message("⚠️ Guild systém není načtený.", ephemeral=True)
+            return
+        db = cog.guild_db
+
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("❌ Toto není pro tebe!", ephemeral=True)
             return
 
-        # Exkluzivita — nesmí už být v jiné guildě
-        current = self.guild_db.get_user_guild(self.user_id)
+        # Zamítnutí
+        if self.action == "d":
+            db.remove_from_whitelist(self.guild_name, self.user_id)
+            await interaction.response.edit_message(
+                content="✖️ Pozvánku jsi odmítl/a.", embed=None, view=None
+            )
+            return
+
+        # Přijetí — exkluzivita
+        current = db.get_user_guild(self.user_id)
         if current:
             await interaction.response.send_message(
                 embed=create_error_embed(
                     "❌ Už Jsi v Guildě",
                     f"Jsi členem **{current}**. Nejdřív ji opusť (`/guild_leave`)."
                 ),
-                ephemeral=True
+                ephemeral=True,
             )
             return
 
-        if self.guild_db.is_full(self.guild_name):
+        if not db.get_guild(self.guild_name):
+            await interaction.response.edit_message(
+                content="⚠️ Tahle guilda už neexistuje.", embed=None, view=None
+            )
+            return
+
+        if db.is_full(self.guild_name):
             await interaction.response.send_message(
                 embed=create_error_embed("❌ Guilda Je Plná", f"**{self.guild_name}** dosáhla kapacity."),
-                ephemeral=True
+                ephemeral=True,
             )
             return
 
-        if not self.guild_db.add_member(self.guild_name, self.user_id):
+        if not db.add_member(self.guild_name, self.user_id):
             await interaction.response.send_message(
                 embed=create_error_embed("❌ Nepodařilo Se", "Vstup do guildy selhal."),
-                ephemeral=True
+                ephemeral=True,
             )
             return
 
         # Přidat do threadu
-        guild = self.guild_db.get_guild(self.guild_name)
+        guild = db.get_guild(self.guild_name)
         thread_id = guild.get("thread_id") if guild else None
         if thread_id:
-            thread = self.bot.get_channel(thread_id)
             try:
+                thread = cog.bot.get_channel(thread_id)
                 if thread:
                     await thread.add_user(interaction.user)
             except Exception:
                 pass
 
-        await interaction.response.send_message(
-            embed=create_success_embed(
-                "🏰 Vítej v Guildě!",
-                f"Přijal/a jsi pozvánku do **{self.guild_name}**!"
-            ),
-            ephemeral=True
+        await interaction.response.edit_message(
+            content=f"🏰 Vítej v **{self.guild_name}**! Přijal/a jsi pozvánku.",
+            embed=None,
+            view=None,
         )
-        await interaction.message.edit(view=None)
 
-    @discord.ui.button(label="Zamítnout", style=discord.ButtonStyle.red, emoji="✖️")
-    async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user_id:
+
+def build_guild_invite_view(user_id: int, guild_name: str) -> discord.ui.View:
+    """Sestaví View se dvěma persistentními tlačítky pozvánky."""
+    view = discord.ui.View(timeout=None)
+    view.add_item(GuildInviteButton("a", user_id, guild_name))
+    view.add_item(GuildInviteButton("d", user_id, guild_name))
+    return view
+
+
+# ============================================================
+# CONFIRM VIEW (potvrzení nevratných akcí)
+# ============================================================
+
+class ConfirmView(discord.ui.View):
+    """Jednoduché potvrzení 'Opravdu?' pro nevratné akce."""
+
+    def __init__(self, author_id: int, confirm_label: str = "Ano, opravdu",
+                 confirm_style: discord.ButtonStyle = discord.ButtonStyle.danger):
+        super().__init__(timeout=60)
+        self.author_id = author_id
+        self.value: Optional[bool] = None
+        self.confirm.label = confirm_label
+        self.confirm.style = confirm_style
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
             await interaction.response.send_message("❌ Toto není pro tebe!", ephemeral=True)
-            return
-        # Úklid whitelistu
-        self.guild_db.remove_from_whitelist(self.guild_name, self.user_id)
-        await interaction.response.send_message("❌ Pozvánku jsi odmítl/a.", ephemeral=True)
-        await interaction.message.edit(view=None)
+            return False
+        return True
+
+    @discord.ui.button(label="Ano, opravdu", style=discord.ButtonStyle.danger)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = True
+        self.stop()
+        await interaction.response.edit_message(content="⏳ Provádím…", embed=None, view=None)
+
+    @discord.ui.button(label="Zrušit", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = False
+        self.stop()
+        await interaction.response.edit_message(content="✖️ Zrušeno.", embed=None, view=None)
+
+    async def on_timeout(self):
+        self.value = False
 
 
 # ============================================================
@@ -362,6 +452,15 @@ class Guilds(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.guild_db = GuildManager()
+
+    async def cog_load(self):
+        # Registrace persistentních tlačítek pozvánek (přežijí restart bota).
+        try:
+            self.bot.add_dynamic_items(GuildInviteButton)
+        except AttributeError:
+            # discord.py < 2.4 — DynamicItem není dostupný; pozvánky pak
+            # nepřežijí restart, ale jinak fungují.
+            pass
 
     # ============================================================
     # HELPERS
@@ -680,7 +779,35 @@ class Guilds(commands.Cog):
         await self._notify_officers(jmeno, notify)
 
         await interaction.response.send_message(
-            embed=create_success_embed("📝 Přihláška Odeslána", f"Tvá přihláška do **{jmeno}** čeká na schválení."),
+            embed=create_success_embed(
+                "📝 Přihláška Odeslána",
+                f"Tvá přihláška do **{jmeno}** čeká na schválení.\n\n"
+                f"💡 *Kdyby sis to rozmyslel/a, můžeš ji stáhnout přes* `/guild_withdraw`."
+            ),
+            ephemeral=True
+        )
+
+    # ============================================================
+    # /guild_withdraw
+    # ============================================================
+
+    @app_commands.command(name="guild_withdraw", description="↩️ Stáhni svou čekající přihlášku do guildy")
+    @app_commands.describe(jmeno="Guilda, kam jsi se hlásil (autocompletuje se)")
+    @app_commands.autocomplete(jmeno=my_pending_apps_autocomplete)
+    async def guild_withdraw(self, interaction: discord.Interaction, jmeno: str):
+        user_id = interaction.user.id
+        jmeno = jmeno.lower()
+
+        if not self.guild_db.is_applicant(jmeno, user_id):
+            await interaction.response.send_message(
+                embed=create_error_embed("ℹ️ Žádná Přihláška", f"Do **{jmeno}** nemáš čekající přihlášku."),
+                ephemeral=True
+            )
+            return
+
+        self.guild_db.remove_application(jmeno, user_id)
+        await interaction.response.send_message(
+            embed=create_success_embed("↩️ Přihláška Stažena", f"Tvá přihláška do **{jmeno}** byla zrušena."),
             ephemeral=True
         )
 
@@ -842,6 +969,19 @@ class Guilds(commands.Cog):
                 embed=create_error_embed("❌ Nejsi Vůdce", "Jen vůdce může guildu rozpustit."), ephemeral=True)
             return
 
+        # Potvrzení — nevratná akce
+        count = self.guild_db.member_count(guild_name)
+        confirm_embed = create_error_embed(
+            "⚠️ Opravdu Rozpustit?",
+            f"Guilda **{guild_name}** ({count} členů) bude **nenávratně smazána** včetně threadu.\n"
+            f"Tuto akci nelze vrátit zpět."
+        )
+        view = ConfirmView(user_id, confirm_label="Ano, rozpustit")
+        await interaction.response.send_message(embed=confirm_embed, view=view, ephemeral=True)
+        await view.wait()
+        if view.value is not True:
+            return
+
         guild = self.guild_db.get_guild(guild_name)
         thread_id = guild.get("thread_id") if guild else None
         if thread_id:
@@ -853,7 +993,7 @@ class Guilds(commands.Cog):
                 pass
 
         self.guild_db.delete_guild(guild_name)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=create_success_embed(f"🔥 Guilda {guild_name} Rozpuštěna", "Všichni členové byli propuštěni.")
         )
 
@@ -909,7 +1049,7 @@ class Guilds(commands.Cog):
         invite_embed.add_field(name="👥 Členů", value=f"{len(guild['members'])}/{guild.get('capacity', 50)}", inline=True)
 
         try:
-            view = GuildInviteView(self.bot, self.guild_db, guild_name, clen.id)
+            view = build_guild_invite_view(clen.id, guild_name)
             await clen.send(embed=invite_embed, view=view)
         except discord.Forbidden:
             self.guild_db.remove_from_whitelist(guild_name, clen.id)
@@ -1053,9 +1193,21 @@ class Guilds(commands.Cog):
                 embed=create_error_embed("❌ Není Členem", "Hráč není v tvé guildě."), ephemeral=True)
             return
 
+        # Potvrzení — předání vedení
+        confirm_embed = create_error_embed(
+            "⚠️ Předat Vedení?",
+            f"Vedení **{guild_name}** přejde na <@{clen_id}>.\n"
+            f"Ty klesneš na 🛡️ officera. Pokračovat?"
+        )
+        view = ConfirmView(user_id, confirm_label="Ano, předat", confirm_style=discord.ButtonStyle.primary)
+        await interaction.response.send_message(embed=confirm_embed, view=view, ephemeral=True)
+        await view.wait()
+        if view.value is not True:
+            return
+
         self.guild_db.set_guildmaster(guild_name, clen_id)  # starý vůdce → officer
         color_int = await self._get_guild_color(guild_name)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             embed=create_success_embed("👑 Vedení Předáno", f"<@{clen_id}> je nový vůdce **{guild_name}**! (Ty jsi teď officer.)", color=color_int)
         )
 
@@ -1209,6 +1361,7 @@ class Guilds(commands.Cog):
                 "`/guild_create` — Založ guildu\n"
                 "`/guild_join` — Vstup do otevřené\n"
                 "`/guild_apply` — Podej přihlášku\n"
+                "`/guild_withdraw` — Stáhni přihlášku\n"
                 "`/guild_leave` — Opusť guildu\n"
                 "`/guild_list` — Všechny guildy\n"
                 "`/guild_info` — Detail guildy\n"
