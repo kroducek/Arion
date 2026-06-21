@@ -5,7 +5,13 @@ import json
 import logging
 import os
 
-from src.utils.paths import ECONOMY as ECONOMY_FILE, SHOPS as SHOPS_FILE, PROFILES as PROFILES_FILE
+from src.utils.paths import (
+    ECONOMY as ECONOMY_FILE,
+    SILVER as SILVER_FILE,
+    STARDUST as STARDUST_FILE,
+    SHOPS as SHOPS_FILE,
+    PROFILES as PROFILES_FILE,
+)
 from src.utils.json_utils import load_json, save_json
 
 COIN         = "<:goldcoin:1490171741237018795>"
@@ -18,6 +24,111 @@ def _load_economy() -> dict:
 
 def _save_economy(data: dict) -> None:
     save_json(ECONOMY_FILE, data)
+
+
+# ── Multi-currency API ────────────────────────────────────────────────────────
+# Gold zůstává v economy.json beze změny ({uid: int}); silver a stardust mají
+# vlastní soubory stejného tvaru. API níže směruje podle měny, takže staré
+# gold čtení (economy[uid]) nikde nespadne a minihry lze přepínat postupně.
+#
+# Použití:
+#   from src.logic.economy import get_balance, add_balance, spend, coin
+#   add_balance(uid, 50, "silver")          # výhra v minihře
+#   if spend(uid, bet, "silver"): ...        # sázka
+#   add_balance(uid, dust, "stardust")       # spálení karty
+
+COIN_GOLD     = COIN                      # 🟡 <:goldcoin:1490171741237018795>
+COIN_SILVER   = "⚪"                       # TODO: nahradit za <:silvercoin:ID>
+COIN_STARDUST = "✨"                       # TODO: nahradit za <:stardust:ID>
+
+_CURRENCY_FILES = {
+    "gold":     ECONOMY_FILE,
+    "silver":   SILVER_FILE,
+    "stardust": STARDUST_FILE,
+}
+_CURRENCY_ICONS = {
+    "gold":     COIN_GOLD,
+    "silver":   COIN_SILVER,
+    "stardust": COIN_STARDUST,
+}
+CURRENCIES = tuple(_CURRENCY_FILES.keys())
+
+
+def _currency_file(currency: str) -> str:
+    if currency not in _CURRENCY_FILES:
+        raise ValueError(f"Neznámá měna: {currency!r}")
+    return _CURRENCY_FILES[currency]
+
+
+def coin(currency: str = "gold") -> str:
+    """Ikona měny pro embedy (🟡 / ⚪ / ✨)."""
+    return _CURRENCY_ICONS.get(currency, "")
+
+
+def get_balance(uid, currency: str = "gold") -> int:
+    """Zůstatek hráče v dané měně."""
+    data = load_json(_currency_file(currency), default={})
+    try:
+        return int(data.get(str(uid), 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def set_balance(uid, amount: int, currency: str = "gold") -> int:
+    """Nastaví zůstatek na přesnou hodnotu."""
+    f = _currency_file(currency)
+    data = load_json(f, default={})
+    data[str(uid)] = int(amount)
+    save_json(f, data)
+    return int(amount)
+
+
+def add_balance(uid, amount: int, currency: str = "gold") -> int:
+    """Přičte částku (smí být záporná) a vrátí nový zůstatek."""
+    f = _currency_file(currency)
+    data = load_json(f, default={})
+    key = str(uid)
+    try:
+        current = int(data.get(key, 0))
+    except (TypeError, ValueError):
+        current = 0
+    data[key] = current + int(amount)
+    save_json(f, data)
+    return data[key]
+
+
+def spend(uid, amount: int, currency: str = "gold") -> bool:
+    """Strhne částku, jen pokud má hráč dost. Nikdy nejde do mínusu. Vrátí True/False."""
+    amount = int(amount)
+    if amount <= 0:
+        return True
+    f = _currency_file(currency)
+    data = load_json(f, default={})
+    key = str(uid)
+    try:
+        bal = int(data.get(key, 0))
+    except (TypeError, ValueError):
+        bal = 0
+    if bal < amount:
+        return False
+    data[key] = bal - amount
+    save_json(f, data)
+    return True
+
+
+def transfer(uid_from, uid_to, amount: int, currency: str = "gold") -> bool:
+    """Převod mezi hráči. Vrátí False při nedostatku prostředků."""
+    if int(amount) <= 0:
+        return False
+    if not spend(uid_from, amount, currency):
+        return False
+    add_balance(uid_to, amount, currency)
+    return True
+
+
+def get_wallet(uid) -> dict:
+    """Vrátí všechny zůstatky hráče: {'gold': x, 'silver': y, 'stardust': z}."""
+    return {c: get_balance(uid, c) for c in CURRENCIES}
 
 
 # ── Shops datová vrstva ───────────────────────────────────────────────────────
