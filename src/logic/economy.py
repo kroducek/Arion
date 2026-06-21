@@ -9,6 +9,7 @@ from src.utils.paths import (
     ECONOMY as ECONOMY_FILE,
     SILVER as SILVER_FILE,
     STARDUST as STARDUST_FILE,
+    MINIGAME_CURRENCY as MINIGAME_CFG_FILE,
     SHOPS as SHOPS_FILE,
     PROFILES as PROFILES_FILE,
 )
@@ -52,6 +53,23 @@ _CURRENCY_ICONS = {
     "stardust": COIN_STARDUST,
 }
 CURRENCIES = tuple(_CURRENCY_FILES.keys())
+
+# Volby měny do slash příkazů (unicode ikony — custom emoji se v nabídce nezobrazí)
+MENA_CHOICES = [
+    app_commands.Choice(name="🟡 Zlaťáky", value="gold"),
+    app_commands.Choice(name="⚪ Stříbrňáky", value="silver"),
+    app_commands.Choice(name="✨ Hvězdný prach", value="stardust"),
+]
+_CURRENCY_NAMES = {
+    "gold": "zlaťáků",
+    "silver": "stříbrňáků",
+    "stardust": "hvězdného prachu",
+}
+
+
+def currency_name(currency: str = "gold") -> str:
+    """Skloňovaný název měny pro hlášky (např. 'stříbrňáků')."""
+    return _CURRENCY_NAMES.get(currency, currency)
 
 
 def _currency_file(currency: str) -> str:
@@ -129,6 +147,36 @@ def transfer(uid_from, uid_to, amount: int, currency: str = "gold") -> bool:
 def get_wallet(uid) -> dict:
     """Vrátí všechny zůstatky hráče: {'gold': x, 'silver': y, 'stardust': z}."""
     return {c: get_balance(uid, c) for c in CURRENCIES}
+
+
+# ── Přepínač měny miniher (globální) ──────────────────────────────────────────
+# Minihry standardně běží na stříbrňáky. DM/admin může přes /minihry_mena
+# přepnout na zlaťáky (např. pro vlastní testování). Default: silver.
+
+def get_minigame_currency() -> str:
+    """Měna, kterou teď používají minihry ('silver' nebo 'gold')."""
+    cfg = load_json(MINIGAME_CFG_FILE, default={})
+    cur = cfg.get("currency", "silver")
+    return cur if cur in ("silver", "gold") else "silver"
+
+
+def set_minigame_currency(currency: str) -> bool:
+    """Přepne měnu miniher. Vrátí False pro neplatnou hodnotu."""
+    if currency not in ("silver", "gold"):
+        return False
+    save_json(MINIGAME_CFG_FILE, {"currency": currency})
+    return True
+
+
+def minigame_file() -> str:
+    """Cesta k JSON souboru měny, kterou teď používají minihry.
+    Hry s vlastním _load_eco/_save_eco jen přesměrují cestu sem."""
+    return _currency_file(get_minigame_currency())
+
+
+def minigame_coin() -> str:
+    """Ikona aktuální měny miniher."""
+    return coin(get_minigame_currency())
 
 
 # ── Shops datová vrstva ───────────────────────────────────────────────────────
@@ -300,109 +348,138 @@ class Economy(commands.Cog):
 
     # ── /g ────────────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="g", description="Zobrazí tvůj počet zlaťáků")
+    @app_commands.command(name="g", description="Zobrazí tvé měny (zlaťáky, stříbrňáky, hvězdný prach)")
     async def g(self, interaction: discord.Interaction):
-        economy = _load_economy()
-        balance = economy.get(str(interaction.user.id), 0)
+        w = get_wallet(interaction.user.id)
         await interaction.response.send_message(
-            f"{interaction.user.mention}, tvůj stav konta: **{balance}** {COIN}"
+            f"{interaction.user.mention}, tvé konto:\n"
+            f"{COIN_GOLD} **{w['gold']}** zlaťáků\n"
+            f"{COIN_SILVER} **{w['silver']}** stříbrňáků\n"
+            f"{COIN_STARDUST} **{w['stardust']}** hvězdného prachu"
         )
 
     # ── /gsend ────────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="gsend", description="Pošle zlaťáky jinému hráči")
-    async def gsend(self, interaction: discord.Interaction, member: discord.Member, amount: int):
+    @app_commands.command(name="gsend", description="Pošle měnu jinému hráči")
+    @app_commands.describe(
+        member="Komu chceš poslat",
+        amount="Kolik",
+        mena="Která měna (výchozí: zlaťáky)",
+    )
+    @app_commands.choices(mena=MENA_CHOICES)
+    async def gsend(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+        amount: int,
+        mena: app_commands.Choice[str] | None = None,
+    ):
+        currency = mena.value if mena else "gold"
+        icon = coin(currency)
+
         if amount <= 0:
             return await interaction.response.send_message("Musíš poslat víc než 0!", ephemeral=True)
         if member.id == interaction.user.id:
-            return await interaction.response.send_message("Nemůžeš poslat peníze sám sobě!", ephemeral=True)
+            return await interaction.response.send_message("Nemůžeš poslat měnu sám sobě!", ephemeral=True)
         if member.bot:
-            return await interaction.response.send_message("Botům zlaťáky posílat nelze.", ephemeral=True)
+            return await interaction.response.send_message("Botům měnu posílat nelze.", ephemeral=True)
 
-        economy     = _load_economy()
-        sender_id   = str(interaction.user.id)
-        receiver_id = str(member.id)
-        sender_bal  = economy.get(sender_id, 0)
-
-        if sender_bal < amount:
+        if not spend(interaction.user.id, amount, currency):
+            have = get_balance(interaction.user.id, currency)
             return await interaction.response.send_message(
-                f"Nemáš dost zlaťáků! (Chybí ti {amount - sender_bal} {COIN})", ephemeral=True
+                f"Nemáš dost! (Chybí ti {amount - have} {icon})", ephemeral=True
             )
-
-        economy[sender_id]   = sender_bal - amount
-        economy[receiver_id] = economy.get(receiver_id, 0) + amount
-        _save_economy(economy)
+        add_balance(member.id, amount, currency)
 
         await interaction.response.send_message(
-            f"Úspěšně jsi poslal **{amount}** {COIN} hráči {member.mention}."
+            f"Úspěšně jsi poslal **{amount}** {icon} hráči {member.mention}."
         )
 
     # ── /gadd ─────────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="gadd", description="Admin: Přidá zlaťáky hráči")
+    @app_commands.command(name="gadd", description="Admin: Přidá měnu hráči")
     @app_commands.checks.has_permissions(administrator=True)
-    async def gadd(self, interaction: discord.Interaction, member: discord.Member, amount: int):
+    @app_commands.describe(
+        member="Hráč",
+        amount="Kolik přidat",
+        mena="Která měna (výchozí: zlaťáky)",
+    )
+    @app_commands.choices(mena=MENA_CHOICES)
+    async def gadd(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+        amount: int,
+        mena: app_commands.Choice[str] | None = None,
+    ):
+        currency = mena.value if mena else "gold"
+        icon = coin(currency)
+
         if amount <= 0:
             return await interaction.response.send_message("Částka musí být větší než 0!", ephemeral=True)
         if member.bot:
-            return await interaction.response.send_message("Botům zlaťáky přidávat nelze.", ephemeral=True)
+            return await interaction.response.send_message("Botům měnu přidávat nelze.", ephemeral=True)
 
-        economy = _load_economy()
-        uid     = str(member.id)
-        economy[uid] = economy.get(uid, 0) + amount
-        _save_economy(economy)
-
+        new_bal = add_balance(member.id, amount, currency)
         await interaction.response.send_message(
-            f"✅ Přidáno **{amount}** {COIN} hráči {member.mention}. (Celkem: {economy[uid]})"
+            f"✅ Přidáno **{amount}** {icon} hráči {member.mention}. (Celkem: {new_bal})"
         )
 
-    @app_commands.command(name="gremove", description="Admin: Odebere zlaťáky hráči (může jít do mínusu)")
+    @app_commands.command(name="gremove", description="Admin: Odebere měnu hráči (může jít do mínusu)")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
-        member = "Hráč, kterému chceš odebrat zlaťáky",
-        amount = "Počet zlaťáků (nebo 0 pro reset na nulu)",
+        member = "Hráč, kterému chceš odebrat měnu",
+        amount = "Kolik odebrat (nebo 0 pro reset na nulu)",
+        mena   = "Která měna (výchozí: zlaťáky)",
         minus  = "Povolit záporný zůstatek? (výchozí: Ne)",
     )
-    @app_commands.choices(minus=[
-        app_commands.Choice(name="Ano — může jít do mínusu", value=1),
-        app_commands.Choice(name="Ne — odebere max co má",   value=0),
-    ])
-    async def gremove(self, interaction: discord.Interaction, member: discord.Member, amount: int, minus: int = 0):
+    @app_commands.choices(
+        mena=MENA_CHOICES,
+        minus=[
+            app_commands.Choice(name="Ano — může jít do mínusu", value=1),
+            app_commands.Choice(name="Ne — odebere max co má",   value=0),
+        ],
+    )
+    async def gremove(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+        amount: int,
+        mena: app_commands.Choice[str] | None = None,
+        minus: int = 0,
+    ):
+        currency = mena.value if mena else "gold"
+        icon = coin(currency)
+
         if amount < 0:
             return await interaction.response.send_message(
                 "Zadej kladné číslo (nebo 0 pro reset na nulu)!", ephemeral=True
             )
 
-        economy = _load_economy()
-        uid     = str(member.id)
-        current = economy.get(uid, 0)
+        current = get_balance(member.id, currency)
 
         if amount == 0:
-            economy[uid] = 0
-            _save_economy(economy)
+            set_balance(member.id, 0, currency)
             return await interaction.response.send_message(
-                f"🗑️ Hráči {member.mention} bylo odebráno všech **{current}** {COIN}. Konto je prázdné."
+                f"🗑️ Hráči {member.mention} bylo odebráno všech **{current}** {icon}. Konto je prázdné."
             )
 
         if minus:
             # Povolíme záporný zůstatek
-            economy[uid] = current - amount
-            _save_economy(economy)
-            new_bal = economy[uid]
-            bal_str = f"**{new_bal}** {COIN}" if new_bal >= 0 else f"**{new_bal}** {COIN}  *(dluh)*"
+            new_bal = add_balance(member.id, -amount, currency)
+            bal_str = f"**{new_bal}** {icon}" if new_bal >= 0 else f"**{new_bal}** {icon}  *(dluh)*"
             await interaction.response.send_message(
-                f"🗑️ Odebráno **{amount}** {COIN} hráči {member.mention}. (Zbývá: {bal_str})"
+                f"🗑️ Odebráno **{amount}** {icon} hráči {member.mention}. (Zbývá: {bal_str})"
             )
         else:
             # Klasické chování — nejde pod nulu
             if current == 0:
                 return await interaction.response.send_message(
-                    f"Hráč {member.mention} nemá žádné zlaťáky.", ephemeral=True
+                    f"Hráč {member.mention} nemá žádné {currency_name(currency)}.", ephemeral=True
                 )
-            actual       = min(amount, current)
-            economy[uid] = current - actual
-            _save_economy(economy)
-            msg = f"🗑️ Odebráno **{actual}** {COIN} hráči {member.mention}. (Zbývá: {economy[uid]})"
+            actual = min(amount, current)
+            set_balance(member.id, current - actual, currency)
+            msg = f"🗑️ Odebráno **{actual}** {icon} hráči {member.mention}. (Zbývá: {current - actual})"
             if actual < amount:
                 msg += f"\n-# *(Hráč měl jen {current}, odebráno maximum. Použij `minus: Ano` pro dluh.)*"
             await interaction.response.send_message(msg)
@@ -410,36 +487,63 @@ class Economy(commands.Cog):
     # ── /gleaderboard ─────────────────────────────────────────────────────────
 
     @app_commands.command(name="gleaderboard", description="Top 10 nejbohatších hráčů serveru")
-    async def gleaderboard(self, interaction: discord.Interaction):
-        economy = _load_economy()
-        if not economy:
+    @app_commands.describe(mena="Která měna (výchozí: zlaťáky)")
+    @app_commands.choices(mena=MENA_CHOICES)
+    async def gleaderboard(
+        self,
+        interaction: discord.Interaction,
+        mena: app_commands.Choice[str] | None = None,
+    ):
+        currency = mena.value if mena else "gold"
+        icon = coin(currency)
+        data = load_json(_currency_file(currency), default={})
+        if not data:
             return await interaction.response.send_message(
-                "Zatím tu nikdo žádné zlaťáky nemá.", ephemeral=True
+                f"Zatím tu nikdo žádné {currency_name(currency)} nemá.", ephemeral=True
             )
 
-        sorted_all = sorted(economy.items(), key=lambda x: x[1], reverse=True)
+        sorted_all = sorted(data.items(), key=lambda x: x[1], reverse=True)
         medals     = ["🥇", "🥈", "🥉"]
         lines      = []
         for i, (uid, balance) in enumerate(sorted_all[:10]):
             prefix = medals[i] if i < 3 else f"**{i+1}.**"
             member = interaction.guild.get_member(int(uid))
             name   = member.display_name if member else f"Neznámý ({uid})"
-            lines.append(f"{prefix} {name} — **{balance}** {COIN}")
+            lines.append(f"{prefix} {name} — **{balance}** {icon}")
 
         embed = discord.Embed(
-            title="🏆 Žebříček nejbohatších",
+            title=f"🏆 Žebříček — {currency_name(currency)}",
             description="\n".join(lines),
             color=0xFFD700,
         )
         caller_id   = str(interaction.user.id)
         caller_rank = next((i + 1 for i, (uid, _) in enumerate(sorted_all) if uid == caller_id), None)
-        caller_bal  = economy.get(caller_id, 0)
+        caller_bal  = data.get(caller_id, 0)
         if caller_rank and caller_rank > 10:
-            embed.set_footer(text=f"Tvoje pozice: #{caller_rank} ({caller_bal} zlaťáků)")
+            embed.set_footer(text=f"Tvoje pozice: #{caller_rank} ({caller_bal})")
         elif caller_rank:
             embed.set_footer(text=f"Tvoje pozice: #{caller_rank}")
 
         await interaction.response.send_message(embed=embed)
+
+    # ── /minihry_mena ─────────────────────────────────────────────────────────
+
+    @app_commands.command(name="minihry_mena", description="Admin: Přepni měnu miniher (silver/gold)")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(mena="Na co přepnout minihry (výchozí stav: stříbrňáky)")
+    @app_commands.choices(mena=[
+        app_commands.Choice(name="⚪ Stříbrňáky (normální)", value="silver"),
+        app_commands.Choice(name="🟡 Zlaťáky (testovací režim)", value="gold"),
+    ])
+    async def minihry_mena(self, interaction: discord.Interaction, mena: app_commands.Choice[str]):
+        if not set_minigame_currency(mena.value):
+            return await interaction.response.send_message("❌ Neplatná měna.", ephemeral=True)
+        icon = coin(mena.value)
+        await interaction.response.send_message(
+            f"🎮 Minihry teď běží na **{currency_name(mena.value)}** {icon}.\n"
+            f"-# Platí pro nově začaté hry (sázky i výhry).",
+            ephemeral=True,
+        )
 
     # ── /gshop ────────────────────────────────────────────────────────────────
 

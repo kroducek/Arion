@@ -21,6 +21,7 @@ from src.utils.paths import (
     LIAR_SCORES  as SCORES_FILE,
     ECONOMY      as ECONOMY_FILE,
 )
+from src.logic.economy import minigame_file
 
 # ── Dice image (volitelné) ────────────────────────────────────────────────────
 try:
@@ -33,7 +34,7 @@ except Exception:
 MIN_PLAYERS  = 2
 MAX_PLAYERS  = 6
 INITIAL_DICE = 5
-COIN         = "<:goldcoin:1490171741237018795>"
+COIN         = "<:silvercoin:1518334462327390298>"
 
 DICE_EMOJI = {1: "⚀", 2: "⚁", 3: "⚂", 4: "⚃", 5: "⚄", 6: "⚅"}
 
@@ -46,9 +47,9 @@ def _load_scores() -> dict:    return load_json(SCORES_FILE)
 
 def _save_scores(data: dict):  save_json(SCORES_FILE, data)
 
-def _load_eco() -> dict:       return load_json(ECONOMY_FILE)
+def _load_eco() -> dict:       return load_json(minigame_file(), {})
 
-def _save_eco(data: dict):     save_json(ECONOMY_FILE, data)
+def _save_eco(data: dict):     save_json(minigame_file(), data)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
