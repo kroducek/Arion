@@ -44,7 +44,7 @@ def _get_cog(interaction: discord.Interaction) -> Optional["Guilds"]:
 
 
 async def open_guild_autocomplete(interaction, current: str) -> List[app_commands.Choice[str]]:
-    """Guildy s otevřeným náborem (pro /guild_join)."""
+    """Guildy s otevřeným náborem (pro /guild join)."""
     try:
         cog = _get_cog(interaction)
         if not cog:
@@ -61,7 +61,7 @@ async def open_guild_autocomplete(interaction, current: str) -> List[app_command
 
 
 async def apply_guild_autocomplete(interaction, current: str) -> List[app_commands.Choice[str]]:
-    """Guildy v režimu 'apply' (pro /guild_apply)."""
+    """Guildy v režimu 'apply' (pro /guild apply)."""
     try:
         cog = _get_cog(interaction)
         if not cog:
@@ -78,7 +78,7 @@ async def apply_guild_autocomplete(interaction, current: str) -> List[app_comman
 
 
 async def any_guild_autocomplete(interaction, current: str) -> List[app_commands.Choice[str]]:
-    """Všechny guildy (pro /guild_info cizí guildy)."""
+    """Všechny guildy (pro /guild info cizí guildy)."""
     try:
         cog = _get_cog(interaction)
         if not cog:
@@ -120,7 +120,7 @@ async def my_member_autocomplete(interaction, current: str) -> List[app_commands
 
 
 async def my_promotable_autocomplete(interaction, current: str) -> List[app_commands.Choice[str]]:
-    """Členové MÉ guildy, kteří NEjsou officeři (pro /guild_promote)."""
+    """Členové MÉ guildy, kteří NEjsou officeři (pro /guild promote)."""
     try:
         cog = _get_cog(interaction)
         if not cog:
@@ -138,7 +138,7 @@ async def my_promotable_autocomplete(interaction, current: str) -> List[app_comm
 
 
 async def my_officer_autocomplete(interaction, current: str) -> List[app_commands.Choice[str]]:
-    """Officeři MÉ guildy (pro /guild_demote)."""
+    """Officeři MÉ guildy (pro /guild demote)."""
     try:
         cog = _get_cog(interaction)
         if not cog:
@@ -153,7 +153,7 @@ async def my_officer_autocomplete(interaction, current: str) -> List[app_command
 
 
 async def my_applicant_autocomplete(interaction, current: str) -> List[app_commands.Choice[str]]:
-    """Čekající žadatelé do MÉ guildy (pro /guild_accept, /guild_deny)."""
+    """Čekající žadatelé do MÉ guildy (pro /guild accept, /guild deny)."""
     try:
         cog = _get_cog(interaction)
         if not cog:
@@ -168,7 +168,7 @@ async def my_applicant_autocomplete(interaction, current: str) -> List[app_comma
 
 
 async def my_pending_apps_autocomplete(interaction, current: str) -> List[app_commands.Choice[str]]:
-    """Guildy, kam má hráč čekající přihlášku (pro /guild_withdraw)."""
+    """Guildy, kam má hráč čekající přihlášku (pro /guild withdraw)."""
     try:
         cog = _get_cog(interaction)
         if not cog:
@@ -245,7 +245,7 @@ class GuildInviteButton(
             await interaction.response.send_message(
                 embed=create_error_embed(
                     "❌ Už Jsi v Guildě",
-                    f"Jsi členem **{current}**. Nejdřív ji opusť (`/guild_leave`)."
+                    f"Jsi členem **{current}**. Nejdřív ji opusť (`/guild leave`)."
                 ),
                 ephemeral=True,
             )
@@ -449,6 +449,10 @@ class GuildSetModal(discord.ui.Modal, title="🏰 Nastavit Identitu Guildy"):
 class Guilds(commands.Cog):
     """Cog pro správu guild — SAO × Aurionis edition 🏰"""
 
+    # Jediná skupina /guild se subpříkazy → počítá se jako 1 globální command
+    # (místo 21 samostatných), takže nepřekračujeme limit 100 příkazů.
+    guild_grp = app_commands.Group(name="guild", description="🏰 Guildy Aurionisu — stálé organizace hráčů")
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.guild_db = GuildManager()
@@ -584,10 +588,10 @@ class Guilds(commands.Cog):
             pass
 
     # ============================================================
-    # /guild_create
+    # /guild create
     # ============================================================
 
-    @app_commands.command(name="guild_create", description="🏰 Založ novou guildu (staneš se vůdcem)")
+    @guild_grp.command(name="create", description="🏰 Založ novou guildu (staneš se vůdcem)")
     @app_commands.describe(
         jmeno="Název guildy",
         motto="Motto / cíl guildy",
@@ -660,10 +664,10 @@ class Guilds(commands.Cog):
         )
 
     # ============================================================
-    # /guild_join
+    # /guild join
     # ============================================================
 
-    @app_commands.command(name="guild_join", description="🛡️ Vstup do otevřené guildy")
+    @guild_grp.command(name="join", description="🛡️ Vstup do otevřené guildy")
     @app_commands.describe(jmeno="Název guildy (otevřené se autocompletují)")
     @app_commands.autocomplete(jmeno=open_guild_autocomplete)
     async def guild_join(self, interaction: discord.Interaction, jmeno: str):
@@ -698,7 +702,7 @@ class Guilds(commands.Cog):
 
         if recruitment == "apply" and not on_wl:
             await interaction.response.send_message(
-                embed=create_error_embed("🟡 Na Přihlášku", f"**{jmeno}** přijímá přes `/guild_apply`."),
+                embed=create_error_embed("🟡 Na Přihlášku", f"**{jmeno}** přijímá přes `/guild apply`."),
                 ephemeral=True
             )
             return
@@ -723,10 +727,10 @@ class Guilds(commands.Cog):
         )
 
     # ============================================================
-    # /guild_apply
+    # /guild apply
     # ============================================================
 
-    @app_commands.command(name="guild_apply", description="📝 Podej přihlášku do guildy (režim na přihlášku)")
+    @guild_grp.command(name="apply", description="📝 Podej přihlášku do guildy (režim na přihlášku)")
     @app_commands.describe(jmeno="Název guildy (na přihlášku se autocompletují)")
     @app_commands.autocomplete(jmeno=apply_guild_autocomplete)
     async def guild_apply(self, interaction: discord.Interaction, jmeno: str):
@@ -773,7 +777,7 @@ class Guilds(commands.Cog):
         # Notifikace do threadu
         notify = discord.Embed(
             title="📝 Nová Přihláška",
-            description=f"{interaction.user.mention} se hlásí do guildy.\nSchval přes `/guild_accept` nebo zamítni `/guild_deny`.",
+            description=f"{interaction.user.mention} se hlásí do guildy.\nSchval přes `/guild accept` nebo zamítni `/guild deny`.",
             color=await self._get_guild_color(jmeno),
         )
         await self._notify_officers(jmeno, notify)
@@ -782,16 +786,16 @@ class Guilds(commands.Cog):
             embed=create_success_embed(
                 "📝 Přihláška Odeslána",
                 f"Tvá přihláška do **{jmeno}** čeká na schválení.\n\n"
-                f"💡 *Kdyby sis to rozmyslel/a, můžeš ji stáhnout přes* `/guild_withdraw`."
+                f"💡 *Kdyby sis to rozmyslel/a, můžeš ji stáhnout přes* `/guild withdraw`."
             ),
             ephemeral=True
         )
 
     # ============================================================
-    # /guild_withdraw
+    # /guild withdraw
     # ============================================================
 
-    @app_commands.command(name="guild_withdraw", description="↩️ Stáhni svou čekající přihlášku do guildy")
+    @guild_grp.command(name="withdraw", description="↩️ Stáhni svou čekající přihlášku do guildy")
     @app_commands.describe(jmeno="Guilda, kam jsi se hlásil (autocompletuje se)")
     @app_commands.autocomplete(jmeno=my_pending_apps_autocomplete)
     async def guild_withdraw(self, interaction: discord.Interaction, jmeno: str):
@@ -812,10 +816,10 @@ class Guilds(commands.Cog):
         )
 
     # ============================================================
-    # /guild_applications  (officer+)
+    # /guild applications  (officer+)
     # ============================================================
 
-    @app_commands.command(name="guild_applications", description="📋 Zobraz čekající přihlášky (officer+)")
+    @guild_grp.command(name="applications", description="📋 Zobraz čekající přihlášky (officer+)")
     async def guild_applications(self, interaction: discord.Interaction):
         guild_name = self.guild_db.get_user_guild(interaction.user.id)
         if not guild_name:
@@ -840,15 +844,15 @@ class Guilds(commands.Cog):
             )
             return
 
-        lines = "\n".join(f"• <@{uid}> — `/guild_accept` nebo `/guild_deny`" for uid in apps)
+        lines = "\n".join(f"• <@{uid}> — `/guild accept` nebo `/guild deny`" for uid in apps)
         embed = discord.Embed(title=f"📋 Přihlášky do {guild_name}", description=lines, color=self.bot.color)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ============================================================
-    # /guild_accept  (officer+)
+    # /guild accept  (officer+)
     # ============================================================
 
-    @app_commands.command(name="guild_accept", description="✅ Schval přihlášku do guildy (officer+)")
+    @guild_grp.command(name="accept", description="✅ Schval přihlášku do guildy (officer+)")
     @app_commands.describe(clen="Žadatel (autocompletuje se)")
     @app_commands.autocomplete(clen=my_applicant_autocomplete)
     async def guild_accept(self, interaction: discord.Interaction, clen: str):
@@ -893,10 +897,10 @@ class Guilds(commands.Cog):
         )
 
     # ============================================================
-    # /guild_deny  (officer+)
+    # /guild deny  (officer+)
     # ============================================================
 
-    @app_commands.command(name="guild_deny", description="✖️ Zamítni přihlášku do guildy (officer+)")
+    @guild_grp.command(name="deny", description="✖️ Zamítni přihlášku do guildy (officer+)")
     @app_commands.describe(clen="Žadatel (autocompletuje se)")
     @app_commands.autocomplete(clen=my_applicant_autocomplete)
     async def guild_deny(self, interaction: discord.Interaction, clen: str):
@@ -924,10 +928,10 @@ class Guilds(commands.Cog):
         )
 
     # ============================================================
-    # /guild_leave
+    # /guild leave
     # ============================================================
 
-    @app_commands.command(name="guild_leave", description="🚶 Opusť svou guildu")
+    @guild_grp.command(name="leave", description="🚶 Opusť svou guildu")
     async def guild_leave(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         guild_name = self.guild_db.get_user_guild(user_id)
@@ -940,7 +944,7 @@ class Guilds(commands.Cog):
             await interaction.response.send_message(
                 embed=create_error_embed(
                     "❌ Vůdce Nemůže Odejít",
-                    "Nejdřív předej vedení (`/guild_transfer`) nebo guildu rozpusť (`/guild_disband`)."
+                    "Nejdřív předej vedení (`/guild transfer`) nebo guildu rozpusť (`/guild disband`)."
                 ),
                 ephemeral=True
             )
@@ -953,10 +957,10 @@ class Guilds(commands.Cog):
         )
 
     # ============================================================
-    # /guild_disband  (vůdce)
+    # /guild disband  (vůdce)
     # ============================================================
 
-    @app_commands.command(name="guild_disband", description="🔥 Rozpusť svou guildu (jen vůdce)")
+    @guild_grp.command(name="disband", description="🔥 Rozpusť svou guildu (jen vůdce)")
     async def guild_disband(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         guild_name = self.guild_db.get_user_guild(user_id)
@@ -998,10 +1002,10 @@ class Guilds(commands.Cog):
         )
 
     # ============================================================
-    # /guild_invite  (officer+)
+    # /guild invite  (officer+)
     # ============================================================
 
-    @app_commands.command(name="guild_invite", description="✉️ Pozvi hráče do své guildy (officer+)")
+    @guild_grp.command(name="invite", description="✉️ Pozvi hráče do své guildy (officer+)")
     @app_commands.describe(clen="Hráč, kterého chceš pozvat")
     async def guild_invite(self, interaction: discord.Interaction, clen: discord.Member):
         user_id = interaction.user.id
@@ -1061,10 +1065,10 @@ class Guilds(commands.Cog):
             embed=create_success_embed("✉️ Pozvánka Odeslána", f"Pozvánka doručena {clen.mention}."), ephemeral=True)
 
     # ============================================================
-    # /guild_kick  (officer+ na členy, vůdce na kohokoli)
+    # /guild kick  (officer+ na členy, vůdce na kohokoli)
     # ============================================================
 
-    @app_commands.command(name="guild_kick", description="👢 Vyhoď člena z guildy (officer+)")
+    @guild_grp.command(name="kick", description="👢 Vyhoď člena z guildy (officer+)")
     @app_commands.describe(clen="Člen k vyhození (autocompletuje se)")
     @app_commands.autocomplete(clen=my_member_autocomplete)
     async def guild_kick(self, interaction: discord.Interaction, clen: str):
@@ -1084,7 +1088,7 @@ class Guilds(commands.Cog):
             return
         if clen_id == user_id:
             await interaction.response.send_message(
-                embed=create_error_embed("❌ Nemůžeš Vyhodit Sebe", "Použij `/guild_leave` nebo `/guild_disband`."), ephemeral=True)
+                embed=create_error_embed("❌ Nemůžeš Vyhodit Sebe", "Použij `/guild leave` nebo `/guild disband`."), ephemeral=True)
             return
         if not self.guild_db.is_user_in_guild(guild_name, clen_id):
             await interaction.response.send_message(
@@ -1112,10 +1116,10 @@ class Guilds(commands.Cog):
         )
 
     # ============================================================
-    # /guild_promote  (vůdce — člen → officer)
+    # /guild promote  (vůdce — člen → officer)
     # ============================================================
 
-    @app_commands.command(name="guild_promote", description="🛡️ Povyš člena na officera (jen vůdce)")
+    @guild_grp.command(name="promote", description="🛡️ Povyš člena na officera (jen vůdce)")
     @app_commands.describe(clen="Člen k povýšení (autocompletuje se)")
     @app_commands.autocomplete(clen=my_promotable_autocomplete)
     async def guild_promote(self, interaction: discord.Interaction, clen: str):
@@ -1140,10 +1144,10 @@ class Guilds(commands.Cog):
         )
 
     # ============================================================
-    # /guild_demote  (vůdce — officer → člen)
+    # /guild demote  (vůdce — officer → člen)
     # ============================================================
 
-    @app_commands.command(name="guild_demote", description="⬇️ Sesaď officera na člena (jen vůdce)")
+    @guild_grp.command(name="demote", description="⬇️ Sesaď officera na člena (jen vůdce)")
     @app_commands.describe(clen="Officer k sesazení (autocompletuje se)")
     @app_commands.autocomplete(clen=my_officer_autocomplete)
     async def guild_demote(self, interaction: discord.Interaction, clen: str):
@@ -1167,10 +1171,10 @@ class Guilds(commands.Cog):
         )
 
     # ============================================================
-    # /guild_transfer  (vůdce — předání vedení)
+    # /guild transfer  (vůdce — předání vedení)
     # ============================================================
 
-    @app_commands.command(name="guild_transfer", description="👑 Předej vedení guildy jinému členovi (jen vůdce)")
+    @guild_grp.command(name="transfer", description="👑 Předej vedení guildy jinému členovi (jen vůdce)")
     @app_commands.describe(clen="Nový vůdce (autocompletuje se)")
     @app_commands.autocomplete(clen=my_member_autocomplete)
     async def guild_transfer(self, interaction: discord.Interaction, clen: str):
@@ -1212,10 +1216,10 @@ class Guilds(commands.Cog):
         )
 
     # ============================================================
-    # /guild_set  (vůdce — identita)
+    # /guild set  (vůdce — identita)
     # ============================================================
 
-    @app_commands.command(name="guild_set", description="⚙️ Nastav identitu své guildy (jen vůdce)")
+    @guild_grp.command(name="set", description="⚙️ Nastav identitu své guildy (jen vůdce)")
     async def guild_set(self, interaction: discord.Interaction):
         guild_name = self.guild_db.get_user_guild(interaction.user.id)
         if not guild_name:
@@ -1229,10 +1233,10 @@ class Guilds(commands.Cog):
         await interaction.response.send_modal(GuildSetModal(self.bot, self.guild_db, self, guild_name))
 
     # ============================================================
-    # /guild_recruitment  (vůdce — režim náboru)
+    # /guild recruitment  (vůdce — režim náboru)
     # ============================================================
 
-    @app_commands.command(name="guild_recruitment", description="🚪 Změň režim náboru guildy (jen vůdce)")
+    @guild_grp.command(name="recruitment", description="🚪 Změň režim náboru guildy (jen vůdce)")
     @app_commands.describe(rezim="Otevřená / na přihlášku / uzavřená")
     @app_commands.choices(rezim=RECRUITMENT_CHOICES)
     async def guild_recruitment(self, interaction: discord.Interaction, rezim: app_commands.Choice[str]):
@@ -1247,10 +1251,10 @@ class Guilds(commands.Cog):
         )
 
     # ============================================================
-    # /guild_capacity  (vůdce — kapacita)
+    # /guild capacity  (vůdce — kapacita)
     # ============================================================
 
-    @app_commands.command(name="guild_capacity", description="👥 Nastav maximální počet členů (jen vůdce)")
+    @guild_grp.command(name="capacity", description="👥 Nastav maximální počet členů (jen vůdce)")
     @app_commands.describe(max="Maximální počet členů (1–250)")
     async def guild_capacity(self, interaction: discord.Interaction, max: int):
         guild_name = self.guild_db.get_user_guild(interaction.user.id)
@@ -1273,10 +1277,10 @@ class Guilds(commands.Cog):
         )
 
     # ============================================================
-    # /guild_describe  (vůdce — popis / lore)
+    # /guild describe  (vůdce — popis / lore)
     # ============================================================
 
-    @app_commands.command(name="guild_describe", description="📖 Nastav popis / lore guildy (jen vůdce)")
+    @guild_grp.command(name="describe", description="📖 Nastav popis / lore guildy (jen vůdce)")
     @app_commands.describe(text="Popis guildy (prázdné = smazat)")
     async def guild_describe(self, interaction: discord.Interaction, text: str = ""):
         guild_name = self.guild_db.get_user_guild(interaction.user.id)
@@ -1290,20 +1294,20 @@ class Guilds(commands.Cog):
         )
 
     # ============================================================
-    # /guild_list
+    # /guild list
     # ============================================================
 
-    @app_commands.command(name="guild_list", description="📜 Zobraz seznam všech guild")
+    @guild_grp.command(name="list", description="📜 Zobraz seznam všech guild")
     async def guild_list(self, interaction: discord.Interaction):
         guilds = self.guild_db.list_all_guilds()
         embed = create_guilds_list_embed(guilds, color=self.bot.color)
         await interaction.response.send_message(embed=embed)
 
     # ============================================================
-    # /guild_info
+    # /guild info
     # ============================================================
 
-    @app_commands.command(name="guild_info", description="🔍 Zobraz info o guildě (nech prázdné pro svou)")
+    @guild_grp.command(name="info", description="🔍 Zobraz info o guildě (nech prázdné pro svou)")
     @app_commands.describe(jmeno="Která guilda? (prázdné = tvoje)")
     @app_commands.autocomplete(jmeno=any_guild_autocomplete)
     async def guild_info(self, interaction: discord.Interaction, jmeno: str = ""):
@@ -1311,7 +1315,7 @@ class Guilds(commands.Cog):
             jmeno = self.guild_db.get_user_guild(interaction.user.id)
             if not jmeno:
                 await interaction.response.send_message(
-                    embed=create_error_embed("❌ Nejsi v Guildě", "Připoj se přes `/guild_join` nebo zadej jméno."),
+                    embed=create_error_embed("❌ Nejsi v Guildě", "Připoj se přes `/guild join` nebo zadej jméno."),
                     ephemeral=True
                 )
                 return
@@ -1345,10 +1349,10 @@ class Guilds(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     # ============================================================
-    # /guild_help
+    # /guild help
     # ============================================================
 
-    @app_commands.command(name="guild_help", description="📖 Nápověda k systému guild")
+    @guild_grp.command(name="help", description="📖 Nápověda k systému guild")
     async def guild_help(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="🏰 Arion — Guildy Aurionisu",
@@ -1358,36 +1362,36 @@ class Guilds(commands.Cog):
         embed.add_field(
             name="🧭 Pro každého",
             value=(
-                "`/guild_create` — Založ guildu\n"
-                "`/guild_join` — Vstup do otevřené\n"
-                "`/guild_apply` — Podej přihlášku\n"
-                "`/guild_withdraw` — Stáhni přihlášku\n"
-                "`/guild_leave` — Opusť guildu\n"
-                "`/guild_list` — Všechny guildy\n"
-                "`/guild_info` — Detail guildy\n"
+                "`/guild create` — Založ guildu\n"
+                "`/guild join` — Vstup do otevřené\n"
+                "`/guild apply` — Podej přihlášku\n"
+                "`/guild withdraw` — Stáhni přihlášku\n"
+                "`/guild leave` — Opusť guildu\n"
+                "`/guild list` — Všechny guildy\n"
+                "`/guild info` — Detail guildy\n"
             ),
             inline=False,
         )
         embed.add_field(
             name="🛡️ Officer+",
             value=(
-                "`/guild_invite` — Pozvi hráče\n"
-                "`/guild_applications` — Čekající přihlášky\n"
-                "`/guild_accept` / `/guild_deny` — Schval/zamítni\n"
-                "`/guild_kick` — Vyhoď řadového člena\n"
+                "`/guild invite` — Pozvi hráče\n"
+                "`/guild applications` — Čekající přihlášky\n"
+                "`/guild accept` / `/guild deny` — Schval/zamítni\n"
+                "`/guild kick` — Vyhoď řadového člena\n"
             ),
             inline=False,
         )
         embed.add_field(
             name="👑 Jen vůdce",
             value=(
-                "`/guild_promote` / `/guild_demote` — Officeři\n"
-                "`/guild_transfer` — Předej vedení\n"
-                "`/guild_set` — Identita (jméno, tag, motto, emoji, barva)\n"
-                "`/guild_recruitment` — Režim náboru\n"
-                "`/guild_capacity` — Kapacita\n"
-                "`/guild_describe` — Popis / lore\n"
-                "`/guild_disband` — Rozpusť guildu\n"
+                "`/guild promote` / `/guild demote` — Officeři\n"
+                "`/guild transfer` — Předej vedení\n"
+                "`/guild set` — Identita (jméno, tag, motto, emoji, barva)\n"
+                "`/guild recruitment` — Režim náboru\n"
+                "`/guild capacity` — Kapacita\n"
+                "`/guild describe` — Popis / lore\n"
+                "`/guild disband` — Rozpusť guildu\n"
             ),
             inline=False,
         )
