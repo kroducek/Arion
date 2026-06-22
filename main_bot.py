@@ -59,6 +59,7 @@ BOT_COGS = [
     "src.core.bot.liar_slots",
     "src.core.bot.gallows",
     "src.core.bot.tarot",
+    "src.core.bot.admin_backup",
     "src.core.bot.minigames_hub",
     "src.core.bot.blackjack" ,
     # Utility
@@ -68,7 +69,6 @@ BOT_COGS = [
     "src.core.bot.news",
     "src.core.bot.story",
     "src.core.bot.tierlist",
-    "src.core.bot.admin_backup",
     # Sdílená logika
     "src.logic.economy",
 ]
