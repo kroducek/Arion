@@ -504,7 +504,7 @@ class Economy(commands.Cog):
                 out.append(f"{prefix} {name} — **{bal}** {icon}")
             return "\n".join(out)
 
-        def _rank(data: dict) -> Optional[int]:
+        def _rank(data: dict):
             ranked = sorted(data.items(), key=lambda x: x[1], reverse=True)
             cid = str(interaction.user.id)
             return next((i + 1 for i, (uid, _) in enumerate(ranked) if uid == cid), None)
