@@ -30,6 +30,7 @@ from discord.ext import commands
 
 from src.utils.json_utils import load_json, save_json
 from src.utils.paths import ECONOMY as ECONOMY_FILE, ASSETS_DIR, data
+from src.logic.economy import minigame_file, minigame_coin
 
 SCORES_FILE = data("blackjack_scores.json")
 COIN = "<:goldcoin:1490171741237018795>"
@@ -52,8 +53,8 @@ except Exception:
 # EKONOMIKA + LEADERBOARD
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _load_eco() -> dict:        return load_json(ECONOMY_FILE, {})
-def _save_eco(d: dict):         save_json(ECONOMY_FILE, d)
+def _load_eco() -> dict:        return load_json(minigame_file(), {})
+def _save_eco(d: dict):         save_json(minigame_file(), d)
 def _eco_get(uid: int) -> int:  return _load_eco().get(str(uid), 0)
 
 
@@ -448,11 +449,11 @@ class BlackjackTable:
         if _eco_get(uid) < value:
             if prev > 0:
                 _eco_deduct(uid, prev)
-            return False, f"❌ Nemáš dost zlaťáků! Potřebuješ **{value}** {COIN}."
+            return False, f"❌ Nemáš dost! Potřebuješ **{value}** {minigame_coin()}."
         _eco_deduct(uid, value)
         seat.bet = value
         seat.stake = value
-        return True, f"✅ Vsazeno **{value}** {COIN}."
+        return True, f"✅ Vsazeno **{value}** {minigame_coin()}."
 
     def _refund_all_bets(self):
         for seat in self.seats.values():
@@ -549,7 +550,7 @@ class BlackjackTable:
         if seat.bet <= 0:
             return "Nemáš sázku."
         if not _eco_deduct(uid, seat.bet):
-            return f"❌ Nemáš dalších **{seat.bet}** {COIN} na zdvojení."
+            return f"❌ Nemáš dalších **{seat.bet}** {minigame_coin()} na zdvojení."
         seat.stake += seat.bet
         seat.doubled = True
         seat.hand.append(self._draw())
@@ -603,7 +604,7 @@ class BlackjackTable:
             icon = {"bj": "🃏", "win": "✅", "push": "➖", "loss": "❌"}[seat.outcome]
             label = {"bj": f"BLACKJACK +{payout - seat.stake}", "win": f"+{payout - seat.stake}",
                      "push": "vráceno", "loss": f"−{seat.stake}"}[seat.outcome]
-            lines.append(f"{icon} **{seat.name}** ({pv}) — {label} {COIN}")
+            lines.append(f"{icon} **{seat.name}** ({pv}) — {label} {minigame_coin()}")
 
         self.last_summary = (f"🎩 **Arion** dobrala na **{dv}**"
                              + (" (BLACKJACK)" if d_bj else "") + "\n" + "\n".join(lines))
@@ -743,7 +744,7 @@ class BlackjackTable:
                 st = "⏳"
             dbl = " 🔁" if seat.doubled else ""
             rows.append(f"{st} **{seat.name}** — {hand_text(seat.hand)} = **{pv}** "
-                        f"· {seat.stake}{COIN}{dbl}")
+                        f"· {seat.stake}{minigame_coin()}{dbl}")
         return "\n".join(rows) or "*nikdo nehraje*"
 
     def _betting_embed(self):
@@ -757,7 +758,7 @@ class BlackjackTable:
         bets = []
         for uid in self.order:
             seat = self.seats[uid]
-            tag = f"💰 {seat.bet} {COIN}" if seat.bet > 0 else "⏳ čeká na sázku"
+            tag = f"💰 {seat.bet} {minigame_coin()}" if seat.bet > 0 else "⏳ čeká na sázku"
             bets.append(f"• **{seat.name}** — {tag}")
         e.add_field(name=f"Sázky ({len(self.order)} hráčů)",
                     value="\n".join(bets) or "*prázdno*", inline=False)
@@ -867,7 +868,7 @@ class BlackjackCog(commands.Cog):
             name = member.display_name if member else f"<@{uid}>"
             profit = rec.get("profit", 0)
             sign = "+" if profit >= 0 else ""
-            lines.append(f"{medal} **{name}** — {sign}{profit} {COIN} · {rec.get('wins', 0)}× výhra")
+            lines.append(f"{medal} **{name}** — {sign}{profit} {minigame_coin()} · {rec.get('wins', 0)}× výhra")
         e = discord.Embed(title="🃏 Blackjack — Žebříček",
                           description="\n".join(lines), color=0xF1C40F)
         e.set_footer(text="Podle čistého profitu")

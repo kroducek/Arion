@@ -32,10 +32,11 @@ except Exception:
 # ── ECONOMY INTEGRACE ─────────────────────────────────────────────────────────
 
 from src.utils.paths import ECONOMY as ECONOMY_PATH, KOSTKY_LB as STATS_PATH, KOSTKY_MAGIC as MAGIC_DICE_PATH
+from src.logic.economy import minigame_file, minigame_coin
 
 def _econ_load() -> dict:
     try:
-        with open(ECONOMY_PATH, "r", encoding="utf-8") as f:
+        with open(minigame_file(), "r", encoding="utf-8") as f:
             content = f.read().strip()
             return json.loads(content) if content else {}
     except Exception:
@@ -43,7 +44,7 @@ def _econ_load() -> dict:
 
 def _econ_save(data: dict):
     try:
-        with open(ECONOMY_PATH, "w", encoding="utf-8") as f:
+        with open(minigame_file(), "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
     except Exception as e:
         print(f"[kostky] economy save chyba: {e}")
@@ -465,7 +466,7 @@ def lobby_embed(game: GameState, guild) -> discord.Embed:
     sazka_line = ""
     if game.sazka > 0:
         total_pool = game.sazka * (len([p for p in game.players if p != ARION_ID]) + (1 if game.has_arion else 0))
-        sazka_line = f"\n💰 **Sázka:** {game.sazka} <:goldcoin:1490171741237018795> na hráče  ·  pool: **{total_pool}** <:goldcoin:1490171741237018795>"
+        sazka_line = f"\n💰 **Sázka:** {game.sazka} {minigame_coin()} na hráče  ·  pool: **{total_pool}** {minigame_coin()}"
 
     embed = discord.Embed(
         title="🎲 Kostky (Farkle)",
@@ -572,7 +573,7 @@ def win_embed(game: GameState, guild, win_name: str, total: int, payout: int = 0
         parts.append("*🐾 Arion tleská tlapkami a zapisuje jméno zlatým inkoustem...*")
 
     if payout > 0:
-        parts.append(f"💰 **Výhra ze sázky: +{payout} <:goldcoin:1490171741237018795>**")
+        parts.append(f"💰 **Výhra ze sázky: +{payout} {minigame_coin()}**")
 
     embed = discord.Embed(
         title="🏆 VÍTĚZ!",
@@ -842,7 +843,7 @@ class LobbyView(discord.ui.View):
             if not econ_deduct(uid, self.game.sazka):
                 bal = econ_get(uid)
                 return await interaction.response.send_message(
-                    f"Nemáš dost zlaťáků na sázku! Potřebuješ **{self.game.sazka}**, máš **{bal}** <:goldcoin:1490171741237018795>",
+                    f"Nemáš dost na sázku! Potřebuješ **{self.game.sazka}**, máš **{bal}** {minigame_coin()}",
                     ephemeral=True
                 )
 
@@ -1231,7 +1232,7 @@ class Kostky(commands.Cog):
                 if not econ_deduct(uid, game.sazka):
                     bal = econ_get(uid)
                     return await interaction.response.send_message(
-                        f"Nemáš dost zlaťáků na sázku! Potřebuješ **{game.sazka}**, máš **{bal}** <:goldcoin:1490171741237018795>",
+                        f"Nemáš dost na sázku! Potřebuješ **{game.sazka}**, máš **{bal}** {minigame_coin()}",
                         ephemeral=True
                     )
 
@@ -1242,7 +1243,7 @@ class Kostky(commands.Cog):
                     await game.game_message.edit(embed=lobby_embed(game, interaction.guild))
                 except Exception:
                     pass
-            sazka_msg = f" Sázka **{game.sazka}** <:goldcoin:1490171741237018795> stržena." if game.sazka > 0 else ""
+            sazka_msg = f" Sázka **{game.sazka}** {minigame_coin()} stržena." if game.sazka > 0 else ""
             return await interaction.response.send_message(
                 f"✅ Připojil ses! ({len(game.players)}/{MAX_PLAYERS}){sazka_msg}",
                 ephemeral=True
@@ -1257,7 +1258,7 @@ class Kostky(commands.Cog):
             if not econ_deduct(uid, sazka):
                 bal = econ_get(uid)
                 return await interaction.response.send_message(
-                    f"Nemáš dost zlaťáků na sázku! Potřebuješ **{sazka}**, máš **{bal}** <:goldcoin:1490171741237018795>",
+                    f"Nemáš dost na sázku! Potřebuješ **{sazka}**, máš **{bal}** {minigame_coin()}",
                     ephemeral=True
                 )
 
@@ -1374,9 +1375,9 @@ class Kostky(commands.Cog):
             profit = stats.get("profit", 0)
 
             if profit > 0:
-                profit_str = f"+{profit} <:goldcoin:1490171741237018795>"
+                profit_str = f"+{profit} {minigame_coin()}"
             elif profit < 0:
-                profit_str = f"{profit} <:goldcoin:1490171741237018795>"
+                profit_str = f"{profit} {minigame_coin()}"
             else:
                 profit_str = "—"
 
@@ -1403,7 +1404,7 @@ class Kostky(commands.Cog):
                 name="📍 Tvoje stats",
                 value=(
                     f"🏆 {cs.get('wins', 0)} {wins_word(cs.get('wins', 0))}  •  "
-                    f"📈 Profit: **{profit_fmt}** <:goldcoin:1490171741237018795>"
+                    f"📈 Profit: **{profit_fmt}** {minigame_coin()}"
                 ),
                 inline=False
             )
