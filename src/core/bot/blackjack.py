@@ -30,7 +30,7 @@ from discord.ext import commands
 
 from src.utils.json_utils import load_json, save_json
 from src.utils.paths import ECONOMY as ECONOMY_FILE, ASSETS_DIR, data
-from src.logic.economy import minigame_file, minigame_coin
+from src.logic.economy import minigame_file, minigame_coin, get_minigame_currency, COIN_GOLD, COIN_SILVER
 
 SCORES_FILE = data("blackjack_scores.json")
 COIN = "<:goldcoin:1490171741237018795>"
@@ -77,15 +77,61 @@ def _load_scores() -> dict:  return load_json(SCORES_FILE, {})
 def _save_scores(d: dict):   save_json(SCORES_FILE, d)
 
 
-def _record_result(uid: int, profit: int, won: bool):
+def _record_result(uid: int, profit: int, won: bool, currency: str = None):
+    if currency is None:
+        currency = get_minigame_currency()
     scores = _load_scores(); k = str(uid)
-    rec = scores.get(k, {"profit": 0, "wins": 0, "games": 0})
-    rec["profit"] = rec.get("profit", 0) + profit
+    rec = scores.get(k, {})
+    # Migrace starého jednotného 'profit' → profit_silver (hry běžely na stříbro)
+    if "profit" in rec and "profit_silver" not in rec:
+        rec["profit_silver"] = rec.pop("profit")
+    pkey = f"profit_{currency}"
+    rec[pkey] = rec.get(pkey, 0) + profit
     rec["games"] = rec.get("games", 0) + 1
     if won:
         rec["wins"] = rec.get("wins", 0) + 1
     scores[k] = rec
     _save_scores(scores)
+
+
+def _bj_profit(rec: dict, currency: str) -> int:
+    """Profit hráče v dané měně (zvládne i starý jednotný 'profit' jako silver)."""
+    if currency == "silver" and "profit_silver" not in rec and "profit" in rec:
+        return rec.get("profit", 0)
+    return rec.get(f"profit_{currency}", 0)
+
+
+def _bj_leaderboard_embed(guild, currency: str = "silver") -> discord.Embed:
+    icon = COIN_GOLD if currency == "gold" else COIN_SILVER
+    cname = "Zlaťáky" if currency == "gold" else "Stříbrňáky"
+    scores = _load_scores()
+    ranked = sorted(scores.items(), key=lambda x: _bj_profit(x[1], currency), reverse=True)[:10]
+    medals = ["🥇", "🥈", "🥉"]
+    lines = []
+    for i, (uid, rec) in enumerate(ranked):
+        medal = medals[i] if i < 3 else f"`{i + 1}.`"
+        member = guild.get_member(int(uid)) if guild else None
+        name = member.display_name if member else f"<@{uid}>"
+        profit = _bj_profit(rec, currency)
+        sign = "+" if profit >= 0 else ""
+        lines.append(f"{medal} **{name}** — {sign}{profit} {icon} · {rec.get('wins', 0)}× výhra")
+    desc = "\n".join(lines) if lines else "*Zatím nikdo nehrál.*"
+    e = discord.Embed(title=f"🃏 Blackjack — Žebříček ({cname})", description=desc, color=0xF1C40F)
+    e.set_footer(text="Podle čistého profitu")
+    return e
+
+
+class BJLeaderboardView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=180)
+
+    @discord.ui.button(label="Zlaťáky", emoji="🟡", style=discord.ButtonStyle.secondary)
+    async def gold_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_bj_leaderboard_embed(interaction.guild, "gold"), view=self)
+
+    @discord.ui.button(label="Stříbrňáky", emoji="⚪", style=discord.ButtonStyle.secondary)
+    async def silver_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(embed=_bj_leaderboard_embed(interaction.guild, "silver"), view=self)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -859,20 +905,10 @@ class BlackjackCog(commands.Cog):
         if not scores:
             await interaction.response.send_message("Zatím nikdo nehrál.", ephemeral=True)
             return
-        ranked = sorted(scores.items(), key=lambda x: x[1].get("profit", 0), reverse=True)
-        medals = ["🥇", "🥈", "🥉"]
-        lines = []
-        for i, (uid, rec) in enumerate(ranked[:10]):
-            medal = medals[i] if i < 3 else f"`{i + 1}.`"
-            member = interaction.guild.get_member(int(uid)) if interaction.guild else None
-            name = member.display_name if member else f"<@{uid}>"
-            profit = rec.get("profit", 0)
-            sign = "+" if profit >= 0 else ""
-            lines.append(f"{medal} **{name}** — {sign}{profit} {minigame_coin()} · {rec.get('wins', 0)}× výhra")
-        e = discord.Embed(title="🃏 Blackjack — Žebříček",
-                          description="\n".join(lines), color=0xF1C40F)
-        e.set_footer(text="Podle čistého profitu")
-        await interaction.response.send_message(embed=e)
+        await interaction.response.send_message(
+            embed=_bj_leaderboard_embed(interaction.guild, "silver"),
+            view=BJLeaderboardView(),
+        )
 
 
 async def setup(bot: commands.Bot):

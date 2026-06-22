@@ -32,7 +32,7 @@ except Exception:
 # ── ECONOMY INTEGRACE ─────────────────────────────────────────────────────────
 
 from src.utils.paths import ECONOMY as ECONOMY_PATH, KOSTKY_LB as STATS_PATH, KOSTKY_MAGIC as MAGIC_DICE_PATH
-from src.logic.economy import minigame_file, minigame_coin
+from src.logic.economy import minigame_file, minigame_coin, get_minigame_currency, COIN_GOLD, COIN_SILVER
 
 def _econ_load() -> dict:
     try:
@@ -87,30 +87,115 @@ def _stats_save(data: dict):
     except Exception as e:
         print(f"[kostky] stats save chyba: {e}")
 
-def record_win(guild_id: int, user_id: int, profit: int = 0):
-    """Zaznamená výhru a přičte zisk k profitu."""
+def _kostky_migrate(rec: dict):
+    """Starý jednotný 'profit' → profit_silver (hry běžely na stříbro)."""
+    if "profit" in rec and "profit_silver" not in rec:
+        rec["profit_silver"] = rec.pop("profit")
+
+
+def _kostky_profit(rec: dict, currency: str) -> int:
+    if currency == "silver" and "profit_silver" not in rec and "profit" in rec:
+        return rec.get("profit", 0)
+    return rec.get(f"profit_{currency}", 0)
+
+
+def record_win(guild_id: int, user_id: int, profit: int = 0, currency: str = None):
+    """Zaznamená výhru a přičte zisk k profitu (v dané měně)."""
+    if currency is None:
+        currency = get_minigame_currency()
     data = _stats_load()
     gid  = str(guild_id)
     uid  = str(user_id)
-    data.setdefault(gid, {}).setdefault(uid, {"wins": 0, "profit": 0})
-    data[gid][uid]["wins"]   += 1
-    data[gid][uid]["profit"] += profit
+    rec  = data.setdefault(gid, {}).setdefault(uid, {"wins": 0})
+    _kostky_migrate(rec)
+    rec["wins"] = rec.get("wins", 0) + 1
+    rec[f"profit_{currency}"] = rec.get(f"profit_{currency}", 0) + profit
     _stats_save(data)
 
-def record_loss(guild_id: int, user_id: int, sazka: int = 0):
+def record_loss(guild_id: int, user_id: int, sazka: int = 0, currency: str = None):
     """Zaznamená prohru — odečte sázku z profitu (může jít do minusu)."""
     if sazka <= 0:
         return
+    if currency is None:
+        currency = get_minigame_currency()
     data = _stats_load()
     gid  = str(guild_id)
     uid  = str(user_id)
-    data.setdefault(gid, {}).setdefault(uid, {"wins": 0, "profit": 0})
-    data[gid][uid]["profit"] -= sazka
+    rec  = data.setdefault(gid, {}).setdefault(uid, {"wins": 0})
+    _kostky_migrate(rec)
+    rec[f"profit_{currency}"] = rec.get(f"profit_{currency}", 0) - sazka
     _stats_save(data)
 
 def get_all_stats(guild_id: int) -> dict:
     """Vrátí {uid_str: {wins, profit}} pro daný guild."""
     return _stats_load().get(str(guild_id), {})
+
+
+def _kostky_leaderboard_embed(guild, gid, currency: str = "silver") -> discord.Embed:
+    icon  = COIN_GOLD if currency == "gold" else COIN_SILVER
+    cname = "Zlaťáky" if currency == "gold" else "Stříbrňáky"
+    data  = get_all_stats(gid)
+
+    if not data:
+        embed = discord.Embed(
+            title="🏆 Leaderboard Kostek",
+            description="Zatím nikdo nevyhrál žádnou hru na tomto serveru.\n*Buď první!*",
+            color=0xFFD700,
+        )
+        embed.set_footer(text="⭐ Aurionis")
+        return embed
+
+    sorted_players = sorted(
+        data.items(),
+        key=lambda x: (-x[1].get("wins", 0), -_kostky_profit(x[1], currency)),
+    )[:10]
+
+    medals = ["🥇", "🥈", "🥉"]
+    lines  = []
+    for i, (uid_str, stats) in enumerate(sorted_players):
+        member = guild.get_member(int(uid_str)) if guild else None
+        name   = member.display_name if member else f"Hráč #{uid_str[-4:]}"
+        medal  = medals[i] if i < 3 else f"`{i+1}.`"
+        wins   = stats.get("wins", 0)
+        profit = _kostky_profit(stats, currency)
+        if profit > 0:
+            profit_str = f"+{profit} {icon}"
+        elif profit < 0:
+            profit_str = f"{profit} {icon}"
+        else:
+            profit_str = "—"
+        lines.append(
+            f"{medal} **{name}**\n"
+            f"┣ 🏆 {wins} {wins_word(wins)}\n"
+            f"┗ 📈 Profit: **{profit_str}**"
+        )
+
+    embed = discord.Embed(
+        title=f"🏆 Leaderboard Kostek ({cname})",
+        description="\n\n".join(lines),
+        color=0xFFD700,
+    )
+    total_wins = sum(s.get("wins", 0) for s in data.values())
+    embed.set_footer(text=f"⭐ Aurionis  •  Celkem výher na serveru: {total_wins}")
+    return embed
+
+
+class KostkyLeaderboardView(discord.ui.View):
+    def __init__(self, gid):
+        super().__init__(timeout=180)
+        self.gid = gid
+
+    @discord.ui.button(label="Zlaťáky", emoji="🟡", style=discord.ButtonStyle.secondary)
+    async def gold_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=_kostky_leaderboard_embed(interaction.guild, self.gid, "gold"), view=self
+        )
+
+    @discord.ui.button(label="Stříbrňáky", emoji="⚪", style=discord.ButtonStyle.secondary)
+    async def silver_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=_kostky_leaderboard_embed(interaction.guild, self.gid, "silver"), view=self
+        )
 
 def wins_word(n: int) -> str:
     if n == 1: return "výhra"
@@ -1358,60 +1443,10 @@ class Kostky(commands.Cog):
             embed.set_footer(text="⭐ Aurionis")
             return await interaction.response.send_message(embed=embed)
 
-        # Seřadit primárně podle výher, sekundárně podle profitu
-        sorted_players = sorted(
-            data.items(),
-            key=lambda x: (-x[1].get("wins", 0), -x[1].get("profit", 0))
-        )[:10]
-
-        medals = ["🥇", "🥈", "🥉"]
-        lines  = []
-
-        for i, (uid_str, stats) in enumerate(sorted_players):
-            member = interaction.guild.get_member(int(uid_str))
-            name   = member.display_name if member else f"Hráč #{uid_str[-4:]}"
-            medal  = medals[i] if i < 3 else f"`{i+1}.`"
-            wins   = stats.get("wins",   0)
-            profit = stats.get("profit", 0)
-
-            if profit > 0:
-                profit_str = f"+{profit} {minigame_coin()}"
-            elif profit < 0:
-                profit_str = f"{profit} {minigame_coin()}"
-            else:
-                profit_str = "—"
-
-            lines.append(
-                f"{medal} **{name}**\n"
-                f"┣ 🏆 {wins} {wins_word(wins)}\n"
-                f"┗ 📈 Profit: **{profit_str}**"
-            )
-
-        embed = discord.Embed(
-            title="🏆 Leaderboard Kostek",
-            description="\n\n".join(lines),
-            color=0xFFD700
+        await interaction.response.send_message(
+            embed=_kostky_leaderboard_embed(interaction.guild, gid, "silver"),
+            view=KostkyLeaderboardView(gid),
         )
-
-        # Ukázat stats volajícího pokud není v top 10
-        caller_uid    = str(interaction.user.id)
-        caller_in_top = any(uid == caller_uid for uid, _ in sorted_players)
-        if not caller_in_top and caller_uid in data:
-            cs     = data[caller_uid]
-            profit = cs.get("profit", 0)
-            profit_fmt = f"+{profit}" if profit > 0 else str(profit) if profit < 0 else "—"
-            embed.add_field(
-                name="📍 Tvoje stats",
-                value=(
-                    f"🏆 {cs.get('wins', 0)} {wins_word(cs.get('wins', 0))}  •  "
-                    f"📈 Profit: **{profit_fmt}** {minigame_coin()}"
-                ),
-                inline=False
-            )
-
-        total_wins = sum(s.get("wins", 0) for s in data.values())
-        embed.set_footer(text=f"⭐ Aurionis  •  Celkem výher na serveru: {total_wins}")
-        await interaction.response.send_message(embed=embed)
 
     # ── /admin-kostky add ─────────────────────────────────────────────────────
 
