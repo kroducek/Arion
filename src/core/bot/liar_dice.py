@@ -21,7 +21,7 @@ from src.utils.paths import (
     LIAR_SCORES  as SCORES_FILE,
     ECONOMY      as ECONOMY_FILE,
 )
-from src.logic.economy import minigame_file
+from src.logic.economy import minigame_file, minigame_coin
 
 # ── Dice image (volitelné) ────────────────────────────────────────────────────
 try:
@@ -332,8 +332,8 @@ class LiarLobby(discord.ui.View):
         names = "\n".join(f"• {p.display_name}" for p in self.players)
         embed.add_field(name=f"Hráči ({len(self.players)}/{MAX_PLAYERS})", value=names, inline=True)
         if self.bet > 0:
-            embed.add_field(name="Sázka", value=f"{self.bet} {COIN} každý", inline=True)
-            embed.add_field(name="Pot",   value=f"{pot} {COIN}", inline=True)
+            embed.add_field(name="Sázka", value=f"{self.bet} {minigame_coin()} každý", inline=True)
+            embed.add_field(name="Pot",   value=f"{pot} {minigame_coin()}", inline=True)
         embed.set_footer(text=f"Min. {MIN_PLAYERS} hráči  ·  kostky si zobrazíš tlačítkem 👁 Moje kostky")
         return embed
 
@@ -351,7 +351,7 @@ class LiarLobby(discord.ui.View):
             eco = _load_eco()
             if eco.get(uid, 0) < self.bet:
                 await interaction.response.send_message(
-                    f"❌ Nemáš dost zlaťáků! Potřebuješ **{self.bet}** {COIN}.", ephemeral=True
+                    f"❌ Nemáš dost! Potřebuješ **{self.bet}** {minigame_coin()}.", ephemeral=True
                 )
                 return
             eco[uid] = eco.get(uid, 0) - self.bet
@@ -506,7 +506,7 @@ class LiarDiceCog(commands.Cog):
         embed.add_field(name="Na tahu", value=f"➡️ {mention}", inline=True)
 
         if game["bet"] > 0:
-            embed.add_field(name="Pot", value=f"{game['pot']} {COIN}", inline=True)
+            embed.add_field(name="Pot", value=f"{game['pot']} {minigame_coin()}", inline=True)
 
         total = sum(game["dice_count"].get(u, 0) for u in _active(game))
         embed.set_footer(text=f"Celkem kostek na stole: {total}  ·  👁 Moje kostky = zobrazí tvé kostky")
@@ -638,7 +638,7 @@ class LiarDiceCog(commands.Cog):
                 f"Celková vítězství: **{scores[winner_uid]}**"
             )
             if pot > 0:
-                desc += f"\n🏆 Výhra: **{pot}** {COIN}"
+                desc += f"\n🏆 Výhra: **{pot}** {minigame_coin()}"
             color  = 0xF1C40F
             thumb  = member.display_avatar.url if member else None
         else:
@@ -684,7 +684,7 @@ class LiarDiceCog(commands.Cog):
             eco = _load_eco()
             if eco.get(uid, 0) < sazka:
                 await interaction.response.send_message(
-                    f"❌ Nemáš dost zlaťáků! Potřebuješ **{sazka}** {COIN}.", ephemeral=True
+                    f"❌ Nemáš dost! Potřebuješ **{sazka}** {minigame_coin()}.", ephemeral=True
                 )
                 return
 

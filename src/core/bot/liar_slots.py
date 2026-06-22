@@ -2,7 +2,7 @@
 Liar Slots – bluffovací slot-machine hra pro ArionBot
 =====================================================
 Příkazy:
-  /liar_slots        – spustí lobby (volitelná sázka v goldech)
+  /liar_slots        – spustí lobby (volitelná sázka)
   /slots_leaderboard – žebříček výher
   /slots_cancel      – [Admin] zruší probíhající hru
 """
@@ -14,7 +14,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from src.utils.paths import LIAR_SLOTS_SCORES as SCORES_FILE, ECONOMY as ECONOMY_FILE
-from src.logic.economy import minigame_file
+from src.logic.economy import minigame_file, minigame_coin
 from src.utils.json_utils import load_json, save_json
 
 # ── Konstanty ─────────────────────────────────────────────────────────────────
@@ -155,8 +155,8 @@ class SlotsLobbyView(discord.ui.View):
         )
         e.add_field(name="⚡ Execute limit", value=f"**{self.execute_threshold}** bodů", inline=True)
         if self.bet > 0:
-            e.add_field(name="Sázka", value=f"{self.bet} {COIN} každý", inline=True)
-            e.add_field(name="Pot",   value=f"{pot} {COIN}", inline=True)
+            e.add_field(name="Sázka", value=f"{self.bet} {minigame_coin()} každý", inline=True)
+            e.add_field(name="Pot",   value=f"{pot} {minigame_coin()}", inline=True)
         return e
 
     @discord.ui.button(label="🎰 Připojit se", style=discord.ButtonStyle.success, custom_id="ls_join", row=0)
@@ -172,7 +172,7 @@ class SlotsLobbyView(discord.ui.View):
             eco = _load_eco()
             if eco.get(uid, 0) < self.bet:
                 await interaction.response.send_message(
-                    f"❌ Nemáš dost zlaťáků! Potřebuješ **{self.bet}** {COIN}.", ephemeral=True
+                    f"❌ Nemáš dost! Potřebuješ **{self.bet}** {minigame_coin()}.", ephemeral=True
                 )
                 return
             eco[uid] = eco.get(uid, 0) - self.bet
@@ -635,7 +635,7 @@ class SlotsCog(commands.Cog):
             eco = _load_eco()
             if eco.get(uid, 0) < sazka:
                 await interaction.response.send_message(
-                    f"❌ Nemáš dost zlaťáků! Potřebuješ **{sazka}** {COIN}.", ephemeral=True
+                    f"❌ Nemáš dost! Potřebuješ **{sazka}** {minigame_coin()}.", ephemeral=True
                 )
                 return
         view = SlotsLobbyView(self, interaction.user, sazka)
@@ -715,7 +715,7 @@ class SlotsCog(commands.Cog):
             "• **🎰🎰 Double Spin** — 1× za hru, točíš dvakrát a vybereš výsledek"
         )
         if pot > 0:
-            e.add_field(name="💰 Pot", value=f"**{pot}** {COIN}", inline=True)
+            e.add_field(name="💰 Pot", value=f"**{pot}** {minigame_coin()}", inline=True)
         await channel.send(embed=e)
         await self._start_turn(channel, game)
 
@@ -746,7 +746,7 @@ class SlotsCog(commands.Cog):
         pdata  = game["players"][uid]
         member = channel.guild.get_member(int(uid))
 
-        pot_str = f" · Pot: **{game['pot']}** {COIN}" if game.get("pot", 0) > 0 else ""
+        pot_str = f" · Pot: **{game['pot']}** {minigame_coin()}" if game.get("pot", 0) > 0 else ""
         e = discord.Embed(title=f"🎰 Tah: {pdata['name']}", color=0xFFD700)
         e.add_field(name="📊 Skóre", value=_standings_str(game), inline=False)
         e.set_footer(text=f"Klikni 🎰 Točit! nebo použij speciální akci.{pot_str}")
@@ -1023,7 +1023,7 @@ class SlotsCog(commands.Cog):
                 eco = _load_eco()
                 eco[winner_uid] = eco.get(winner_uid, 0) + pot
                 _save_eco(eco)
-                e.description += f"\n🏆 Výhra: **{pot}** {COIN}"
+                e.description += f"\n🏆 Výhra: **{pot}** {minigame_coin()}"
         else:
             e.description = "Všichni byli eliminováni — remíza!"
         e.add_field(name="Výsledky", value="\n".join(rows), inline=False)
