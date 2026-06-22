@@ -340,6 +340,51 @@ def _parse_items(raws: list[str | None]) -> tuple[list, str | None]:
     return items, None
 
 
+# ── Žebříček s přepínači měny ──────────────────────────────────────────────────
+
+_LB_NAMES = {"gold": "Zlaťáky", "silver": "Stříbrňáky", "stardust": "Hvězdný prach"}
+
+
+def build_leaderboard_embed(guild, currency: str = "gold") -> discord.Embed:
+    """Sestaví embed žebříčku pro danou měnu (top 10)."""
+    data = load_json(_currency_file(currency), default={})
+    icon = coin(currency)
+    title = f"🏆 Žebříček — {_LB_NAMES.get(currency, currency)}"
+
+    if not data:
+        return discord.Embed(title=title, description="*Zatím tu nikdo nic nemá.*", color=0xFFD700)
+
+    ranked = sorted(data.items(), key=lambda x: x[1], reverse=True)[:10]
+    medals = ["🥇", "🥈", "🥉"]
+    lines = []
+    for i, (uid, bal) in enumerate(ranked):
+        prefix = medals[i] if i < 3 else f"**{i+1}.**"
+        member = guild.get_member(int(uid)) if guild else None
+        name   = member.display_name if member else f"Neznámý ({uid})"
+        lines.append(f"{prefix} {name} — **{bal}** {icon}")
+
+    return discord.Embed(title=title, description="\n".join(lines), color=0xFFD700)
+
+
+class LeaderboardView(discord.ui.View):
+    """Přepínač měny pod žebříčkem — kdokoli může přepnout zobrazení."""
+
+    def __init__(self):
+        super().__init__(timeout=180)
+
+    @discord.ui.button(label="Zlaťáky", emoji="🟡", style=discord.ButtonStyle.secondary)
+    async def gold_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_leaderboard_embed(interaction.guild, "gold"), view=self
+        )
+
+    @discord.ui.button(label="Stříbrňáky", emoji="⚪", style=discord.ButtonStyle.secondary)
+    async def silver_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(
+            embed=build_leaderboard_embed(interaction.guild, "silver"), view=self
+        )
+
+
 # ── Economy Cog ───────────────────────────────────────────────────────────────
 
 class Economy(commands.Cog):
@@ -486,43 +531,12 @@ class Economy(commands.Cog):
 
     # ── /gleaderboard ─────────────────────────────────────────────────────────
 
-    @app_commands.command(name="gleaderboard", description="Top 10 nejbohatších — zlaťáky i stříbrňáky")
+    @app_commands.command(name="gleaderboard", description="Žebříček nejbohatších (přepínání 🟡/⚪)")
     async def gleaderboard(self, interaction: discord.Interaction):
-        gold_data   = load_json(_currency_file("gold"), default={})
-        silver_data = load_json(_currency_file("silver"), default={})
-        medals = ["🥇", "🥈", "🥉"]
-
-        def _format(data: dict, icon: str) -> str:
-            if not data:
-                return "*Zatím prázdné*"
-            ranked = sorted(data.items(), key=lambda x: x[1], reverse=True)[:10]
-            out = []
-            for i, (uid, bal) in enumerate(ranked):
-                prefix = medals[i] if i < 3 else f"**{i+1}.**"
-                member = interaction.guild.get_member(int(uid)) if interaction.guild else None
-                name   = member.display_name if member else f"Neznámý ({uid})"
-                out.append(f"{prefix} {name} — **{bal}** {icon}")
-            return "\n".join(out)
-
-        def _rank(data: dict):
-            ranked = sorted(data.items(), key=lambda x: x[1], reverse=True)
-            cid = str(interaction.user.id)
-            return next((i + 1 for i, (uid, _) in enumerate(ranked) if uid == cid), None)
-
-        embed = discord.Embed(title="🏆 Žebříček nejbohatších", color=0xFFD700)
-        embed.add_field(name=f"{COIN_GOLD} Zlaťáky",    value=_format(gold_data, COIN_GOLD),     inline=True)
-        embed.add_field(name=f"{COIN_SILVER} Stříbrňáky", value=_format(silver_data, COIN_SILVER), inline=True)
-
-        gr, sr = _rank(gold_data), _rank(silver_data)
-        foot = []
-        if gr:
-            foot.append(f"🟡 #{gr}")
-        if sr:
-            foot.append(f"⚪ #{sr}")
-        if foot:
-            embed.set_footer(text="Tvoje pozice: " + "  ·  ".join(foot))
-
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(
+            embed=build_leaderboard_embed(interaction.guild, "gold"),
+            view=LeaderboardView(),
+        )
 
     # ── /minihry_mena ─────────────────────────────────────────────────────────
 
