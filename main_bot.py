@@ -36,8 +36,7 @@ if _data_dir_override:
     _paths.GUESS_SCORES      = _paths.data("guess_scores.json")
     _paths.LIAR_SCORES       = _paths.data("liar_scores.json")
     _paths.LIAR_SLOTS_SCORES = _paths.data("liar_slots_scores.json")
-    _paths.LABYRINTH_SCORES  = _paths.data("labyrinth_scores.json")
-    _paths.NEWS              = _paths.data("news.json")
+    _paths.NEWS   = _paths.data("news.json")
     _paths.STORY_LIB         = _paths.data("story_library.json")
     _paths.STORY_SAVE        = _paths.data("story_save.json")
     _paths.CARDS_DATA        = _paths.data("cards_data.json")
@@ -61,9 +60,7 @@ BOT_COGS = [
     "src.core.bot.gallows",
     "src.core.bot.tarot",
     "src.core.bot.minigames_hub",
-    "src.core.bot.blackjack",
-    # Labyrinth (balíček)
-    "src.core.bot.labyrinth",
+    "src.core.bot.blackjack" ,
     # Utility
     "src.core.bot.countdown",
     "src.core.bot.voice",
