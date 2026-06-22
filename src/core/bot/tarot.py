@@ -3,7 +3,7 @@ Tarot cog pro ArionBot
 Arion vykládá tarotové karty — Velká Arkána (22 karet).
 
 Příkazy:
-  /tarot solo otazka:   — soukromé věštění, poplatek 50 zlatých
+  /tarot solo otazka:   — soukromé věštění, poplatek 50
   /tarot session        — otevře veřejné lobby, ostatní se připojí a zaplatí
                           Arion pak vykládá postupně jednomu po druhém
 
@@ -21,22 +21,29 @@ from discord.ext import commands
 from discord import app_commands
 
 from src.utils.paths import ECONOMY as ECONOMY_PATH, TAROT_DIR
+from src.logic.economy import minigame_file, minigame_coin
+# --- DOČASNÉ: importy pro /tarot nuke_leaderboards (po promazání smazat) ---
+from src.utils.paths import (
+    DUEL_SCORES, KOSTKY_LB, LIAR_SCORES, LIAR_SLOTS_SCORES,
+    GUESS_SCORES, LABYRINTH_SCORES, data as _nuke_data,
+)
+from src.utils.json_utils import save_json as _nuke_save
 POPLATEK     = 50
 MAX_SESSION  = 8
 GOLD_EMOJI   = "<:goldcoin:1490171741237018795>"
 
 def load_eco():
-    if not os.path.exists(ECONOMY_PATH):
+    if not os.path.exists(minigame_file()):
         return {}
     try:
-        with open(ECONOMY_PATH, "r", encoding="utf-8") as f:
+        with open(minigame_file(), "r", encoding="utf-8") as f:
             c = f.read().strip()
             return json.loads(c) if c else {}
     except Exception:
         return {}
 
 def save_eco(data):
-    with open(ECONOMY_PATH, "w", encoding="utf-8") as f:
+    with open(minigame_file(), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
 def deduct(uid, amount):
@@ -305,7 +312,7 @@ def lobby_embed_build(s, guild):
         title="🔮 Tarotová session — Lobby",
         description=(
             "*Arion připravuje karty a svíčky...*\n\n"
-            f"**Poplatek:** {POPLATEK} {GOLD_EMOJI} za výklad\n"
+            f"**Poplatek:** {POPLATEK} {minigame_coin()} za výklad\n"
             f"**Spread:** Tři karty — Minulost · Přítomnost · Budoucnost\n\n"
             "Připoj se tlačítkem níže a zadej svou otázku. "
             "Host spustí výklad až bude lobby připravena."
@@ -351,14 +358,14 @@ class TarotQuestionModal(discord.ui.Modal, title="Tvá otázka pro Arion"):
         if not deduct(uid, POPLATEK):
             bal = balance(uid)
             await interaction.response.send_message(
-                f"Nemáš dost zlatých. Potřebuješ **{POPLATEK}** {GOLD_EMOJI}, máš **{bal}** {GOLD_EMOJI}.",
+                f"Nemáš dost. Potřebuješ **{POPLATEK}** {minigame_coin()}, máš **{bal}** {minigame_coin()}.",
                 ephemeral=True
             )
             return
         s["paid"].add(uid)
         s["queue"].append((uid, self.otazka.value))
         await interaction.response.send_message(
-            f"✅ Zaplaceno **{POPLATEK}** {GOLD_EMOJI}. Jsi v řadě č. **{len(s['queue'])}**.\n"
+            f"✅ Zaplaceno **{POPLATEK}** {minigame_coin()}. Jsi v řadě č. **{len(s['queue'])}**.\n"
             "*Arion přijala tvou otázku a přikývla.*",
             ephemeral=True
         )
@@ -377,7 +384,7 @@ class TarotLobbyView(discord.ui.View):
         # Cleanup — aby nová session mohla vzniknout
         active_sessions.pop(self.session_gid, None)
 
-    @discord.ui.button(label="🔮 Připojit se a zaplatit 50 zlatých", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="🔮 Připojit se a zaplatit 50", style=discord.ButtonStyle.primary)
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
         gid = interaction.guild_id
         uid = interaction.user.id
@@ -491,14 +498,14 @@ class Tarot(commands.Cog):
         else:
             await interaction.followup.send(embed=embed)
 
-    @tarot_group.command(name="solo", description=f"Soukromý výklad — Arion ti vyloží 3 karty (poplatek {POPLATEK} zlatých)")
+    @tarot_group.command(name="solo", description=f"Soukromý výklad — Arion ti vyloží 3 karty (poplatek {POPLATEK})")
     @app_commands.describe(otazka="Tvá otázka pro karty — otevřená, ne ano/ne")
     async def tarot_solo(self, interaction: discord.Interaction, otazka: str):
         uid = interaction.user.id
         bal = balance(uid)
         if bal < POPLATEK:
             await interaction.response.send_message(
-                f"Nemáš dost zlatých. Věštění stojí **{POPLATEK}** {GOLD_EMOJI}, ty máš **{bal}** {GOLD_EMOJI}.",
+                f"Nemáš dost. Věštění stojí **{POPLATEK}** {minigame_coin()}, ty máš **{bal}** {minigame_coin()}.",
                 ephemeral=True
             )
             return
@@ -506,7 +513,7 @@ class Tarot(commands.Cog):
         # Deduct až po defer — aby hráč nepřišel o zlaté při Discord chybě
         if not deduct(uid, POPLATEK):
             await interaction.followup.send(
-                f"Nemáš dost zlatých. Věštění stojí **{POPLATEK}** {GOLD_EMOJI}.",
+                f"Nemáš dost. Věštění stojí **{POPLATEK}** {minigame_coin()}.",
                 ephemeral=True
             )
             return
@@ -527,6 +534,33 @@ class Tarot(commands.Cog):
         embed = lobby_embed_build(s, interaction.guild)
         await interaction.response.send_message(embed=embed, view=view)
         active_sessions[gid]["lobby_msg"] = await interaction.original_response()
+
+    # ─── DOČASNÉ: vymazání všech leaderboardů miniher (po promazání celý blok smazat) ───
+    @tarot_group.command(name="nuke_leaderboards",
+                         description="[DOČASNÉ] Vymaže všechny leaderboardy miniher (NE economy)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def nuke_leaderboards(self, interaction: discord.Interaction):
+        targets = {
+            "Duel":          DUEL_SCORES,
+            "Kostky":        KOSTKY_LB,
+            "Kostka lháře":  LIAR_SCORES,
+            "Liar Slots":    LIAR_SLOTS_SCORES,
+            "Hádej kdo":     GUESS_SCORES,
+            "Labyrinth":     LABYRINTH_SCORES,
+            "Blackjack":     _nuke_data("blackjack_scores.json"),
+        }
+        wiped, failed = [], []
+        for name, path in targets.items():
+            try:
+                _nuke_save(path, {})
+                wiped.append(name)
+            except Exception as e:
+                failed.append(f"{name} ({e})")
+        msg = "🧨 **Leaderboardy vymazány:** " + (", ".join(wiped) if wiped else "—")
+        if failed:
+            msg += "\n⚠️ Selhalo: " + ", ".join(failed)
+        msg += "\n-# Economy (zlaťáky / stříbro / hvězdný prach) zůstává nedotčená."
+        await interaction.response.send_message(msg, ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tarot(bot))
