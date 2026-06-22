@@ -486,43 +486,41 @@ class Economy(commands.Cog):
 
     # ── /gleaderboard ─────────────────────────────────────────────────────────
 
-    @app_commands.command(name="gleaderboard", description="Top 10 nejbohatších hráčů serveru")
-    @app_commands.describe(mena="Která měna (výchozí: zlaťáky)")
-    @app_commands.choices(mena=MENA_CHOICES)
-    async def gleaderboard(
-        self,
-        interaction: discord.Interaction,
-        mena: app_commands.Choice[str] | None = None,
-    ):
-        currency = mena.value if mena else "gold"
-        icon = coin(currency)
-        data = load_json(_currency_file(currency), default={})
-        if not data:
-            return await interaction.response.send_message(
-                f"Zatím tu nikdo žádné {currency_name(currency)} nemá.", ephemeral=True
-            )
+    @app_commands.command(name="gleaderboard", description="Top 10 nejbohatších — zlaťáky i stříbrňáky")
+    async def gleaderboard(self, interaction: discord.Interaction):
+        gold_data   = load_json(_currency_file("gold"), default={})
+        silver_data = load_json(_currency_file("silver"), default={})
+        medals = ["🥇", "🥈", "🥉"]
 
-        sorted_all = sorted(data.items(), key=lambda x: x[1], reverse=True)
-        medals     = ["🥇", "🥈", "🥉"]
-        lines      = []
-        for i, (uid, balance) in enumerate(sorted_all[:10]):
-            prefix = medals[i] if i < 3 else f"**{i+1}.**"
-            member = interaction.guild.get_member(int(uid))
-            name   = member.display_name if member else f"Neznámý ({uid})"
-            lines.append(f"{prefix} {name} — **{balance}** {icon}")
+        def _format(data: dict, icon: str) -> str:
+            if not data:
+                return "*Zatím prázdné*"
+            ranked = sorted(data.items(), key=lambda x: x[1], reverse=True)[:10]
+            out = []
+            for i, (uid, bal) in enumerate(ranked):
+                prefix = medals[i] if i < 3 else f"**{i+1}.**"
+                member = interaction.guild.get_member(int(uid)) if interaction.guild else None
+                name   = member.display_name if member else f"Neznámý ({uid})"
+                out.append(f"{prefix} {name} — **{bal}** {icon}")
+            return "\n".join(out)
 
-        embed = discord.Embed(
-            title=f"🏆 Žebříček — {currency_name(currency)}",
-            description="\n".join(lines),
-            color=0xFFD700,
-        )
-        caller_id   = str(interaction.user.id)
-        caller_rank = next((i + 1 for i, (uid, _) in enumerate(sorted_all) if uid == caller_id), None)
-        caller_bal  = data.get(caller_id, 0)
-        if caller_rank and caller_rank > 10:
-            embed.set_footer(text=f"Tvoje pozice: #{caller_rank} ({caller_bal})")
-        elif caller_rank:
-            embed.set_footer(text=f"Tvoje pozice: #{caller_rank}")
+        def _rank(data: dict) -> Optional[int]:
+            ranked = sorted(data.items(), key=lambda x: x[1], reverse=True)
+            cid = str(interaction.user.id)
+            return next((i + 1 for i, (uid, _) in enumerate(ranked) if uid == cid), None)
+
+        embed = discord.Embed(title="🏆 Žebříček nejbohatších", color=0xFFD700)
+        embed.add_field(name=f"{COIN_GOLD} Zlaťáky",    value=_format(gold_data, COIN_GOLD),     inline=True)
+        embed.add_field(name=f"{COIN_SILVER} Stříbrňáky", value=_format(silver_data, COIN_SILVER), inline=True)
+
+        gr, sr = _rank(gold_data), _rank(silver_data)
+        foot = []
+        if gr:
+            foot.append(f"🟡 #{gr}")
+        if sr:
+            foot.append(f"⚪ #{sr}")
+        if foot:
+            embed.set_footer(text="Tvoje pozice: " + "  ·  ".join(foot))
 
         await interaction.response.send_message(embed=embed)
 
