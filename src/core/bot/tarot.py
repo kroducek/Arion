@@ -22,12 +22,6 @@ from discord import app_commands
 
 from src.utils.paths import ECONOMY as ECONOMY_PATH, TAROT_DIR
 from src.logic.economy import minigame_file, minigame_coin
-# --- DOČASNÉ: importy pro /tarot nuke_leaderboards (po promazání smazat) ---
-from src.utils.paths import (
-    DUEL_SCORES, KOSTKY_LB, LIAR_SCORES, LIAR_SLOTS_SCORES,
-    GUESS_SCORES, LABYRINTH_SCORES, data as _nuke_data,
-)
-from src.utils.json_utils import save_json as _nuke_save
 POPLATEK     = 50
 MAX_SESSION  = 8
 GOLD_EMOJI   = "<:goldcoin:1490171741237018795>"
@@ -534,33 +528,6 @@ class Tarot(commands.Cog):
         embed = lobby_embed_build(s, interaction.guild)
         await interaction.response.send_message(embed=embed, view=view)
         active_sessions[gid]["lobby_msg"] = await interaction.original_response()
-
-    # ─── DOČASNÉ: vymazání všech leaderboardů miniher (po promazání celý blok smazat) ───
-    @tarot_group.command(name="nuke_leaderboards",
-                         description="[DOČASNÉ] Vymaže všechny leaderboardy miniher (NE economy)")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def nuke_leaderboards(self, interaction: discord.Interaction):
-        targets = {
-            "Duel":          DUEL_SCORES,
-            "Kostky":        KOSTKY_LB,
-            "Kostka lháře":  LIAR_SCORES,
-            "Liar Slots":    LIAR_SLOTS_SCORES,
-            "Hádej kdo":     GUESS_SCORES,
-            "Labyrinth":     LABYRINTH_SCORES,
-            "Blackjack":     _nuke_data("blackjack_scores.json"),
-        }
-        wiped, failed = [], []
-        for name, path in targets.items():
-            try:
-                _nuke_save(path, {})
-                wiped.append(name)
-            except Exception as e:
-                failed.append(f"{name} ({e})")
-        msg = "🧨 **Leaderboardy vymazány:** " + (", ".join(wiped) if wiped else "—")
-        if failed:
-            msg += "\n⚠️ Selhalo: " + ", ".join(failed)
-        msg += "\n-# Economy (zlaťáky / stříbro / hvězdný prach) zůstává nedotčená."
-        await interaction.response.send_message(msg, ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Tarot(bot))

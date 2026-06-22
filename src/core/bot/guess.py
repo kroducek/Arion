@@ -10,6 +10,7 @@ from discord.ext import commands
 
 from src.utils.paths import ECONOMY as ECONOMY_FILE, GUESS_SCORES as SCORES_FILE
 from src.utils.json_utils import load_json, save_json
+from src.logic.economy import minigame_file, minigame_coin
 
 COIN        = "<:goldcoin:1490171741237018795>"
 MAX_GUESSES = 3
@@ -21,10 +22,10 @@ MAX_PLAYERS = 8
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _load_economy() -> dict:
-    return load_json(ECONOMY_FILE) or {}
+    return load_json(minigame_file()) or {}
 
 def _save_economy(data: dict):
-    save_json(ECONOMY_FILE, data)
+    save_json(minigame_file(), data)
 
 def _load_scores() -> dict:
     return load_json(SCORES_FILE) or {}
@@ -167,8 +168,8 @@ class GuessLobby(discord.ui.View):
         )
         names = "\n".join(f"• {p.display_name}" for p in self.players)
         embed.add_field(name=f"Hráči ({len(self.players)}/{MAX_PLAYERS})", value=names, inline=False)
-        embed.add_field(name="Sázka", value=f"{self.bet} {COIN} každý", inline=True)
-        embed.add_field(name="Pot",   value=f"{self.bet * len(self.players)} {COIN}", inline=True)
+        embed.add_field(name="Sázka", value=f"{self.bet} {minigame_coin()} každý", inline=True)
+        embed.add_field(name="Pot",   value=f"{self.bet * len(self.players)} {minigame_coin()}", inline=True)
         embed.set_footer(text=f"Min. {MIN_PLAYERS} hráči | Zakladatel spouští hru")
         return embed
 
@@ -186,7 +187,7 @@ class GuessLobby(discord.ui.View):
         balance = economy.get(uid, 0)
         if balance < self.bet:
             await interaction.response.send_message(
-                f"❌ Nemáš dost zlaťáků! Potřebuješ **{self.bet}** {COIN}, máš **{balance}**.",
+                f"❌ Nemáš dost! Potřebuješ **{self.bet}** {minigame_coin()}, máš **{balance}**.",
                 ephemeral=True
             )
             return
@@ -304,7 +305,7 @@ class GuessCog(commands.Cog):
             ),
             color=0x3498DB
         )
-        embed.set_footer(text=f"Čas: 5 minut | Pot: {bet * len(shuffled)} {COIN}")
+        embed.set_footer(text=f"Čas: 5 minut | Pot: {bet * len(shuffled)} {minigame_coin()}")
 
         view = WordSubmitView(self, channel.id)
         await channel.send(embed=embed, view=view)
@@ -330,7 +331,7 @@ class GuessCog(commands.Cog):
             ),
             color=0x27AE60
         )
-        embed.add_field(name="💰 Pot",    value=f"**{game['pot']}** {COIN}", inline=True)
+        embed.add_field(name="💰 Pot",    value=f"**{game['pot']}** {minigame_coin()}", inline=True)
         embed.add_field(name="🎯 Pokusy", value=f"**{MAX_GUESSES}** na hráče",  inline=True)
         embed.set_footer(text="Tip: /guess tip <slovo> • Stav: /guess status")
         await channel.send(embed=embed)
@@ -405,7 +406,7 @@ class GuessCog(commands.Cog):
                 description=(
                     f"🎉 {interaction.user.mention} uhodl/a své slovo!\n\n"
                     f"Tajné slovo bylo: **{game['words'][uid]}**\n"
-                    f"Výhra: **{game['pot']}** {COIN}"
+                    f"Výhra: **{game['pot']}** {minigame_coin()}"
                 ),
                 color=0xF1C40F
             )
@@ -455,7 +456,7 @@ class GuessCog(commands.Cog):
                         description=(
                             f"Všichni ostatní vypadli.\n"
                             f"{winner.mention} vyhrává jako poslední přeživší!\n\n"
-                            f"Výhra: **{game['pot']}** {COIN}"
+                            f"Výhra: **{game['pot']}** {minigame_coin()}"
                         ),
                         color=0xF1C40F
                     )
@@ -489,7 +490,7 @@ class GuessCog(commands.Cog):
             ),
             color=0x95A5A6
         )
-        embed.set_footer(text=f"Pot {game['pot']} {COIN} byl ztracen")
+        embed.set_footer(text=f"Pot {game['pot']} {minigame_coin()} byl ztracen")
         await channel.send(embed=embed)
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -511,7 +512,7 @@ class GuessCog(commands.Cog):
         balance = economy.get(uid, 0)
         if balance < sazka:
             await interaction.response.send_message(
-                f"❌ Nemáš dost zlaťáků! Potřebuješ **{sazka}** {COIN}, máš **{balance}**.",
+                f"❌ Nemáš dost! Potřebuješ **{sazka}** {minigame_coin()}, máš **{balance}**.",
                 ephemeral=True
             )
             return
@@ -553,7 +554,7 @@ class GuessCog(commands.Cog):
             color=0x3498DB
         )
         embed.add_field(name="Fáze", value=phase_label,           inline=True)
-        embed.add_field(name="Pot",  value=f"{game['pot']} {COIN}", inline=True)
+        embed.add_field(name="Pot",  value=f"{game['pot']} {minigame_coin()}", inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @guess.command(name="leaderboard", description="Žebříček nejlepších hráčů Hádej kdo")
