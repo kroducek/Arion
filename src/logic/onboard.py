@@ -267,7 +267,7 @@ class ActSelectionView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=600)
 
-    @discord.ui.button(label="Já už příběh znám", style=discord.ButtonStyle.success, emoji="⚔️")
+    @discord.ui.button(label="Já už příběh znám", style=discord.ButtonStyle.success, emoji="⏩")
     async def old_player(self, interaction: discord.Interaction, button: discord.ui.Button):
         await _show_destination_choice(interaction)
 
@@ -791,6 +791,36 @@ async def _show_alice_poster(interaction: discord.Interaction, dest_key: str):
     )
 
 
+async def _show_acceptance(interaction: discord.Interaction, dest_key: str):
+    """Beat: Arion přijme hráče mezi dobrodruhy → rozdělení statů."""
+    embed = discord.Embed(
+        title="📖  Přijetí mezi dobrodruhy",
+        description=(
+            "Arion přeskočí pult jedním plynulým pohybem a přistane na druhé straně, "
+            "kde otevře tlustou, živoucí knihu.\n\n"
+            "***„..Standardní procedura. Přijmu tě mezi dobrodruhy.“***\n\n"
+            "Přejede tlapkou přes zvláštní destičku vedle knihy a ta se rozsvítí "
+            "modrou aurou, jako by reagovala na dotyk.\n\n"
+            "***„Tak se podíváme, z jakého jsi těsta.“***"
+        ),
+        color=0x2c3e50,
+    )
+    embed.set_image(url=URL_ARION_ENCOUNTER)
+    embed.set_footer(text="⭐ Aurionis  ·  Rozděl své body.")
+    labels     = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
+    base_stats = {s: 0 for s in labels}
+    init_stats(interaction.user.id, base_stats=base_stats, sp=5)
+    await interaction.response.edit_message(
+        embed=embed,
+        view=TutorialSPView(
+            dest_key=dest_key,
+            portrait_url=None,
+            sp_remaining=5,
+            stats={s: 0 for s in labels},
+        ),
+    )
+
+
 class EnterGuildInsideView(discord.ui.View):
     def __init__(self, dest_key: str):
         super().__init__(timeout=600)
@@ -801,34 +831,23 @@ class EnterGuildInsideView(discord.ui.View):
         embed = discord.Embed(
             title="🏛️  Cech dobrodruhů",
             description=(
-                "Dveře se za tebou zavřou a hluk ulice utichne\n\n"
-                "Uvnitř panuje svérázný pořádek, u stolu v rohu se hádají dva trpaslíci "
-                "o tom kdo zabil draka jako poslední. Častokrát slyšíš jméno Aurelion. "
-                "Někdo jiný spí na lavici s helmou přes obličej.\n\n"
-                "Arion přeskočí pult jedním plynulým pohybem a "
-                "přistane na druhé straně, kde otevře tlustou, živoucí knihu.\n\n"
-                "***'..Standardní procedura. Přijmu tě mezi dobrodruhy.'***\n\n"
-                "Přejede tlapkou přes zvláštní destičku vedle knihy a ta se "
-                "rozsvítí modrou aurou, jako by reagovala na dotyk.\n\n"
-                "***'Tak se podíváme, z jakého jsi těsta.'***"
+                "Dveře se za tebou zavřou a hluk ulice utichne.\n\n"
+                "Uvnitř panuje svérázný pořádek — u stolu v rohu se hádají dva trpaslíci "
+                "o tom, kdo zabil draka jako poslední. Častokrát slyšíš jméno Aurelion. "
+                "Někdo jiný spí na lavici s helmou přes obličej."
             ),
             color=0x2c3e50,
         )
-        embed.set_image(url=URL_ARION_ENCOUNTER)
-        embed.set_footer(text="⭐ Aurionis  ·  Rozděl své body.")
-
-        labels     = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
-        base_stats = {s: 0 for s in labels}
-        init_stats(interaction.user.id, base_stats=base_stats, sp=5)
-
+        embed.set_footer(text="⭐ Aurionis  ·  Co řekneš?")
+        choices = [
+            ("Je to tu hezké.",        "„Díky! A taky si tu pořádně můžeš namastit kapsu a potkat nové kamarády — super, ne?“"),
+            ("Vypadají silně",         "„Tihleti? Věř mi — pokud chceš být opravdu silný, musíš jít za svoje limity.“"),
+            ("Jak jsem se tady vzal?", "„Jo, to nevim.. ale nejsi první ani poslední.“"),
+        ]
+        next_factory = lambda: StoryBeatView(functools.partial(_show_acceptance, dest_key=self.dest_key))
         await interaction.response.edit_message(
             embed=embed,
-            view=TutorialSPView(
-                dest_key=self.dest_key,
-                portrait_url=None,
-                sp_remaining=5,
-                stats={s: 0 for s in labels},
-            ),
+            view=DialogChoiceView(choices, next_factory),
         )
 
 
