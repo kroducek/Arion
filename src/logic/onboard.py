@@ -5,6 +5,7 @@ import random
 import asyncio
 import os
 import json
+import functools
 from src.logic.stats import init_stats, STAT_LABELS
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey, ensure_active
@@ -163,6 +164,58 @@ def add_registered_item_to_profile(profile: dict, item_id: str, qty: int = 1) ->
 # ══════════════════════════════════════════════════════════════════════════════
 # KROK 1 — Volání Hvězdy
 # ══════════════════════════════════════════════════════════════════════════════
+
+# ═════════════════════════════════════════════════════════════
+# ZNOVUPOUŽITELNÉ STAVEBNÍ BLOKY TUTORIÁLU (beat + dialog s volbami)
+# ═════════════════════════════════════════════════════════════
+
+# Plakát Aurionis: Act II (pozn.: Discord CDN URL s ?ex=... expiruje — ideálně přehostit)
+URL_PLAKAT_ACT2 = "https://cdn.discordapp.com/attachments/1477815245908082779/1519240012724699158/IMG_0441.png?ex=6a3d7ec5&is=6a3c2d45&hm=26f0ff116d82c11d495eefb60575000635d870d73184d4fa0ebfc890f3edd2b7&"
+
+ARION_COLOR = 0xb87333  # bronz — Arionina barva
+
+
+def _arion_reply_embed(text: str, title: str = "🐱  Arion") -> discord.Embed:
+    """Jednotný vzhled Arioniny repliky v dialogu."""
+    e = discord.Embed(title=title, description=text, color=ARION_COLOR)
+    e.set_footer(text="⭐ Aurionis")
+    return e
+
+
+class StoryBeatView(discord.ui.View):
+    """Vizuální beat (obrázek/text) + jediné tlačítko → on_continue(interaction)."""
+    def __init__(self, on_continue, *, label="Pokračovat", emoji="▶️"):
+        super().__init__(timeout=600)
+        self._on_continue = on_continue
+        self.go.label = label
+        self.go.emoji = emoji
+
+    @discord.ui.button(label="Pokračovat", style=discord.ButtonStyle.primary, emoji="▶️")
+    async def go(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._on_continue(interaction)
+
+
+class DialogChoiceView(discord.ui.View):
+    """
+    Dialog s volbami. choices = [(label, Arionova_odpověď)].
+    Po kliknutí ukáže Arionovu reakci na danou volbu + view z next_view_factory().
+    Volby konvergují do stejného pokračování (žádné větvení stavu).
+    """
+    def __init__(self, choices, next_view_factory, *, reply_title="🐱  Arion"):
+        super().__init__(timeout=600)
+        self._next        = next_view_factory
+        self._reply_title = reply_title
+        for label, reply in choices:
+            btn = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary)
+            btn.callback = self._make_cb(reply)
+            self.add_item(btn)
+
+    def _make_cb(self, reply: str):
+        async def cb(interaction: discord.Interaction):
+            embed = _arion_reply_embed(reply, self._reply_title)
+            await interaction.response.edit_message(embed=embed, view=self._next())
+        return cb
+
 
 class TutorialPartOneView(discord.ui.View):
     def __init__(self):
@@ -326,20 +379,61 @@ class DestinationView(discord.ui.View):
 
     @discord.ui.button(label="Lumenie", style=discord.ButtonStyle.primary, emoji="🏰")
     async def choose_lumenie(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await _start_encounter(interaction, dest_key="lumenie")
+        await _show_act2_poster(interaction, dest_key="lumenie")
 
     @discord.ui.button(label="Dračí skála", style=discord.ButtonStyle.danger, emoji="🏔️")
     async def choose_draci_skala(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await _start_encounter(interaction, dest_key="draci_skala")
+        await _show_act2_poster(interaction, dest_key="draci_skala")
 
     @discord.ui.button(label="Aquion", style=discord.ButtonStyle.secondary, emoji="🌊")
     async def choose_aquion(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await _start_encounter(interaction, dest_key="aquion")
+        await _show_act2_poster(interaction, dest_key="aquion")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # KROK 5 — Random Encounter: První lekce s Arion
 # ══════════════════════════════════════════════════════════════════════════════
+
+async def _show_act2_poster(interaction: discord.Interaction, dest_key: str):
+    """Beat: plakát Aurionis Act II → první kontakt s Arion."""
+    update_profile(interaction.user.id, destination=dest_key)
+    embed = discord.Embed(title="Velký omnyoji Hao", color=0x1a1a2e)
+    embed.set_image(url=URL_PLAKAT_ACT2)
+    await interaction.response.edit_message(
+        embed=embed,
+        view=StoryBeatView(functools.partial(_show_first_contact, dest_key=dest_key)),
+    )
+
+
+async def _show_first_contact(interaction: discord.Interaction, dest_key: str):
+    """Dialog: první setkání s Arion — volby → reakce → hod na obratnost."""
+    embed = discord.Embed(
+        title="🐱",
+        description=(
+            "> *Pomalu otevřeš oči a všechno se ti zdá zmatené, ale až děsivě známé. "
+            "Hlavou ti prochází myšlenka — jestli jsi tu už někdy nebyl. "
+            "Modré lampy osvětlují ulici, zatímco ty stojíš před cechem dobrodruhů.*\n\n"
+            "Z rohu uličky vyběhne bronzová kočička v magickém klobouku a šťastně zamňouká\n\n"
+            "**\'No ne, další! Heeej, ahoooj — nechceš být dobrodruh?\'**"
+        ),
+        color=0x3498db,
+    )
+    embed.set_footer(text="⭐ Aurionis  ·  Co odpovíš?")
+    choices = [
+        ("Jasně, proč ne?",  "**\'No vidíš! To je nadšení, co mám ráda. Z tebe bude prima dobrodruh.\'**"),
+        ("Mluvící kočka!!!", "*Naježí se.*  **\'Kočka?! Pche. Jsem Arion — vznešená průvodkyně vyvolených. Ale jo, chlupy mám.\'**"),
+        ("Co jsi zač?",      "**\'Trpělivost, vyvolený. Všechno má svůj čas… a ten tvůj právě začíná.\'**"),
+        ("(mlčet)",          "*Kočka nakloní hlavu.*  **\'…Tichý typ, jo? Hm. To se mi líbí ještě víc.\'**"),
+    ]
+    next_factory = lambda: StoryBeatView(
+        functools.partial(_start_encounter, dest_key=dest_key),
+        label="Ukaž, co umíš!", emoji="💦",
+    )
+    await interaction.response.edit_message(
+        embed=embed,
+        view=DialogChoiceView(choices, next_factory),
+    )
+
 
 async def _start_encounter(interaction: discord.Interaction, dest_key: str):
     update_profile(interaction.user.id, destination=dest_key)
@@ -347,15 +441,10 @@ async def _start_encounter(interaction: discord.Interaction, dest_key: str):
     arion_roll = random.randint(1, 12)
 
     embed = discord.Embed(
-        title="🐱",
+        title="💦  Ukaž, co umíš!",
         description=(
-            "> *Pomalu otevřeš oči a všechno se ti zdá zmatené, ale až děsivě známé.\n"
-            "Hlavou ti prochází myšlenka — jestli jsi tu už někdy nebyl.\n"
-            "Modré lampy osvětlují ulici, zatímco ty se nacházíš před cechem dobrodruhů.*\n\n"
-            "Z rohu uličky vyběhne bronzová kočička v magickém klobouku a šťastně zamňouká\n\n"
-            "**'No ne, další! Heeej, ahoooj, nechceš být dobrodruh?'**\n\n"
-            "Dřív než stačíš odpovědět, tak kočička zamrská tlapkou a vyčaruje "
-            "třpytivou kouli vody, kterou hodí rovnou po tobě"
+            "Arion zamrská tlapkou a vyčaruje třpytivou kouli vody — "
+            "a než stačíš cokoliv říct, hodí ji rovnou po tobě!"
         ),
         color=0x3498db,
     )
@@ -612,8 +701,24 @@ class ArionMemoryView(discord.ui.View):
 
     async def _go_hm(self, interaction: discord.Interaction, title: str, description: str):
         embed = discord.Embed(title=title, description=description, color=0x2c3e50)
-        embed.set_footer(text="⭐ Aurionis")
-        await interaction.response.edit_message(embed=embed, view=ArionHmView(dest_key=self.dest_key))
+        embed.set_footer(text="⭐ Aurionis  ·  Co řekneš?")
+        aura_reply = (
+            "Arion zvedne hlavu a její výraz se vrátí do normálu — "
+            "nebo aspoň do toho, co u ní jako normál působí.\n\n"
+            "***'…Ale nic, vyvolený. Jen máš zajímavou auru.'***\n\n"
+            "Otočí se a zamíří ke dveřím cechu. Klobouk se jí narovná sám od sebe.\n\n"
+            "***'Pojď dovnitř.'***"
+        )
+        choices = [
+            ("Hm?",         aura_reply),
+            ("Co se děje?", aura_reply),
+            ("(mlčet)",     aura_reply),
+        ]
+        next_factory = lambda: EnterGuildInsideView(dest_key=self.dest_key)
+        await interaction.response.edit_message(
+            embed=embed,
+            view=DialogChoiceView(choices, next_factory, reply_title="🐱  ..Ale nic."),
+        )
 
     @discord.ui.button(label="Nevzpomínám si na nic..", style=discord.ButtonStyle.secondary, emoji="🤔")
     async def just_no(self, interaction: discord.Interaction, button: discord.ui.Button):
