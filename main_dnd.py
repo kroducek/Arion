@@ -39,7 +39,6 @@ if _data_dir_override:
     _paths.QUEST_LOG        = _paths.data("quest_log.json")
     _paths.SHOP             = _paths.data("shop.json")
     _paths.PARTIES          = _paths.data("parties.json")
-    _paths.GUILDS           = _paths.data("guilds.json")
     _paths.TOURNAMENT       = _paths.data("tournament.json")
     _paths.COMBAT_STATE     = _paths.data("combat_state.json")
     _paths.REPUTATION       = _paths.data("reputation.json")
@@ -68,7 +67,7 @@ DND_COGS = [
     "src.core.dnd.achievements",
     "src.core.dnd.perks",
     "src.core.dnd.blacksmith",
-    "src.core.dnd.guilds",
+    "src.core.dnd.character",
     
     # D&D logika / postavy
     "src.logic.profile",
@@ -108,6 +107,17 @@ class ArionDND(commands.Bot):
 
     async def setup_hook(self):
         print("--- ⚔️ Načítám ArionDND Cogs ---")
+
+        # ── Migrace na multi-character systém (idempotentní, jednorázová) ──
+        #    Překlopí legacy data uid → uid:1. Bezpečné spouštět při každém startu.
+        try:
+            from src.database.migrate_chars import run_migration
+            report = run_migration()
+            logger.info(f"[characters] migrace: {report}")
+            print(f"   🔁 migrace postav: {report}")
+        except Exception as e:
+            logger.exception(f"[characters] migrace selhala: {e}")
+            print(f"   ❌ migrace postav selhala — viz log výše.")
 
         for cog in DND_COGS:
             try:

@@ -5,6 +5,7 @@ from discord import app_commands
 
 from src.utils.paths import PROFILES, TAKEDOWNS
 from src.utils.json_utils import load_json, save_json
+from src.database.characters import pkey
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS
@@ -64,7 +65,7 @@ class TakedownCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         ch = interaction.channel
-        uid = str(member.id)
+        uid = pkey(member.id)
         color_red = 0xC0392B
 
         # Potvrzení vidí jen DM

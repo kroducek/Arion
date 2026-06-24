@@ -206,6 +206,7 @@ def data(filename: str) -> str:
 
 # ── Hráčská data ──────────────────────────────────────────────
 PROFILES   = data("profiles.json")
+CHARACTERS = data("characters.json")  # 👥 registr postav (multi-character) + aktivní slot
 ECONOMY    = data("economy.json")     # 🟡 zlaťáky (gold) — RP / DnD měna
 SILVER     = data("silver.json")      # ⚪ stříbrňáky (silver) — měna miniher
 STARDUST   = data("stardust.json")    # ✨ hvězdný prach (stardust) — z karet/duchů

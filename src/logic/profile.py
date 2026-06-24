@@ -7,6 +7,7 @@ from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, ITEM
 from src.utils.json_utils import load_json, save_json
 from src.logic.stats import get_xp_cap, level_label, add_xp
 from src.logic.economy import get_balance, set_balance, COIN_SILVER, COIN_STARDUST
+from src.database.characters import pkey
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DATOVÁ VRSTVA
@@ -139,7 +140,7 @@ async def _ac_food_item(
 ) -> list[app_commands.Choice[str]]:
     items_db  = _load_items()
     data      = load_data()
-    profile   = data.get(str(interaction.user.id), {})
+    profile   = data.get(pkey(interaction.user.id), {})
     inventory = profile.get("inventory", [])
     cur = current.lower()
     choices = []
@@ -171,7 +172,7 @@ class EditNameModal(discord.ui.Modal, title="Upravit jméno postavy"):
 
     async def on_submit(self, interaction: discord.Interaction):
         data = load_data()
-        uid  = str(interaction.user.id)
+        uid  = pkey(interaction.user.id)
         data.setdefault(uid, {})["name"] = self.char_name.value
         save_data(data)
         try:
@@ -194,7 +195,7 @@ class EditMotivationModal(discord.ui.Modal, title="Upravit motivaci"):
 
     async def on_submit(self, interaction: discord.Interaction):
         data = load_data()
-        uid  = str(interaction.user.id)
+        uid  = pkey(interaction.user.id)
         data.setdefault(uid, {})["motivation"] = self.motivation.value[:200]
         save_data(data)
         await interaction.response.send_message(
@@ -211,7 +212,7 @@ class EditPortraitModal(discord.ui.Modal, title="Upravit portrét"):
 
     async def on_submit(self, interaction: discord.Interaction):
         data = load_data()
-        uid  = str(interaction.user.id)
+        uid  = pkey(interaction.user.id)
         data.setdefault(uid, {})["portrait_url"] = self.url.value
         save_data(data)
         await interaction.response.send_message(
@@ -269,7 +270,7 @@ class Profile(commands.Cog):
                       member: Optional[discord.Member] = None):
         target   = member or interaction.user
         data     = load_data()
-        user_id  = str(target.id)
+        user_id  = pkey(target.id)
 
         if user_id not in data:
             await interaction.response.send_message(
@@ -282,8 +283,8 @@ class Profile(commands.Cog):
         _ensure_player_fields(profile)
         economy  = load_economy()
         balance  = economy.get(user_id, 0)
-        silver_bal   = get_balance(user_id, "silver")
-        stardust_bal = get_balance(user_id, "stardust")
+        silver_bal   = get_balance(target.id, "silver")
+        stardust_bal = get_balance(target.id, "stardust")
         items_db = _load_items()
 
         # ── Data ──────────────────────────────────────────────────────────────
@@ -372,7 +373,7 @@ class Profile(commands.Cog):
             pp_data   = load_json(PLAYER_PERKS, {})
             ach_data  = load_json(ACHIEVEMENTS, {})
             perk_cnt  = len(pp_data.get(str(user_id), {}).get("perks", []))
-            ach_cnt   = len(ach_data.get(str(user_id), []))
+            ach_cnt   = len(ach_data.get(str(target.id), []))
             if perk_cnt > 0 or ach_cnt > 0:
                 lines.append("")
                 lines.append(f"🏷️ Perky: **{perk_cnt}**  ·  🏆 Achievementy: **{ach_cnt}**")
@@ -424,7 +425,7 @@ class Profile(commands.Cog):
     @app_commands.command(name="profile-edit", description="Uprav svůj dobrodružný průkaz.")
     async def profile_edit(self, interaction: discord.Interaction):
         data    = load_data()
-        user_id = str(interaction.user.id)
+        user_id = pkey(interaction.user.id)
 
         if user_id not in data or not data[user_id].get("gold_received"):
             await interaction.response.send_message(
@@ -455,7 +456,7 @@ class Profile(commands.Cog):
     async def eat(self, interaction: discord.Interaction, item: str):
         await interaction.response.defer(ephemeral=True)
         data    = load_data()
-        user_id = str(interaction.user.id)
+        user_id = pkey(interaction.user.id)
         profile = data.get(user_id)
 
         if not profile:
@@ -566,7 +567,7 @@ class Profile(commands.Cog):
             return
 
         data    = load_data()
-        uid     = str(member.id)
+        uid     = pkey(member.id)
         profile = data.get(uid)
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
@@ -617,7 +618,7 @@ class Profile(commands.Cog):
             await interaction.followup.send("❌ Jen DM.")
             return
         data    = load_data()
-        uid     = str(member.id)
+        uid     = pkey(member.id)
         profile = data.get(uid)
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
@@ -664,7 +665,7 @@ class Profile(commands.Cog):
             await interaction.followup.send("❌ Jen DM.")
             return
         data    = load_data()
-        uid     = str(member.id)
+        uid     = pkey(member.id)
         profile = data.get(uid)
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
@@ -722,7 +723,7 @@ class Profile(commands.Cog):
             await interaction.followup.send("❌ Jen DM.")
             return
         data    = load_data()
-        uid     = str(member.id)
+        uid     = pkey(member.id)
         profile = data.get(uid)
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
@@ -776,7 +777,7 @@ class Profile(commands.Cog):
             await interaction.followup.send("❌ Jen DM.")
             return
         data    = load_data()
-        uid     = str(member.id)
+        uid     = pkey(member.id)
         profile = data.get(uid)
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
@@ -852,7 +853,7 @@ class Profile(commands.Cog):
 
         results = []
         for member in members:
-            uid     = str(member.id)
+            uid     = pkey(member.id)
             changes = []
 
             if uid in data:
@@ -872,10 +873,11 @@ class Profile(commands.Cog):
                 del player_perks[uid]
                 changes.append("perky resetovány")
 
-            if uid in achievements and "Vítej v Aurionisu" in achievements[uid]:
-                achievements[uid].remove("Vítej v Aurionisu")
-                if not achievements[uid]:
-                    del achievements[uid]
+            _acct = str(member.id)
+            if _acct in achievements and "Vítej v Aurionisu" in achievements[_acct]:
+                achievements[_acct].remove("Vítej v Aurionisu")
+                if not achievements[_acct]:
+                    del achievements[_acct]
                 changes.append("tutorial achievement odebrán")
 
             roles_to_remove = []

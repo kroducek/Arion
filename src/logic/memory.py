@@ -5,6 +5,7 @@ from typing import Optional
 
 from src.utils.paths import PROFILES as PROFILES_FILE
 from src.utils.json_utils import load_json, save_json
+from src.database.characters import pkey
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DATOVÁ VRSTVA
@@ -55,7 +56,7 @@ class MemoryCog(commands.Cog):
         member: Optional[discord.Member] = None,
     ):
         target   = member or interaction.user
-        memories = _get_memories(str(target.id))
+        memories = _get_memories(pkey(target.id))
         embed    = _memories_embed(target, memories)
         await interaction.response.send_message(embed=embed, ephemeral=(member is None))
 
@@ -66,7 +67,7 @@ class MemoryCog(commands.Cog):
     @app_commands.rename(text="text")
     async def memory_add(self, interaction: discord.Interaction, text: app_commands.Range[str, 1, 512]):
         data = _load()
-        uid  = str(interaction.user.id)
+        uid  = pkey(interaction.user.id)
         data.setdefault(uid, {}).setdefault("memories", [])
         data[uid]["memories"].append(text.strip())
         _save(data)
@@ -84,7 +85,7 @@ class MemoryCog(commands.Cog):
     @app_commands.describe(line="Číslo řádku (viz /memory show).")
     async def memory_remove(self, interaction: discord.Interaction, line: int):
         data     = _load()
-        uid      = str(interaction.user.id)
+        uid      = pkey(interaction.user.id)
         memories = data.get(uid, {}).get("memories", [])
         if line < 1 or line > len(memories):
             await interaction.response.send_message(
@@ -102,7 +103,7 @@ class MemoryCog(commands.Cog):
     @app_commands.describe(line="Číslo řádku.", text="Nový text.")
     async def memory_edit(self, interaction: discord.Interaction, line: int, text: str):
         data     = _load()
-        uid      = str(interaction.user.id)
+        uid      = pkey(interaction.user.id)
         memories = data.get(uid, {}).get("memories", [])
         if line < 1 or line > len(memories):
             await interaction.response.send_message(
@@ -144,7 +145,7 @@ class MemoryCog(commands.Cog):
         text: Optional[str] = None,
     ):
         data = _load()
-        uid  = str(member.id)
+        uid  = pkey(member.id)
         data.setdefault(uid, {}).setdefault("memories", [])
         memories: list = data[uid]["memories"]
 

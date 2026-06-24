@@ -7,6 +7,7 @@ import os
 import json
 from src.logic.stats import init_stats, STAT_LABELS
 from src.utils.json_utils import load_json, save_json
+from src.database.characters import pkey, ensure_active
 from src.core.dnd.roll_stats import record_roll
 
 # ── Konfigurace ───────────────────────────────────────────────────────────────
@@ -136,7 +137,7 @@ LOADOUTS = {
 # ── Databáze ──────────────────────────────────────────────────────────────────
 
 def update_profile(user_id, **kwargs):
-    user_id = str(user_id)
+    user_id = pkey(user_id)
     data    = load_json(DATA_FILE, default={})
     data.setdefault(user_id, {"rank": "F3"})
     for key, value in kwargs.items():
@@ -144,7 +145,7 @@ def update_profile(user_id, **kwargs):
     save_json(DATA_FILE, data)
 
 def add_gold(user_id: int, amount: int):
-    uid  = str(user_id)
+    uid  = pkey(user_id)
     data = load_json(ECONOMY_FILE, default={})
     data[uid] = data.get(uid, 0) + amount
     save_json(ECONOMY_FILE, data)
@@ -170,7 +171,7 @@ class TutorialPartOneView(discord.ui.View):
     @discord.ui.button(label="Naslouchat hlasu", style=discord.ButtonStyle.primary, emoji="✨")
     async def listen(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Ochrana — hráč s dokončeným profilem nemůže spustit tutorial znovu
-        uid = str(interaction.user.id)
+        uid = pkey(interaction.user.id)
         if os.path.exists(DATA_FILE):
             try:
                 with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -510,6 +511,7 @@ class NameRegistrationModal(discord.ui.Modal, title="Jak se jmenuješ?"):
 
     async def on_submit(self, interaction: discord.Interaction):
         new_name = self.char_name.value
+        ensure_active(interaction.user.id, new_name)
         update_profile(interaction.user.id, name=new_name)
         try:
             await interaction.user.edit(nick=new_name)
@@ -1080,7 +1082,7 @@ class GoldView(discord.ui.View):
         button.disabled = True
         await interaction.response.defer()
 
-        uid = str(interaction.user.id)
+        uid = pkey(interaction.user.id)
         profile = load_json(DATA_FILE, default={})
         if profile.get(uid, {}).get("gold_received"):
             await interaction.followup.send(
@@ -1340,7 +1342,7 @@ async def _finalize_tutorial(
     try:
         from src.core.dnd.perks import load_player_perks, save_player_perks
 
-        user_id = str(interaction.user.id)
+        user_id = pkey(interaction.user.id)
         loadout = LOADOUTS.get(loadout_id)
         if not loadout:
             return
@@ -1518,7 +1520,7 @@ class MemoryCheckView(discord.ui.View):
         )
 
         # Zapiš první vzpomínku
-        uid = str(interaction.user.id)
+        uid = pkey(interaction.user.id)
         try:
             profiles = load_json(DATA_FILE, default={})
             profiles.setdefault(uid, {}).setdefault("memories", [])
@@ -1831,7 +1833,7 @@ class FinalEnterView(discord.ui.View):
         try:
             from datetime import datetime
             from src.utils.paths import DIARIES as diary_path
-            uid        = str(interaction.user.id)
+            uid        = pkey(interaction.user.id)
             date_str   = datetime.now().strftime("%d.%m.")
 
             diaries = {}
@@ -2085,7 +2087,8 @@ class Onboarding(commands.Cog):
         try:
             loadout_data = LOADOUTS[loadout]
             profiles = load_json(DATA_FILE, default={})
-            profile = profiles.setdefault(str(target_user.id), {"rank": "F3"})
+            ensure_active(target_user.id)
+            profile = profiles.setdefault(pkey(target_user.id), {"rank": "F3"})
             
             for item_id in loadout_data.get("items", []):
                 add_registered_item_to_profile(profile, item_id, qty=1)

@@ -11,6 +11,7 @@ import logging
 
 from src.utils.paths import PROFILES as DATA_FILE, ITEMS as ITEMS_FILE
 from src.utils.json_utils import load_json, save_json
+from src.database.characters import pkey
 import datetime
 
 logger = logging.getLogger("Stats")
@@ -777,7 +778,7 @@ class Stats(commands.Cog):
         try:
             target   = member or interaction.user
             data     = _load()
-            uid      = str(target.id)
+            uid      = pkey(target.id)
 
             if uid not in data:
                 await interaction.response.send_message(
@@ -815,7 +816,7 @@ class Stats(commands.Cog):
     async def sp_cmd(self, interaction: discord.Interaction):
         try:
             data = _load()
-            p    = _profile(data, str(interaction.user.id))
+            p    = _profile(data, pkey(interaction.user.id))
             sp   = p["sp"]
 
             if sp <= 0:
@@ -854,7 +855,7 @@ class Stats(commands.Cog):
         try:
             target = member or interaction.user
             data   = _load()
-            p      = _profile(data, str(target.id))
+            p      = _profile(data, pkey(target.id))
             luck   = p["luck"]
 
             if luck >= 180:   desc = "🌟 Štěstěna se přímo usmívá"
@@ -1010,7 +1011,7 @@ class Stats(commands.Cog):
     ):
         try:
             data = _load()
-            uid  = str(member.id)
+            uid  = pkey(member.id)
             p    = _profile(data, uid)
             p["stats"][stat.value] = max(1, hodnota)
             _save(data)
@@ -1071,7 +1072,7 @@ class Stats(commands.Cog):
                 )
 
             data  = _load()
-            p     = _profile(data, str(target.id))
+            p     = _profile(data, pkey(target.id))
             level = p["level"]
             xp    = p["xp"]
             cap   = get_xp_cap(level)
@@ -1121,7 +1122,7 @@ class Stats(commands.Cog):
             guild      = interaction.guild
             lines      = []
             medals     = {1: "🥇", 2: "🥈", 3: "🥉"}
-            caller_uid = str(interaction.user.id)
+            caller_uid = pkey(interaction.user.id)
             caller_pos = next(
                 (i + 1 for i, (uid, *_) in enumerate(entries) if uid == caller_uid),
                 None,
@@ -1133,10 +1134,10 @@ class Stats(commands.Cog):
                 cap_str = f"/ {cap:,}" if cap else "(MAX)"
 
                 try:
-                    member = guild.get_member(int(uid)) or await guild.fetch_member(int(uid))
+                    member = guild.get_member(int(uid.split(":")[0])) or await guild.fetch_member(int(uid.split(":")[0]))
                     name   = member.display_name
                 except Exception:
-                    name = f"*Hráč {uid[-4:]}*"
+                    name = f"*Hráč {uid.split(":")[0][-4:]}*"
 
                 bold_open  = "**" if uid == caller_uid else ""
                 bold_close = "**" if uid == caller_uid else ""

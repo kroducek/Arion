@@ -7,6 +7,7 @@ import datetime
 
 from src.utils.paths import PROFILES as DATA_FILE
 from src.utils.json_utils import load_json, save_json
+from src.database.characters import pkey
 
 # ══════════════════════════════════════════════════════════════════════════════
 # KONFIGURACE
@@ -288,7 +289,7 @@ class BreedConfirmView(discord.ui.View):
     @discord.ui.button(label="Potvrdit šlechtění", style=discord.ButtonStyle.danger, emoji="⚗️")
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Ověř vlastnictví
-        if str(interaction.user.id) != self.uid:
+        if pkey(interaction.user.id) != self.uid:
             await interaction.response.send_message("❌ Toto není tvoje šlechtění.", ephemeral=True)
             return
 
@@ -355,7 +356,7 @@ class BreedConfirmView(discord.ui.View):
 
     @discord.ui.button(label="Zrušit", style=discord.ButtonStyle.secondary, emoji="✖️")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if str(interaction.user.id) != self.uid:
+        if pkey(interaction.user.id) != self.uid:
             await interaction.response.send_message("❌ Toto není tvoje šlechtění.", ephemeral=True)
             return
         self.done = True
@@ -406,7 +407,7 @@ class Spirits(commands.Cog):
             return
 
         data    = _load()
-        uid     = str(member.id)
+        uid     = pkey(member.id)
         profile = data.setdefault(uid, {})
         spirits = profile.setdefault("spirits", [])
 
@@ -439,7 +440,7 @@ class Spirits(commands.Cog):
             return
 
         data    = _load()
-        uid     = str(member.id)
+        uid     = pkey(member.id)
         profile = data.get(uid)
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
@@ -514,7 +515,7 @@ class Spirits(commands.Cog):
     ):
         await interaction.response.defer(ephemeral=False)
         data    = _load()
-        uid     = str(interaction.user.id)
+        uid     = pkey(interaction.user.id)
         profile = data.get(uid)
 
         if not profile:
@@ -592,7 +593,7 @@ class Spirits(commands.Cog):
             return
 
         data    = _load()
-        uid     = str(member.id)
+        uid     = pkey(member.id)
         profile = data.get(uid)
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
@@ -634,7 +635,7 @@ class Spirits(commands.Cog):
             return
 
         data    = _load()
-        uid     = str(member.id)
+        uid     = pkey(member.id)
         profile = data.get(uid)
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
@@ -673,7 +674,7 @@ class Spirits(commands.Cog):
             return
 
         data    = _load()
-        uid     = str(member.id)
+        uid     = pkey(member.id)
         profile = data.get(uid)
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
@@ -730,7 +731,7 @@ class Spirits(commands.Cog):
             return
 
         data    = _load()
-        uid     = str(member.id)
+        uid     = pkey(member.id)
         profile = data.get(uid)
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
@@ -764,7 +765,7 @@ class Spirits(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         target  = member or interaction.user
         data    = _load()
-        uid     = str(target.id)
+        uid     = pkey(target.id)
         profile = data.get(uid)
 
         if not profile:
@@ -804,7 +805,7 @@ class Spirits(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         target  = member or interaction.user
         data    = _load()
-        uid     = str(target.id)
+        uid     = pkey(target.id)
         profile = data.get(uid)
 
         if not profile:

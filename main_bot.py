@@ -36,7 +36,8 @@ if _data_dir_override:
     _paths.GUESS_SCORES      = _paths.data("guess_scores.json")
     _paths.LIAR_SCORES       = _paths.data("liar_scores.json")
     _paths.LIAR_SLOTS_SCORES = _paths.data("liar_slots_scores.json")
-    _paths.NEWS   = _paths.data("news.json")
+    _paths.LABYRINTH_SCORES  = _paths.data("labyrinth_scores.json")
+    _paths.NEWS              = _paths.data("news.json")
     _paths.STORY_LIB         = _paths.data("story_library.json")
     _paths.STORY_SAVE        = _paths.data("story_save.json")
     _paths.CARDS_DATA        = _paths.data("cards_data.json")
@@ -59,9 +60,10 @@ BOT_COGS = [
     "src.core.bot.liar_slots",
     "src.core.bot.gallows",
     "src.core.bot.tarot",
-    "src.core.bot.admin_backup",
     "src.core.bot.minigames_hub",
-    "src.core.bot.blackjack" ,
+    "src.core.bot.blackjack",
+    # Labyrinth (balíček)
+    "src.core.bot.labyrinth",
     # Utility
     "src.core.bot.countdown",
     "src.core.bot.voice",
@@ -97,6 +99,18 @@ class ArionBOT(commands.Bot):
 
     async def setup_hook(self):
         print("--- 🎮 Načítám ArionBOT Cogs ---")
+
+        # ── Migrace na multi-character (idempotentní; sdílený volume s ArionDND) ──
+        #    Kdo z botů nastartuje dřív, ten překlopí gold uid→uid:1; druhý = no-op.
+        #    Zavírá časové okno, kdyby ArionBOT sáhl na gold před migrací z ArionDND.
+        try:
+            from src.database.migrate_chars import run_migration
+            report = run_migration()
+            logger.info(f"[characters] migrace: {report}")
+            print(f"   🔁 migrace postav: {report}")
+        except Exception as e:
+            logger.exception(f"[characters] migrace selhala: {e}")
+            print(f"   ❌ migrace postav selhala — viz log výše.")
 
         for cog in BOT_COGS:
             try:

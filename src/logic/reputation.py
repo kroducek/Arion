@@ -4,6 +4,7 @@ from discord import app_commands
 
 from src.utils.paths import REPUTATION as DATA_FILE
 from src.utils.json_utils import load_json, save_json
+from src.database.characters import pkey
 
 DM_ROLE_NAME = "DM"
 
@@ -120,7 +121,7 @@ class ReputationCog(commands.Cog):
                 f"❌ Frakce **{frakce}** neexistuje. Vytvoř ji přes `/rep create`.", ephemeral=True
             )
             return
-        uid = str(hrac.id)
+        uid = pkey(hrac.id)
         guild["players"].setdefault(uid, {})
         guild["players"][uid].setdefault(frakce, 0)
         old = guild["players"][uid][frakce]
@@ -156,7 +157,7 @@ class ReputationCog(commands.Cog):
                 f"❌ Frakce **{frakce}** neexistuje.", ephemeral=True
             )
             return
-        uid = str(hrac.id)
+        uid = pkey(hrac.id)
         guild["players"].setdefault(uid, {})
         guild["players"][uid][frakce] = hodnota
         _save(data)
@@ -177,7 +178,7 @@ class ReputationCog(commands.Cog):
 
         data  = _load()
         guild = _guild(data, interaction.guild.id)
-        uid   = str(target.id)
+        uid   = pkey(target.id)
         reps  = guild["players"].get(uid, {})
 
         if not guild["factions"]:
@@ -217,8 +218,8 @@ class ReputationCog(commands.Cog):
             val = reps.get(frakce, 0)
             if val == 0:
                 continue
-            member = interaction.guild.get_member(int(uid))
-            name   = member.display_name if member else f"<{uid}>"
+            member = interaction.guild.get_member(int(uid.split(":")[0]))
+            name   = member.display_name if member else f"<{uid.split(chr(58))[0]}>"
             rows.append((val, name))
 
         rows.sort(reverse=True)

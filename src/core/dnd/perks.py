@@ -7,6 +7,7 @@ import random
 from datetime import date
 
 from src.utils.paths import PERKS, PLAYER_PERKS, ODHALENI_POOL as ODHALENI_POOL_FILE
+from src.database.characters import pkey
 from src.utils.audit import log_action
 from src.utils.json_utils import load_json, save_json
 
@@ -1318,7 +1319,7 @@ class OdhaleniRollView(discord.ui.View):
 
     @discord.ui.button(label="🎲 Hodit 1d20", style=discord.ButtonStyle.primary, custom_id="odhaleni_roll")
     async def roll_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if str(interaction.user.id) != self.uid:
+        if pkey(interaction.user.id) != self.uid:
             await interaction.response.send_message("*Tohle není tvoje aktivace.*", ephemeral=True)
             return
         if self.done:
@@ -1412,7 +1413,7 @@ class OdhaleniView(discord.ui.View):
 
     def _make_callback(self, element: str, name: str, base_fury: int, size: str):
         async def callback(interaction: discord.Interaction):
-            if str(interaction.user.id) != self.uid:
+            if pkey(interaction.user.id) != self.uid:
                 await interaction.response.send_message("*Tohle není tvoje aktivace.*", ephemeral=True)
                 return
             if self.chosen:
@@ -1463,7 +1464,7 @@ class PerksCog(commands.Cog):
         target      = member or interaction.user
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(str(target.id), player_data)
+        player      = _get_player(pkey(target.id), player_data)
         owned       = player["perks"]
 
         if not owned:
@@ -1547,7 +1548,7 @@ class PerksCog(commands.Cog):
             await interaction.response.send_message(f"Perk `{perk_id}` neexistuje.", ephemeral=True)
             return
         player_data = load_player_perks()
-        player      = _get_player(str(member.id), player_data)
+        player      = _get_player(pkey(member.id), player_data)
         if perk_id in player["perks"]:
             await interaction.response.send_message(
                 f"{member.mention} už má **{all_perks[perk_id]['name']}**.", ephemeral=True
@@ -1633,7 +1634,7 @@ class PerksCog(commands.Cog):
     async def give_random_perk(self, interaction: discord.Interaction, member: discord.Member):
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(str(member.id), player_data)
+        player      = _get_player(pkey(member.id), player_data)
         owned       = set(player["perks"])
         available   = [pid for pid, p in all_perks.items() if pid not in owned and not p.get("unique") and not p.get("learnable")]
 
@@ -1686,7 +1687,7 @@ class PerksCog(commands.Cog):
             await interaction.response.send_message(f"Perk `{perk_id}` neexistuje.", ephemeral=True)
             return
         player_data = load_player_perks()
-        player      = _get_player(str(member.id), player_data)
+        player      = _get_player(pkey(member.id), player_data)
         if perk_id in player["perks"]:
             await interaction.response.send_message(
                 f"{member.mention} už má **{all_perks[perk_id]['name']}**.", ephemeral=True
@@ -1809,7 +1810,7 @@ class PerksCog(commands.Cog):
     @app_commands.describe(perk_id="ID perku", member="Hráč")
     async def perk_remove(self, interaction: discord.Interaction, perk_id: str, member: discord.Member):
         player_data = load_player_perks()
-        player      = _get_player(str(member.id), player_data)
+        player      = _get_player(pkey(member.id), player_data)
         if perk_id not in player["perks"]:
             all_perks = load_perks()
             name = all_perks.get(perk_id, {}).get("name", perk_id)
@@ -1831,7 +1832,7 @@ class PerksCog(commands.Cog):
     async def perk_reset(self, interaction: discord.Interaction, member: discord.Member | None = None):
         player_data = load_player_perks()
         if member:
-            player = _get_player(str(member.id), player_data)
+            player = _get_player(pkey(member.id), player_data)
             player["cooldowns"] = {}
             save_player_perks(player_data)
             await interaction.response.send_message(
@@ -1852,7 +1853,7 @@ class PerksCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(str(member.id), player_data)
+        player      = _get_player(pkey(member.id), player_data)
 
         if perk_id not in player["perks"]:
             await interaction.followup.send(f"{member.mention} nemá perk `{perk_id}`.", ephemeral=True)
@@ -2095,7 +2096,7 @@ class PerksCog(commands.Cog):
     async def perk_use(self, interaction: discord.Interaction, perk_id: str):
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(str(interaction.user.id), player_data)
+        player      = _get_player(pkey(interaction.user.id), player_data)
 
         if perk_id not in player["perks"]:
             await interaction.response.send_message("Tento perk nevlastníš.", ephemeral=True)
@@ -2154,7 +2155,7 @@ class PerksCog(commands.Cog):
                 color=0x7B68EE,
             )
             embed.set_footer(text=f"⏳ {_cooldown_bar(used, perk.get('cooldown_uses', 2))} dnes  ·  ⭐ {ARION_NAME}")
-            await interaction.response.send_message(embed=embed, view=OdhaleniView(uid=str(interaction.user.id), spirits=selections))
+            await interaction.response.send_message(embed=embed, view=OdhaleniView(uid=pkey(interaction.user.id), spirits=selections))
             return
 
         embed = _perk_announce_embed(interaction.user, perk_id, perk, used)
@@ -2261,7 +2262,7 @@ class PerksCog(commands.Cog):
     async def perk_owned_autocomplete(self, interaction: discord.Interaction, current: str):
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(str(interaction.user.id), player_data)
+        player      = _get_player(pkey(interaction.user.id), player_data)
         owned       = player["perks"]
         return [
             app_commands.Choice(

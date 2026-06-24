@@ -14,6 +14,7 @@ from src.utils.paths import (
     PROFILES as PROFILES_FILE,
 )
 from src.utils.json_utils import load_json, save_json
+from src.database.characters import pkey
 
 COIN         = "<:goldcoin:1490171741237018795>"
 
@@ -83,11 +84,16 @@ def coin(currency: str = "gold") -> str:
     return _CURRENCY_ICONS.get(currency, "")
 
 
+def _wallet_key(uid, currency: str) -> str:
+    """Klíč peněženky: gold = per-postava (pkey), silver/stardust = per-účet (raw uid)."""
+    return pkey(uid) if currency == "gold" else str(uid)
+
+
 def get_balance(uid, currency: str = "gold") -> int:
     """Zůstatek hráče v dané měně."""
     data = load_json(_currency_file(currency), default={})
     try:
-        return int(data.get(str(uid), 0))
+        return int(data.get(_wallet_key(uid, currency), 0))
     except (TypeError, ValueError):
         return 0
 
@@ -96,7 +102,7 @@ def set_balance(uid, amount: int, currency: str = "gold") -> int:
     """Nastaví zůstatek na přesnou hodnotu."""
     f = _currency_file(currency)
     data = load_json(f, default={})
-    data[str(uid)] = int(amount)
+    data[_wallet_key(uid, currency)] = int(amount)
     save_json(f, data)
     return int(amount)
 
@@ -105,7 +111,7 @@ def add_balance(uid, amount: int, currency: str = "gold") -> int:
     """Přičte částku (smí být záporná) a vrátí nový zůstatek."""
     f = _currency_file(currency)
     data = load_json(f, default={})
-    key = str(uid)
+    key = _wallet_key(uid, currency)
     try:
         current = int(data.get(key, 0))
     except (TypeError, ValueError):
@@ -122,7 +128,7 @@ def spend(uid, amount: int, currency: str = "gold") -> bool:
         return True
     f = _currency_file(currency)
     data = load_json(f, default={})
-    key = str(uid)
+    key = _wallet_key(uid, currency)
     try:
         bal = int(data.get(key, 0))
     except (TypeError, ValueError):
@@ -263,7 +269,7 @@ class ShopView(discord.ui.View):
                 )
             item    = items[item_index]
             price   = item["price"]
-            uid     = str(interaction.user.id)
+            uid     = pkey(interaction.user.id)
             economy = _load_economy()
             balance = economy.get(uid, 0)
             if balance < price:
@@ -359,7 +365,7 @@ def build_leaderboard_embed(guild, currency: str = "gold") -> discord.Embed:
     lines = []
     for i, (uid, bal) in enumerate(ranked):
         prefix = medals[i] if i < 3 else f"**{i+1}.**"
-        member = guild.get_member(int(uid)) if guild else None
+        member = guild.get_member(int(uid.split(":")[0])) if guild else None
         name   = member.display_name if member else f"Neznámý ({uid})"
         lines.append(f"{prefix} {name} — **{bal}** {icon}")
 

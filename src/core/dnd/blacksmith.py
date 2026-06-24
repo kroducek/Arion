@@ -25,6 +25,7 @@ from discord.ext import commands
 
 from src.utils.paths import PROFILES as PROFILES_FILE
 from src.utils.json_utils import load_json, save_json
+from src.database.characters import pkey
 
 logger = logging.getLogger(__name__)
 
@@ -371,7 +372,7 @@ async def _ac_member_item(interaction: discord.Interaction, current: str):
     member = getattr(interaction.namespace, "member", None)
     if member is None:
         return []
-    profile = _load_profiles().get(str(member.id))
+    profile = _load_profiles().get(pkey(member.id))
     if not profile:
         return []
     cur, seen, out = current.lower(), set(), []
@@ -501,7 +502,7 @@ class BlacksmithCog(commands.Cog):
             await interaction.followup.send("❌ Jen DM."); return
         if rune not in load_runes():
             await interaction.followup.send(f"❌ Runa `{rune}` neexistuje."); return
-        profiles = _load_profiles(); profile = profiles.get(str(member.id))
+        profiles = _load_profiles(); profile = profiles.get(pkey(member.id))
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil."); return
         store, idx = _find_storage_and_entry(profile, item)
@@ -531,7 +532,7 @@ class BlacksmithCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
             await interaction.followup.send("❌ Jen DM."); return
-        profiles = _load_profiles(); profile = profiles.get(str(member.id))
+        profiles = _load_profiles(); profile = profiles.get(pkey(member.id))
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil."); return
         target = None
@@ -556,7 +557,7 @@ class BlacksmithCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         if status not in load_statuses():
             await interaction.followup.send(f"❌ Status `{status}` neexistuje."); return
-        profiles = _load_profiles(); profile = profiles.get(str(interaction.user.id))
+        profiles = _load_profiles(); profile = profiles.get(pkey(interaction.user.id))
         if not profile:
             await interaction.followup.send("❌ Nemáš profil."); return
         store, idx = _find_storage_and_entry(profile, item)

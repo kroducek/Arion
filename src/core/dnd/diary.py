@@ -18,6 +18,7 @@ def _get_quest_view(user_id: int):
 
 from src.utils.paths import DIARIES as DIARY_FILE
 from src.utils.json_utils import load_json, save_json
+from src.database.characters import pkey
 MAX_ENTRIES   = 50    # maximální počet záznamů na hráče
 MAX_ENTRY_LEN = 300   # maximální délka jednoho záznamu
 PAGE_SIZE     = 10    # záznamů na stránku (méně = přehlednější)
@@ -59,7 +60,7 @@ def migrate_entry(raw) -> dict:
 
 def get_entries(user_id: int) -> list[dict]:
     data = load_diaries()
-    raw  = data.get(str(user_id), [])
+    raw  = data.get(pkey(user_id), [])
     return [migrate_entry(e) for e in raw]
 
 def today() -> str:
@@ -337,7 +338,7 @@ class DiaryCog(commands.Cog):
     @app_commands.describe(line="Číslo řádku (viz /diary show)")
     async def diary_pin(self, interaction: discord.Interaction, line: int):
         data    = load_diaries()
-        uid     = str(interaction.user.id)
+        uid     = pkey(interaction.user.id)
         entries = [migrate_entry(e) for e in data.get(uid, [])]
 
         if not entries:
@@ -365,7 +366,7 @@ class DiaryCog(commands.Cog):
     @app_commands.describe(line="Číslo řádku", tag="Emoji tag (nech prázdné pro odebrání)")
     async def diary_tag(self, interaction: discord.Interaction, line: int, tag: str | None = None):
         data    = load_diaries()
-        uid     = str(interaction.user.id)
+        uid     = pkey(interaction.user.id)
         entries = [migrate_entry(e) for e in data.get(uid, [])]
 
         if not entries:
@@ -426,7 +427,7 @@ class DiaryCog(commands.Cog):
     @app_commands.describe(line="Číslo řádku (viz /diary show)")
     async def diary_remove(self, interaction: discord.Interaction, line: int):
         data    = load_diaries()
-        uid     = str(interaction.user.id)
+        uid     = pkey(interaction.user.id)
         entries = [migrate_entry(e) for e in data.get(uid, [])]
 
         if not entries:
@@ -478,7 +479,7 @@ class DiaryCog(commands.Cog):
             return
 
         data    = load_diaries()
-        uid     = str(member.id)
+        uid     = pkey(member.id)
         entries = [migrate_entry(e) for e in data.get(uid, [])]
 
         if not entries:
@@ -514,7 +515,7 @@ class DiaryCog(commands.Cog):
         line: int,
     ):
         data    = load_diaries()
-        uid     = str(member.id)
+        uid     = pkey(member.id)
         entries = [migrate_entry(e) for e in data.get(uid, [])]
 
         if not entries:
@@ -545,7 +546,7 @@ class DiaryCog(commands.Cog):
     @app_commands.describe(member="Hráč, jehož deník chceš smazat")
     async def admin_diary_clear(self, interaction: discord.Interaction, member: discord.Member):
         data  = load_diaries()
-        uid   = str(member.id)
+        uid   = pkey(member.id)
         count = len(data.get(uid, []))
 
         if count == 0:
