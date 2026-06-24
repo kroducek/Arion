@@ -126,6 +126,21 @@ class CharacterCog(commands.Cog):
             # chybí práva (Manage Nicknames) nebo je to majitel serveru — nevadí
             pass
 
+    async def _slot_autocomplete(self, interaction: discord.Interaction, current: str):
+        """Nabídne sloty hráče jako '1 · Kaiser ⭐' místo ručního psaní čísla."""
+        uid = interaction.user.id
+        chars = list_chars(uid)
+        active = get_active_slot(uid)
+        cur = (current or "").lower().strip()
+        choices = []
+        for slot in sorted(chars.keys()):
+            name = chars[slot].get("name", f"Postava {slot}")
+            if cur and cur not in slot.lower() and cur not in name.lower():
+                continue
+            label = f"{slot} · {name}" + ("  ⭐" if slot == active else "")
+            choices.append(app_commands.Choice(name=label[:100], value=int(slot)))
+        return choices[:25]
+
     # ──────────────────────────────────────────────────────────────────────────
     @character.command(name="list", description="Zobrazí tvé postavy")
     async def list_cmd(self, interaction: discord.Interaction):
@@ -196,6 +211,7 @@ class CharacterCog(commands.Cog):
     # ──────────────────────────────────────────────────────────────────────────
     @character.command(name="switch", description="Přepne aktivní postavu")
     @app_commands.describe(slot="Číslo slotu z /character list")
+    @app_commands.autocomplete(slot=_slot_autocomplete)
     async def switch_cmd(self, interaction: discord.Interaction, slot: int):
         uid = interaction.user.id
         slot_s = str(slot)
@@ -222,6 +238,7 @@ class CharacterCog(commands.Cog):
     # ──────────────────────────────────────────────────────────────────────────
     @character.command(name="delete", description="Smaže postavu — NEVRATNÉ!")
     @app_commands.describe(slot="Číslo slotu ke smazání")
+    @app_commands.autocomplete(slot=_slot_autocomplete)
     async def delete_cmd(self, interaction: discord.Interaction, slot: int):
         uid = interaction.user.id
         slot_s = str(slot)

@@ -3,9 +3,11 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
-from src.utils.paths import PROFILES, TAKEDOWNS
+from src.utils.paths import (
+    PROFILES, TAKEDOWNS, ECONOMY, DIARIES, PLAYER_PERKS, REPUTATION, CHARACTERS,
+)
 from src.utils.json_utils import load_json, save_json
-from src.database.characters import pkey
+from src.database.characters import list_chars, ckey
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS
@@ -30,21 +32,65 @@ def _increment_count() -> int:
     save_json(TAKEDOWNS, data)
     return data["count"]
 
-def _wipe_inventory(uid: str) -> None:
-    profiles = load_json(PROFILES, default={})
-    profile = profiles.get(uid)
-    if not profile:
-        return
-    profile["inventory"] = []
-    profile["notes"] = []
-    if "equipment" in profile:
-        profile["equipment"] = {k: None for k in profile["equipment"]}
-    save_json(PROFILES, profiles)
+def _char_keys(member_id) -> list:
+    """
+    Všechny datové klíče postav účtu ('<id>:<slot>') napříč sloty.
+    Defensivně přidá i legacy varianty ('<id>' a '<id>:1') — kdyby něco
+    nebylo zmigrované, ať to takedown taky uklidí.
+    """
+    keys = [ckey(member_id, s) for s in list_chars(member_id).keys()]
+    for legacy in (str(member_id), ckey(member_id, "1")):
+        if legacy not in keys:
+            keys.append(legacy)
+    return keys
 
-def _wipe_profile(uid: str) -> None:
+def _wipe_inventory(member_id) -> None:
+    """Vyprázdní inventář/poznámky/výbavu u VŠECH postav účtu."""
     profiles = load_json(PROFILES, default={})
-    profiles.pop(uid, None)
-    save_json(PROFILES, profiles)
+    changed = False
+    for key in _char_keys(member_id):
+        profile = profiles.get(key)
+        if not profile:
+            continue
+        profile["inventory"] = []
+        profile["notes"] = []
+        if "equipment" in profile:
+            profile["equipment"] = {k: None for k in profile["equipment"]}
+        changed = True
+    if changed:
+        save_json(PROFILES, profiles)
+
+def _wipe_profile(member_id) -> None:
+    """
+    Smaže VŠECHNY postavy účtu: profil, gold, deník, perky, reputaci na každém
+    slotu + záznam v registru postav. (Stříbro/prach/achievementy = účtové,
+    nesahá se na ně.)
+    """
+    keys = _char_keys(member_id)
+    for path in (PROFILES, ECONOMY, DIARIES, PLAYER_PERKS):
+        d = load_json(path, default={})
+        if any(k in d for k in keys):
+            for k in keys:
+                d.pop(k, None)
+            save_json(path, d)
+    # reputace: {gid: {players: {key: ...}}}
+    rep = load_json(REPUTATION, default={})
+    changed = False
+    for gid, gdata in rep.items():
+        if not isinstance(gdata, dict):
+            continue
+        players = gdata.get("players", {})
+        for k in keys:
+            if k in players:
+                players.pop(k, None)
+                changed = True
+    if changed:
+        save_json(REPUTATION, rep)
+    # registr postav — smaž celý záznam účtu
+    chars = load_json(CHARACTERS, default={})
+    if str(member_id) in chars:
+        chars.pop(str(member_id), None)
+        save_json(CHARACTERS, chars)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # COG
@@ -65,7 +111,7 @@ class TakedownCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         ch = interaction.channel
-        uid = pkey(member.id)
+        uid = member.id          # wipe-all jede přes syrové id (všechny sloty)
         color_red = 0xC0392B
 
         # Potvrzení vidí jen DM
