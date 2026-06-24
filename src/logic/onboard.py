@@ -421,14 +421,14 @@ async def _show_first_contact(interaction: discord.Interaction, dest_key: str):
     )
     embed.set_footer(text="⭐ Aurionis  ·  Co odpovíš?")
     choices = [
-        ("Jasně, proč ne?",  "**\'No vidíš! To je nadšení, co mám ráda. Z tebe bude prima dobrodruh.\'**"),
-        ("Mluvící kočka!!!", "*Naježí se.*  **\'Kočka?! Pche. Jsem Arion — vznešená průvodkyně vyvolených. Ale jo, chlupy mám.\'**"),
-        ("Co jsi zač?",      "**\'Trpělivost, vyvolený. Všechno má svůj čas… a ten tvůj právě začíná.\'**"),
-        ("(mlčet)",          "*Kočka nakloní hlavu.*  **\'…Tichý typ, jo? Hm. To se mi líbí ještě víc.\'**"),
+        ("Jasně, proč ne?",  "„Tak jo. Někdo jako ty se hodí vždycky. V týhle době jsou dobří silní lidé potřeba.“"),
+        ("Mluvící kočka!!!", "*Naježí se.*  „Mluvící člověk!!“ *řekne posměšně.*  „Pche. Vy vyvolení jste všichni stejní.“"),
+        ("Co jsi zač?",      "„Vedu guildu bojovníků, dobrodruhů.. říkej si tomu jak chceš.“  *Pousměje se, očividně je na sebe pyšná.*"),
+        ("(mlčet)",          "„Halooo? Ty jsi ten tichý typ, co?“"),
     ]
     next_factory = lambda: StoryBeatView(
         functools.partial(_start_encounter, dest_key=dest_key),
-        label="Ukaž, co umíš!", emoji="💦",
+        label="Ukaž, co umíš!", emoji="🤸",
     )
     await interaction.response.edit_message(
         embed=embed,
@@ -442,7 +442,7 @@ async def _start_encounter(interaction: discord.Interaction, dest_key: str):
     arion_roll = random.randint(1, 12)
 
     embed = discord.Embed(
-        title="💦  Ukaž, co umíš!",
+        title="🤸  Ukaž, co umíš!",
         description=(
             "Arion zamrská tlapkou a vyčaruje třpytivou kouli vody — "
             "a než stačíš cokoliv říct, hodí ji rovnou po tobě!"
