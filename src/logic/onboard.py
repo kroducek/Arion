@@ -172,6 +172,7 @@ def add_registered_item_to_profile(profile: dict, item_id: str, qty: int = 1) ->
 # Plakát Aurionis: Act II (pozn.: Discord CDN URL s ?ex=... expiruje — ideálně přehostit)
 URL_PLAKAT_ACT2 = "https://cdn.discordapp.com/attachments/1477815245908082779/1519240012724699158/IMG_0441.png?ex=6a3d7ec5&is=6a3c2d45&hm=26f0ff116d82c11d495eefb60575000635d870d73184d4fa0ebfc890f3edd2b7&"
 
+URL_PLAKAT_ALICE = "https://cdn.discordapp.com/attachments/1477815245908082779/1519240013882200194/IMG_0176.png?ex=6a3d7ec5&is=6a3c2d45&hm=cedc265b8206e076339265f104ffdebdaccb43eb58ff3b36ecfc8a6af174cf3e&"
 ARION_COLOR = 0xb87333  # bronz — Arionina barva
 
 
@@ -494,9 +495,7 @@ class EncounterView(discord.ui.View):
                     f"Hodíš se stranou a koule vody projde těsně kolem tvého ucha, roztříští se o zeď za tebou.\n\n"
                     f"Arion na tebe upřeně zírá a pak se rozesměje.\n\n"
                     f"**'Máš dobré reflexy! To se mi líbí!'**\n\n"
-                    f"S úšklebkem ukáže na dveře cechu\n"
-                    f"**'Můžu tě navést na cestu, pojď dovnitř!'"
-                    f"**"
+                    f"*Spokojeně se culí a mrskne ocasem.*"
                 ),
                 color=0x2ecc71,
             )
@@ -508,8 +507,7 @@ class EncounterView(discord.ui.View):
                     f"Arion se skoro sesype smíchy.\n\n"
                     f"**'AHA-HAHA-HAHA! Ach jo, ach jo..'**  *máchne tlapkou*\n\n"
                     f"*Na kůži ti začínají růst malé toxické houby.* Arion je sfoukne jedním dechem "
-                    f"a ty se rozplynou. Stále se chichotající kočka ukáže na dveře.\n"
-                    f"**'Ahaha, pojď dovnitř!'**"
+                    f"a ty se rozplynou. *Pořád se chichotá.*"
                 ),
                 color=0xe67e22,
             )
@@ -714,7 +712,7 @@ class ArionMemoryView(discord.ui.View):
             ("Co se děje?", aura_reply),
             ("(mlčet)",     aura_reply),
         ]
-        next_factory = lambda: EnterGuildInsideView(dest_key=self.dest_key)
+        next_factory = lambda: StoryBeatView(functools.partial(_show_alice_poster, dest_key=self.dest_key))
         await interaction.response.edit_message(
             embed=embed,
             view=DialogChoiceView(choices, next_factory, reply_title="🐱  ..Ale nic."),
@@ -781,6 +779,16 @@ class ArionHmView(discord.ui.View):
             embed=embed,
             view=EnterGuildInsideView(dest_key=self.dest_key),
         )
+
+
+async def _show_alice_poster(interaction: discord.Interaction, dest_key: str):
+    """Beat: plakát Matka draků Alice Aurelion → vstup do cechu."""
+    embed = discord.Embed(title="Matka draků Alice Aurelion", color=0x1a1a2e)
+    embed.set_image(url=URL_PLAKAT_ALICE)
+    await interaction.response.edit_message(
+        embed=embed,
+        view=EnterGuildInsideView(dest_key=dest_key),
+    )
 
 
 class EnterGuildInsideView(discord.ui.View):
