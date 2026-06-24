@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from typing import Optional
 
-from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, ITEMS as ITEMS_FILE, PLAYER_PERKS, ACHIEVEMENTS
+from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, ITEMS as ITEMS_FILE, PLAYER_PERKS, ACHIEVEMENTS, REPUTATION
 from src.utils.json_utils import load_json, save_json
 from src.logic.stats import get_xp_cap, level_label, add_xp
 from src.logic.economy import get_balance, set_balance, COIN_SILVER, COIN_STARDUST
@@ -60,6 +60,9 @@ def _ensure_player_fields(profile: dict) -> None:
     profile.setdefault("level",      1)
     profile.setdefault("inventory",  [])
     profile.setdefault("equipment",  {})
+    profile.setdefault("bio",          "")
+    profile.setdefault("title",        "")
+    profile.setdefault("accent_color", None)
 
 def _bar(current: int, maximum: int, width: int = 10) -> str:
     if maximum <= 0:
@@ -220,6 +223,69 @@ class EditPortraitModal(discord.ui.Modal, title="Upravit portrét"):
         )
 
 
+class EditTitleModal(discord.ui.Modal, title="Upravit titul / epiteton"):
+    titul = discord.ui.TextInput(
+        label="Titul postavy (krátký taglinek)",
+        placeholder="např. Popel z Lumenie",
+        required=False,
+        max_length=64,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        data = load_data()
+        uid  = pkey(interaction.user.id)
+        data.setdefault(uid, {})["title"] = self.titul.value.strip()
+        save_data(data)
+        await interaction.response.send_message("\u2705 Titul aktualizován.", ephemeral=True)
+
+
+class EditBioModal(discord.ui.Modal, title="Upravit bio / lore"):
+    bio = discord.ui.TextInput(
+        label="Bio postavy",
+        style=discord.TextStyle.paragraph,
+        placeholder="Kdo je tvá postava? Odkud přišla, co ji žene\u2026",
+        required=False,
+        max_length=600,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        data = load_data()
+        uid  = pkey(interaction.user.id)
+        data.setdefault(uid, {})["bio"] = self.bio.value.strip()
+        save_data(data)
+        await interaction.response.send_message("\u2705 Bio aktualizováno.", ephemeral=True)
+
+
+class EditAccentModal(discord.ui.Modal, title="Barva karty"):
+    barva = discord.ui.TextInput(
+        label="Hex barva (např. 3498db nebo #e74c3c)",
+        placeholder="prázdné = výchozí",
+        required=False,
+        max_length=7,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw  = self.barva.value.strip().lstrip("#")
+        data = load_data()
+        uid  = pkey(interaction.user.id)
+        if not raw:
+            data.setdefault(uid, {})["accent_color"] = None
+            save_data(data)
+            await interaction.response.send_message("\u2705 Barva nastavena na výchozí.", ephemeral=True)
+            return
+        try:
+            val = int(raw, 16)
+            if not (0 <= val <= 0xFFFFFF):
+                raise ValueError
+        except ValueError:
+            await interaction.response.send_message(
+                "\u274c Neplatná hex barva. Zadej třeba `3498db`.", ephemeral=True)
+            return
+        data.setdefault(uid, {})["accent_color"] = val
+        save_data(data)
+        await interaction.response.send_message(f"\u2705 Barva karty nastavena na `#{raw.lower()}`.", ephemeral=True)
+
+
 class EditProfileView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=180)
@@ -235,6 +301,18 @@ class EditProfileView(discord.ui.View):
     @discord.ui.button(label="Portrét (URL)", style=discord.ButtonStyle.secondary, emoji="🖼️")
     async def edit_portrait(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EditPortraitModal())
+
+    @discord.ui.button(label="Titul", style=discord.ButtonStyle.secondary, emoji="🏷️")
+    async def edit_title(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(EditTitleModal())
+
+    @discord.ui.button(label="Bio", style=discord.ButtonStyle.secondary, emoji="📖")
+    async def edit_bio(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(EditBioModal())
+
+    @discord.ui.button(label="Barva", style=discord.ButtonStyle.secondary, emoji="🎨")
+    async def edit_accent(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(EditAccentModal())
 
 # ══════════════════════════════════════════════════════════════════════════════
 # COG
@@ -258,6 +336,213 @@ from src.logic.spirits import get_equipped_spirit, fury_display
 
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _build_prukaz_embed(target, profile) -> discord.Embed:
+    """Lore strana — vizitka postavy (text, obrázek, měny)."""
+    user_id      = pkey(target.id)
+    char_name    = profile.get("name", target.display_name)
+    title        = profile.get("title", "")
+    economy      = load_economy()
+    balance      = economy.get(user_id, 0)
+    silver_bal   = get_balance(target.id, "silver")
+    stardust_bal = get_balance(target.id, "stardust")
+    equipped_spirit = get_equipped_spirit(profile)
+
+    lines = []
+    if title:
+        lines.append(f"\U0001f4ac *{title}*")
+    lines.append(f"\U0001f396\ufe0f Rank: **{profile.get('rank', 'F3')}**")
+    lines.append(f"-# {COIN} **{balance}**  \u00b7  {COIN_SILVER} **{silver_bal}**  \u00b7  {COIN_STARDUST} **{stardust_bal}**")
+    if equipped_spirit:
+        sf = f"+{equipped_spirit['fury']}" if equipped_spirit["fury"] > 0 else str(equipped_spirit["fury"])
+        lines.append(f"-# {SPIRIT_EMO} *Strážný duch: {equipped_spirit['name']} ({sf} {FU_EMO})*")
+
+    bio = profile.get("bio", "")
+    if bio:
+        lines.append("")
+        lines.append(bio)
+
+    if profile.get("motivation"):
+        lines.append("")
+        lines.append(f"\u2728  {profile['motivation']}")
+
+    memories = profile.get("memories", [])
+    if memories:
+        mem = memories[-1]
+        if len(mem) > 1020:
+            mem = mem[:1020] + "\u2026"
+        lines.append("")
+        lines.append(f"{MEM_EMO} **Poslední vzpomínka**")
+        lines.append(f"*{mem}*")
+
+    active_card_id = profile.get("active_card_id")
+    if active_card_id:
+        try:
+            from src.utils.paths import CARDS_INVENTORY
+            cards_inv = load_json(CARDS_INVENTORY, {})
+            card = cards_inv.get(active_card_id)
+            if card:
+                print_num = card.get("print_number", "?")
+                qual = card.get("quality", "normal")
+                qual_icon = {"shiny": "\u2728", "gold": "\U0001f947", "normal": "\u26aa", "damaged": "\U0001f494"}.get(qual, "\u26aa")
+                lines.append("")
+                lines.append("\U0001f3b4 **Reprezentativní karta**")
+                lines.append(f"*{card.get('name')}  \u00b7  Print #{print_num}  \u00b7  {qual_icon} {qual.capitalize()}  \u00b7  ID: `{active_card_id}`*")
+        except Exception:
+            pass
+
+    color = profile.get("accent_color") or 0x3498db
+    embed = discord.Embed(
+        title=f"\U0001faaa  Průkaz dobrodruha: {char_name}",
+        description="\n".join(lines),
+        color=color,
+    )
+    embed.set_thumbnail(url=target.display_avatar.url)
+    if profile.get("portrait_url"):
+        embed.set_image(url=profile["portrait_url"])
+    embed.set_footer(text=f"ID: {user_id}  \u00b7  Act: Aurionis \u00b7 Act II")
+    return embed
+
+
+def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
+    """Progress strana — čísla (staty, XP, atributy, vliv, reputace)."""
+    user_id   = pkey(target.id)
+    char_name = profile.get("name", target.display_name)
+    items_db  = _load_items()
+
+    hp_cur = profile.get("hp_cur", 50); hp_max = profile.get("hp_max", 50)
+    hunger_cur = profile.get("hunger_cur", 10); hunger_max = profile.get("hunger_max", 10)
+    mana_cur = profile.get("mana_cur", 0); mana_max = profile.get("mana_max", 5)
+    fury_cur, fury_max, spirit_bonus = fury_display(profile)
+    equipped_spirit = get_equipped_spirit(profile)
+    v_svetlo = profile.get("vliv_svetlo", 0)
+    v_temnota = profile.get("vliv_temnota", 0)
+    v_rovno = profile.get("vliv_rovnovaha", 0)
+    level = profile.get("level", 0)
+    xp = profile.get("xp", 0)
+    sp = profile.get("sp", 0)
+    cap = get_xp_cap(level)
+    total_def = _compute_total_def(profile, items_db)
+
+    hp_bar = _heart_bar(hp_cur, hp_max)
+    hunger_bar = _hunger_bar(hunger_cur, hunger_max)
+    mana_bar = _mana_bar(mana_cur, mana_max)
+    fury_total = fury_cur + spirit_bonus
+    fury_bar = _bar(fury_total, fury_max + spirit_bonus if fury_max > 0 else 1)
+    xp_bar = _bar(xp, cap if cap else 1)
+    def_str = f"  \u00b7  \U0001f6e1\ufe0f **{total_def}** DEF" if total_def else ""
+    xp_str = f"{xp} (MAX)" if not cap else f"{xp}/{cap}"
+    sp_str = f"  \u26a1 **{sp}** SP" if sp > 0 else ""
+
+    lines = []
+    lines.append(f"{HP_ON} Zdraví:  {hp_bar}  \u00b7  {hp_cur}/{hp_max}{def_str}")
+    lines.append(f"{MN_ON} Mana:  {mana_bar}  \u00b7  {mana_cur}/{mana_max}")
+    lines.append(f"{HN_ON} Hlad:  {hunger_bar}  \u00b7  {hunger_cur}/{hunger_max}")
+    if spirit_bonus > 0 and equipped_spirit:
+        fury_display_str = f"{fury_cur}/{fury_max}  *(+{spirit_bonus} od {equipped_spirit['name']})*"
+    else:
+        fury_display_str = f"{fury_cur}/{fury_max}"
+    lines.append(f"{FU_EMO} Furioka:  {fury_bar}  \u00b7  {fury_display_str}")
+    lines.append(f"\u00b7  **{level_label(level)}**  \u00b7  {XP_EMO}  {xp_bar}  \u00b7  {xp_str}{sp_str}")
+
+    active_statuses = profile.get("statuses") or []
+    if active_statuses:
+        try:
+            from src.core.dnd.blacksmith import load_statuses
+            _sreg = load_statuses()
+        except Exception:
+            _sreg = {}
+        icons = "".join(_sreg.get(st.get("status"), {}).get("emoji", "\u2022") for st in active_statuses)
+        lines.append(f"\U0001fa78 Statusy:  {icons}  *(detail v `/quicksheet`)*")
+
+    lines.append(f"{VLIV_EMO}  {SVETLO_EMO} **{v_svetlo}**  \u00b7  {TEMNOTA_EMO} **{v_temnota}**  \u00b7  {ROVNO_EMO} **{v_rovno}**")
+    lines.append("-# 1 Vliv = 5 furiok")
+
+    stats = profile.get("stats", {})
+    if stats:
+        lines.append("")
+        stats_line = "  \u00b7  ".join(f"**{k}** {v}" for k, v in stats.items())
+        lines.append(f"-# {stats_line}")
+
+    if guild_id is not None:
+        try:
+            rep_all = load_json(REPUTATION, {})
+            g = rep_all.get(str(guild_id), {})
+            reps = g.get("players", {}).get(user_id, {})
+            rep_line = "  \u00b7  ".join(f"{f} `{v:+d}`" for f, v in reps.items() if v)
+            if rep_line:
+                lines.append("")
+                lines.append(f"\U0001f4dc Reputace:  {rep_line}")
+        except Exception:
+            pass
+
+    try:
+        pp_data  = load_json(PLAYER_PERKS, {})
+        ach_data = load_json(ACHIEVEMENTS, {})
+        perk_cnt = len(pp_data.get(user_id, {}).get("perks", []))
+        ach_cnt  = len(ach_data.get(str(target.id), []))   # achievementy = účet (holé)
+        lines.append("")
+        lines.append(f"\U0001f3f7\ufe0f Perky: **{perk_cnt}**  \u00b7  \U0001f3c6 Achievementy: **{ach_cnt}**")
+    except Exception:
+        pass
+
+    color = profile.get("accent_color") or 0x2ecc71
+    embed = discord.Embed(
+        title=f"\U0001f4ca  Staty: {char_name}",
+        description="\n".join(lines),
+        color=color,
+    )
+    embed.set_thumbnail(url=target.display_avatar.url)
+    embed.set_footer(text=f"ID: {user_id}  \u00b7  Act: Aurionis \u00b7 Act II")
+    return embed
+
+
+class ProfileView(discord.ui.View):
+    def __init__(self, target, guild_id, can_edit: bool):
+        super().__init__(timeout=300)
+        self.target   = target
+        self.guild_id = guild_id
+        self.owner_id = target.id
+        if not can_edit:
+            self.remove_item(self.edit_btn)
+
+    def _load_profile(self):
+        data = load_data()
+        profile = data.get(pkey(self.target.id))
+        if profile:
+            _ensure_player_fields(profile)
+        return profile
+
+    @discord.ui.button(label="Průkaz", style=discord.ButtonStyle.primary, emoji="🪪")
+    async def prukaz_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        profile = self._load_profile()
+        if not profile:
+            await interaction.response.send_message("Průkaz už neexistuje.", ephemeral=True)
+            return
+        await interaction.response.edit_message(embed=_build_prukaz_embed(self.target, profile), view=self)
+
+    @discord.ui.button(label="Staty", style=discord.ButtonStyle.success, emoji="📊")
+    async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        profile = self._load_profile()
+        if not profile:
+            await interaction.response.send_message("Průkaz už neexistuje.", ephemeral=True)
+            return
+        await interaction.response.edit_message(embed=_build_stats_embed(self.target, profile, self.guild_id), view=self)
+
+    @discord.ui.button(label="Upravit", style=discord.ButtonStyle.secondary, emoji="✏️", row=1)
+    async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Tohle není tvůj průkaz.", ephemeral=True)
+            return
+        data = load_data()
+        uid  = pkey(interaction.user.id)
+        if uid not in data or not data[uid].get("gold_received"):
+            await interaction.response.send_message(
+                "Průkaz můžeš upravit až po dokončení tutoriálu.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "Co chceš na průkazu upravit?", view=EditProfileView(), ephemeral=True)
+
+
 class Profile(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -268,9 +553,9 @@ class Profile(commands.Cog):
     @app_commands.describe(member="Hráč (výchozí: ty).")
     async def profile(self, interaction: discord.Interaction,
                       member: Optional[discord.Member] = None):
-        target   = member or interaction.user
-        data     = load_data()
-        user_id  = pkey(target.id)
+        target  = member or interaction.user
+        data    = load_data()
+        user_id = pkey(target.id)
 
         if user_id not in data:
             await interaction.response.send_message(
@@ -279,174 +564,15 @@ class Profile(commands.Cog):
             )
             return
 
-        profile  = data[user_id]
-        _ensure_player_fields(profile)
-        economy  = load_economy()
-        balance  = economy.get(user_id, 0)
-        silver_bal   = get_balance(target.id, "silver")
-        stardust_bal = get_balance(target.id, "stardust")
-        items_db = _load_items()
-
-        # ── Data ──────────────────────────────────────────────────────────────
-        hp_cur     = profile.get("hp_cur", 50)
-        hp_max     = profile.get("hp_max", 50)
-        hunger_cur = profile.get("hunger_cur", 10)
-        hunger_max = profile.get("hunger_max", 10)
-        mana_cur   = profile.get("mana_cur", 0)
-        mana_max   = profile.get("mana_max", 5)
-        fury_cur, fury_max, spirit_bonus = fury_display(profile)
-        equipped_spirit = get_equipped_spirit(profile)
-        v_svetlo   = profile.get("vliv_svetlo",    0)
-        v_temnota  = profile.get("vliv_temnota",   0)
-        v_rovno    = profile.get("vliv_rovnovaha", 0)
-        level      = profile.get("level", 0)
-        xp         = profile.get("xp", 0)
-        sp         = profile.get("sp", 0)
-        cap        = get_xp_cap(level)
-        total_def  = _compute_total_def(profile, items_db)
-
-        hp_bar     = _heart_bar(hp_cur, hp_max)
-        hunger_bar = _hunger_bar(hunger_cur, hunger_max)
-        mana_bar   = _mana_bar(mana_cur, mana_max)
-        fury_total = fury_cur + spirit_bonus
-        fury_bar   = _bar(fury_total, fury_max + spirit_bonus if fury_max > 0 else 1)
-        xp_bar     = _bar(xp, cap if cap else 1)
-
-        def_str = f"  ·  🛡️ **{total_def}** DEF" if total_def else ""
-        xp_str  = f"{xp} (MAX)" if not cap else f"{xp}/{cap}"
-        sp_str  = f"  ⚡ **{sp}** SP" if sp > 0 else ""
-
-        char_name = profile.get("name", target.display_name)
-        stats     = profile.get("stats", {})
-        memories  = profile.get("memories", [])
-
-        # ── Sestavení description ──────────────────────────────────────────────
-        lines = []
-
-        # Základní info
-        lines.append(f"🎖️ Rank: **{profile.get('rank', 'F3')}**  ·  👤 Jméno: **{char_name}**")
-        lines.append(f"-# {COIN} **{balance}**  ·  {COIN_SILVER} **{silver_bal}**  ·  {COIN_STARDUST} **{stardust_bal}**")
-        if equipped_spirit:
-            spirit_fury_str = f"+{equipped_spirit['fury']}" if equipped_spirit["fury"] > 0 else str(equipped_spirit["fury"])
-            lines.append(f"-# {SPIRIT_EMO} *Strážný duch: {equipped_spirit['name']} ({spirit_fury_str} {FU_EMO})*")
-        lines.append("")
-
-        # Stav
-        lines.append(f"{HP_ON} Zdraví:  {hp_bar}  ·  {hp_cur}/{hp_max}{def_str}")
-        lines.append(f"{MN_ON} Mana:  {mana_bar}  ·  {mana_cur}/{mana_max}")
-        lines.append(f"{HN_ON} Hlad:  {hunger_bar}  ·  {hunger_cur}/{hunger_max}")
-        if spirit_bonus > 0:
-            fury_display_str = f"{fury_cur}/{fury_max}  *(+{spirit_bonus} od {equipped_spirit['name']})*"
-        else:
-            fury_display_str = f"{fury_cur}/{fury_max}"
-        lines.append(f"{FU_EMO} Furioka:  {fury_bar}  ·  {fury_display_str}")
-        lines.append(f"·  **{level_label(level)}**  ·  {XP_EMO}  {xp_bar}  ·  {xp_str}{sp_str}")
-
-        # Aktivní statusy (jed/krvácení/…)
-        active_statuses = profile.get("statuses") or []
-        if active_statuses:
-            try:
-                from src.core.dnd.blacksmith import load_statuses
-                _sreg = load_statuses()
-            except Exception:
-                _sreg = {}
-            icons = "".join(_sreg.get(s.get("status"), {}).get("emoji", "•") for s in active_statuses)
-            lines.append(f"🩸 Statusy:  {icons}  *(detail v `/quicksheet`)*")
-
-        # Vliv
-        lines.append(f"{VLIV_EMO}  {SVETLO_EMO} **{v_svetlo}**  ·  {TEMNOTA_EMO} **{v_temnota}**  ·  {ROVNO_EMO} **{v_rovno}**")
-        lines.append("-# 1 Vliv = 5 furiok")
-
-        # Statistiky
-        if stats:
-            lines.append("")
-            stats_line = "  ·  ".join(f"**{k}** {v}" for k, v in stats.items())
-            lines.append(f"-# {stats_line}")
-
-        # Motivace
-        if profile.get("motivation"):
-            lines.append("")
-            lines.append(f"✨  {profile['motivation']}")
-
-        # Perky & Achievementy
-        try:
-            pp_data   = load_json(PLAYER_PERKS, {})
-            ach_data  = load_json(ACHIEVEMENTS, {})
-            perk_cnt  = len(pp_data.get(str(user_id), {}).get("perks", []))
-            ach_cnt   = len(ach_data.get(str(target.id), []))
-            if perk_cnt > 0 or ach_cnt > 0:
-                lines.append("")
-                lines.append(f"🏷️ Perky: **{perk_cnt}**  ·  🏆 Achievementy: **{ach_cnt}**")
-        except Exception:
-            pass
-
-        # Poslední vzpomínka
-        if memories:
-            mem = memories[-1]
-            if len(mem) > 1020:
-                mem = mem[:1020] + "…"
-            lines.append("")
-            lines.append(f"{MEM_EMO} **Poslední vzpomínka**")
-            lines.append(f"*{mem}*")
-
-        # Aktivní karta (Cards 2.0)
-        active_card_id = profile.get("active_card_id")
-        if active_card_id:
-            try:
-                from src.utils.paths import CARDS_INVENTORY
-                cards_inv = load_json(CARDS_INVENTORY, {})
-                card = cards_inv.get(active_card_id)
-                if card:
-                    print_num = card.get("print_number", "?")
-                    qual = card.get("quality", "normal")
-                    qual_icon = {"shiny": "✨", "gold": "🥇", "normal": "⚪", "damaged": "💔"}.get(qual, "⚪")
-                    lines.append("")
-                    lines.append(f"🎴 **Reprezentativní karta**")
-                    lines.append(f"*{card.get('name')}  ·  Print #{print_num}  ·  {qual_icon} {qual.capitalize()}  ·  ID: `{active_card_id}`*")
-            except Exception:
-                pass
-
-        # ── Embed ──────────────────────────────────────────────────────────────
-        embed = discord.Embed(
-            title=f"🪪  Průkaz dobrodruha: {char_name}",
-            description="\n".join(lines),
-            color=0x3498db,
-        )
-        embed.set_thumbnail(url=target.display_avatar.url)
-
-        if profile.get("portrait_url"):
-            embed.set_image(url=profile["portrait_url"])
-
-        embed.set_footer(text=f"ID: {user_id}  ·  Act: Aurionis · Act II")
-        await interaction.response.send_message(embed=embed)
-
-    # ── /profile-edit ──────────────────────────────────────────────────────────
-
-    @app_commands.command(name="profile-edit", description="Uprav svůj dobrodružný průkaz.")
-    async def profile_edit(self, interaction: discord.Interaction):
-        data    = load_data()
-        user_id = pkey(interaction.user.id)
-
-        if user_id not in data or not data[user_id].get("gold_received"):
-            await interaction.response.send_message(
-                "Průkaz můžeš upravit až po dokončení tutoriálu.",
-                ephemeral=True,
-            )
-            return
-
         profile = data[user_id]
-        embed = discord.Embed(
-            title="✏️  Úprava průkazu",
-            description=(
-                f"**Jméno:** {profile.get('name', '—')}\n"
-                f"**Motivace:** {profile.get('motivation', '—')[:80]}"
-                f"{'...' if len(profile.get('motivation','')) > 80 else ''}\n"
-                f"**Portrét:** {'✅ nastaven' if profile.get('portrait_url') else '—'}"
-            ),
-            color=0x3498db,
-        )
-        embed.set_footer(text="Vyber co chceš upravit.")
-        await interaction.response.send_message(embed=embed, view=EditProfileView(), ephemeral=True)
+        _ensure_player_fields(profile)
+
+        embed    = _build_prukaz_embed(target, profile)
+        can_edit = (target.id == interaction.user.id)
+        guild_id = interaction.guild.id if interaction.guild else None
+        view     = ProfileView(target, guild_id, can_edit)
+        await interaction.response.send_message(embed=embed, view=view)
+
 
     # ── /eat ───────────────────────────────────────────────────────────────────
 
