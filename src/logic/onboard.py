@@ -211,10 +211,16 @@ class DialogChoiceView(discord.ui.View):
             btn.callback = self._make_cb(reply)
             self.add_item(btn)
 
-    def _make_cb(self, reply: str):
+    def _make_cb(self, reply):
         async def cb(interaction: discord.Interaction):
+            nxt = self._next()
+            if not reply:  # tichá volba → pokračuje rovnou (bez repliky)
+                cont = getattr(nxt, "_on_continue", None)
+                if cont is not None:
+                    await cont(interaction)
+                    return
             embed = _arion_reply_embed(reply, self._reply_title)
-            await interaction.response.edit_message(embed=embed, view=self._next())
+            await interaction.response.edit_message(embed=embed, view=nxt)
         return cb
 
 
@@ -792,20 +798,41 @@ async def _show_alice_poster(interaction: discord.Interaction, dest_key: str):
 
 
 async def _show_acceptance(interaction: discord.Interaction, dest_key: str):
-    """Beat: Arion přijme hráče mezi dobrodruhy → rozdělení statů."""
+    """Beat A: Arion přijme hráče mezi dobrodruhy + dialog → staty."""
     embed = discord.Embed(
         title="📖  Přijetí mezi dobrodruhy",
         description=(
             "Arion přeskočí pult jedním plynulým pohybem a přistane na druhé straně, "
             "kde otevře tlustou, živoucí knihu.\n\n"
-            "***„..Standardní procedura. Přijmu tě mezi dobrodruhy.“***\n\n"
+            "***„..Standardní procedura. Přijmu tě mezi dobrodruhy.“***"
+        ),
+        color=0x2c3e50,
+    )
+    embed.set_image(url=URL_ARION_ENCOUNTER)
+    embed.set_footer(text="⭐ Aurionis  ·  Co řekneš?")
+    choices = [
+        ("Co když nechci být dobrodruh?",          "„Hloupost! Každý chce být dobrodruh!“"),
+        ("(mlčet)",                                None),
+        ("Jakto, že můžeš mluvit když jsi kočka?", "„Ty s tím nedáš pokoj, co? Jsem magická! Magická kočka!“"),
+    ]
+    next_factory = lambda: StoryBeatView(functools.partial(_show_stats_intro, dest_key=dest_key))
+    await interaction.response.edit_message(
+        embed=embed,
+        view=DialogChoiceView(choices, next_factory),
+    )
+
+
+async def _show_stats_intro(interaction: discord.Interaction, dest_key: str):
+    """Beat B: destička se rozsvítí → rozdělení statů."""
+    embed = discord.Embed(
+        title="✨  Z jakého jsi těsta",
+        description=(
             "Přejede tlapkou přes zvláštní destičku vedle knihy a ta se rozsvítí "
             "modrou aurou, jako by reagovala na dotyk.\n\n"
             "***„Tak se podíváme, z jakého jsi těsta.“***"
         ),
         color=0x2c3e50,
     )
-    embed.set_image(url=URL_ARION_ENCOUNTER)
     embed.set_footer(text="⭐ Aurionis  ·  Rozděl své body.")
     labels     = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
     base_stats = {s: 0 for s in labels}
