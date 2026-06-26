@@ -173,6 +173,7 @@ def add_registered_item_to_profile(profile: dict, item_id: str, qty: int = 1) ->
 URL_PLAKAT_ACT2 = "https://cdn.discordapp.com/attachments/1477815245908082779/1519240012724699158/IMG_0441.png?ex=6a3d7ec5&is=6a3c2d45&hm=26f0ff116d82c11d495eefb60575000635d870d73184d4fa0ebfc890f3edd2b7&"
 
 URL_PLAKAT_ALICE = "https://cdn.discordapp.com/attachments/1477815245908082779/1519240013882200194/IMG_0176.png?ex=6a3d7ec5&is=6a3c2d45&hm=cedc265b8206e076339265f104ffdebdaccb43eb58ff3b36ecfc8a6af174cf3e&"
+URL_PLAKAT_AURELION = "https://cdn.discordapp.com/attachments/1477815245908082779/1520054580463796314/IMG_0479.png?ex=6a3fcca5&is=6a3e7b25&hm=e67202576084d8a35f7919a0de46ee21bb1ac3d9c1d5366465323e024f8884fb&"
 ARION_COLOR = 0xb87333  # bronz — Arionina barva
 
 
@@ -1179,7 +1180,7 @@ async def _show_guild_card(
     embed.set_footer(text="⭐ Aurionis  ·  Co řekneš?")
 
     choices = [
-        ("Neskončíte na mizině brzo?",
+        ("Neskončíte takhle švorc?",
          "„Pravděpodobně! Ale jak říkám — hodí se nám teď každý schopný dobrodruh!“"),
         ("Díky.", "„Není zač.“"),
         ("(mlčet)", None),
@@ -1522,6 +1523,65 @@ class PerkSelectionView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
 
 
+async def _show_arion_farewell(interaction, dest_key, portrait_url):
+    """Beat: rozloučení s Arion → plakát Poslední Aurelion → nástěnka."""
+    embed = discord.Embed(
+        title="🐱  Arion",
+        description=(
+            "Arion zaklapne knihu a usadí se na pultě.\n\n"
+            "*„Tak se měj. A nezapomeň se podívat na nástěnku — "
+            "i když pochybuju, že tvý úkoly nebudou rozebraný.“*"
+        ),
+        color=0xb87333,
+    )
+    embed.set_footer(text="⭐ Aurionis  ·  Co řekneš?")
+    choices = [
+        ("Díky, Arion, měj se", "*Kočka na tebe spokojeně zavrní.*"),
+        ("Měj se, kočko",       "*Arion od tebe naštvaně odvrátí pohled.*"),
+        ("(mlčet…)",            "*Arion ti packou zamává a zazubí se.*"),
+    ]
+    next_factory = lambda: StoryBeatView(
+        functools.partial(_show_aurelion_poster, dest_key=dest_key, portrait_url=portrait_url)
+    )
+    await interaction.response.edit_message(
+        embed=embed, view=DialogChoiceView(choices, next_factory),
+    )
+
+
+async def _show_aurelion_poster(interaction, dest_key, portrait_url):
+    """Beat: plakát Poslední Aurelion → nástěnka."""
+    embed = discord.Embed(title="Poslední Aurelion", color=0x1a1a2e)
+    embed.set_image(url=URL_PLAKAT_AURELION)
+    embed.set_footer(text="⭐ Aurionis  ·  Podívej se na nástěnku.")
+    await interaction.response.edit_message(
+        embed=embed,
+        view=StoryBeatView(
+            functools.partial(_show_ready, dest_key=dest_key, portrait_url=portrait_url)
+        ),
+    )
+
+
+async def _show_ready(interaction, dest_key, portrait_url):
+    """Beat: 'Připraven/a!' tipy → nástěnka."""
+    embed = discord.Embed(
+        title="✨  Připraven/a!",
+        description=(
+            "Vybral/a sis loadout a perky.\n\n"
+            "Teď už je čas vstoupit do Aurionisu.\n\n"
+            "-# Tip: /equip si nasadíš vybavení, /perks show zobrazí perky, "
+            "/stats ukáže statistiky a /profile je tvá vizitka!"
+        ),
+        color=0x27ae60,
+    )
+    if portrait_url:
+        embed.set_thumbnail(url=portrait_url)
+    embed.set_footer(text="⭐ Aurionis  ·  Vítej v Aurionisu!")
+    await interaction.response.edit_message(
+        embed=embed,
+        view=BulletinBoardView(dest_key=dest_key, portrait_url=portrait_url),
+    )
+
+
 async def _finalize_tutorial(
     interaction: discord.Interaction,
     dest_key: str,
@@ -1559,24 +1619,8 @@ async def _finalize_tutorial(
     except Exception as e:
         print(f"[onboard] Chyba při finalizaci tutoriálu: {e}")
 
-    # Pokračuj se původním flowem (nástěnka, charisma roll, atd.)
-    embed = discord.Embed(
-        title="✨  Připraven/a!",
-        description=(
-            f"Vybral/a sis loadout a perky.\n\n"
-            f"Teď už je čas vstoupit do Aurionisu.\n\n"
-            "-# Tip: Pomocí /equip si nasadíš vybavení, /perks show zobrazí tvé perky, /stats ukáže tvoje statistiky a /profile je tvá vizitka!"
-        ),
-        color=0x27ae60,
-    )
-    if portrait_url:
-        embed.set_thumbnail(url=portrait_url)
-    embed.set_footer(text="⭐ Aurionis  ·  Vítej v Aurionisu!")
-
-    await interaction.response.edit_message(
-        embed=embed,
-        view=BulletinBoardView(dest_key=dest_key, portrait_url=portrait_url),
-    )
+    # Rozloučení s Arion → plakát Poslední Aurelion → nástěnka
+    await _show_arion_farewell(interaction, dest_key, portrait_url)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
