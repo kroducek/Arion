@@ -11,7 +11,6 @@ import logging
 
 from src.utils.paths import PROFILES as DATA_FILE, ITEMS as ITEMS_FILE
 from src.utils.json_utils import load_json, save_json
-from src.database.characters import pkey
 import datetime
 
 logger = logging.getLogger("Stats")
@@ -20,6 +19,9 @@ logger = logging.getLogger("Stats")
 XP_LOG_MAX_PER_USER = 50
 
 STAT_LABELS = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
+SKILL_LABELS = ['Síla', 'Obratnost', 'Magie', 'Výdrž']  # SP skilly (požadavky na výzbroj)
+START_AP = 5   # body do atributů na startu (tutoriál)
+START_SP = 0   # body do skillů na startu
 
 # XP caps pro každý level (index = level)
 # Level 0 je startovní — hráč začíná zde po tutorialu
@@ -130,6 +132,7 @@ TEMNOTA_EMO = "<:temnota:1490166345516581034>"
 ROVNO_EMO   = "<:rovnovaha:1490166409458749671>"
 
 _SP_EMOJI = {"STR": "💪", "DEX": "🤸", "INS": "👁️", "INT": "🧠", "CHA": "✨", "WIS": "🔮"}
+_SKILL_EMOJI = {"Síla": "⚔️", "Obratnost": "🌀", "Magie": "🪄", "Výdrž": "🛡️"}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS — profiles.json
@@ -148,9 +151,11 @@ def _profile(data: dict, uid: str) -> dict:
     p.setdefault("rank",         "F3")
     p.setdefault("level",        0)
     p.setdefault("xp",           0)
-    p.setdefault("sp",           0)       # nerozdělené skill pointy
+    p.setdefault("sp",           0)       # nerozdělené skill pointy (skilly)
+    p.setdefault("ap",           0)       # nerozdělené attribute pointy
     p.setdefault("luck",         DEFAULT_LUCK)
     p.setdefault("stats",        {s: 1 for s in STAT_LABELS})
+    p.setdefault("skills",       {s: 0 for s in SKILL_LABELS})
     return p
 
 def _ensure_fields(p: dict) -> None:
@@ -171,7 +176,9 @@ def _ensure_fields(p: dict) -> None:
     p.setdefault("level",           0)
     p.setdefault("xp",              0)
     p.setdefault("sp",              0)
+    p.setdefault("ap",              0)
     p.setdefault("stats",           {s: 1 for s in STAT_LABELS})
+    p.setdefault("skills",          {s: 0 for s in SKILL_LABELS})
 
 def _load_items_db() -> dict:
     try:
@@ -235,6 +242,24 @@ def get_xp_cap(level: int) -> int | None:
         return XP_CAPS[level]
     return None
 
+
+def level_rewards(level: int) -> tuple[int, int]:
+    """Body získané za DOSAŽENÍ daného levelu → (sp, ap).
+    SP = (lichý level) + (násobek 10);  AP = (sudý level) + 3×(násobek 5)."""
+    sp = (1 if level % 2 == 1 else 0) + (1 if level % 10 == 0 else 0)
+    ap = (1 if level % 2 == 0 else 0) + (3 if level % 5 == 0 else 0)
+    return sp, ap
+
+
+def attr_cap(level: int) -> int:
+    """Max BONUS na jeden atribut nad základ (base 1) podle tieru levelu.
+    ≤19 → +5,  ≤39 → +10.  Nad 40 zatím beze změny (TBD)."""
+    if level <= 19:
+        return 5
+    if level <= 39:
+        return 10
+    return 10
+
 def level_label(level: int) -> str:
     roman = [
         "0","I","II","III","IV","V","VI","VII","VIII","IX","X",
@@ -244,20 +269,22 @@ def level_label(level: int) -> str:
         return f"Lvl {roman[level]}"
     return f"Lvl {level}"
 
-def init_stats(user_id: int, base_stats: dict, sp: int = 0):
+def init_stats(user_id: int, base_stats: dict, sp: int = 0, ap: int = 0):
     """
     Inicializuje stats hráče při tutorialu.
     base_stats: dict {'STR': int, ...}
-    sp: počet nerozdělených skill pointů
+    sp: nerozdělené skill pointy (skilly),  ap: nerozdělené attribute pointy
     """
     data = _load()
     uid  = str(user_id)
     p    = _profile(data, uid)
-    p["stats"] = {s: base_stats.get(s, 1) for s in STAT_LABELS}
-    p["level"] = 0
-    p["xp"]    = 0
-    p["sp"]    = sp
-    p["luck"]  = DEFAULT_LUCK
+    p["stats"]  = {s: base_stats.get(s, 1) for s in STAT_LABELS}
+    p["skills"] = {s: 0 for s in SKILL_LABELS}
+    p["level"]  = 0
+    p["xp"]     = 0
+    p["sp"]     = sp
+    p["ap"]     = ap
+    p["luck"]   = DEFAULT_LUCK
     _save(data)
 
 def add_xp(user_id: int, amount: int, reason: str = "") -> dict:
@@ -275,6 +302,7 @@ def add_xp(user_id: int, amount: int, reason: str = "") -> dict:
             "levels_gained": 0,
             "new_level":     p["level"],
             "sp_gained":     0,
+            "ap_gained":     0,
             "xp":            p["xp"],
             "cap":           get_xp_cap(p["level"]),
         }
@@ -287,6 +315,7 @@ def add_xp(user_id: int, amount: int, reason: str = "") -> dict:
 
     leveled_up    = False
     sp_gained     = 0
+    ap_gained     = 0
     levels_gained = 0
     new_level     = p["level"]
 
@@ -297,9 +326,11 @@ def add_xp(user_id: int, amount: int, reason: str = "") -> dict:
         new_level   = p["level"]
         leveled_up  = True
         levels_gained += 1
-        sp          = SP_PER_LEVEL + SP_BONUS.get(new_level, 0)
-        sp_gained  += sp
-        p["sp"]    += sp
+        lsp, lap    = level_rewards(new_level)
+        sp_gained  += lsp
+        ap_gained  += lap
+        p["sp"]    += lsp
+        p["ap"]     = p.get("ap", 0) + lap
         cap = get_xp_cap(p["level"])
 
     _append_xp_log(p, amount, level_before, new_level, reason)
@@ -309,6 +340,7 @@ def add_xp(user_id: int, amount: int, reason: str = "") -> dict:
         "levels_gained": levels_gained,
         "new_level":     new_level,
         "sp_gained":     sp_gained,
+        "ap_gained":     ap_gained,
         "xp":            p["xp"],
         "cap":           get_xp_cap(new_level),
     }
@@ -359,17 +391,36 @@ def modify_luck(user_id: int, delta: int) -> int:
     _save(data)
     return p["luck"]
 
-def spend_sp(user_id: int, stat: str, amount: int = 1) -> bool:
-    """Utratí SP na daný stat. Vrátí True při úspěchu."""
-    if stat not in STAT_LABELS:
+def spend_ap(user_id: int, attr: str, amount: int = 1) -> bool:
+    """Utratí AP na atribut (STR/DEX/...). Hlídá tier strop. True při úspěchu."""
+    if attr not in STAT_LABELS:
         return False
     data = _load()
     uid  = str(user_id)
     p    = _profile(data, uid)
-    if p["sp"] < amount:
+    if p.get("ap", 0) < amount:
         return False
-    p["sp"]           -= amount
-    p["stats"][stat]   = p["stats"].get(stat, 1) + amount
+    cur = p["stats"].get(attr, 1)
+    # strop: hodnota atributu nesmí přesáhnout 1 + attr_cap(level)
+    if (cur + amount) - 1 > attr_cap(p.get("level", 0)):
+        return False
+    p["ap"]           = p.get("ap", 0) - amount
+    p["stats"][attr]  = cur + amount
+    _save(data)
+    return True
+
+def spend_sp(user_id: int, skill: str, amount: int = 1) -> bool:
+    """Utratí SP na skill (Síla/Obratnost/Magie/Výdrž). True při úspěchu."""
+    if skill not in SKILL_LABELS:
+        return False
+    data = _load()
+    uid  = str(user_id)
+    p    = _profile(data, uid)
+    if p.get("sp", 0) < amount:
+        return False
+    p.setdefault("skills", {s: 0 for s in SKILL_LABELS})
+    p["sp"]            = p.get("sp", 0) - amount
+    p["skills"][skill] = p["skills"].get(skill, 0) + amount
     _save(data)
     return True
 
@@ -393,6 +444,8 @@ def _build_quicksheet_embed(
     v_temnota  = p["vliv_temnota"]
     v_rovno    = p["vliv_rovnovaha"]
     level      = p["level"];  xp = p["xp"]; sp = p.get("sp", 0)
+    ap         = p.get("ap", 0)
+    skills     = p.get("skills", {})
     luck       = p.get("luck", DEFAULT_LUCK)
     stats      = p.get("stats", {})
     total_def  = _compute_def(p, items_db)
@@ -401,7 +454,10 @@ def _build_quicksheet_embed(
     char_name = p.get("name", user.display_name)
     def_str   = f"  ·  🛡️ **{total_def}**" if total_def else ""
     xp_str    = f"*{xp} (MAX)*" if not cap else f"*{xp}/{cap}*"
-    sp_str    = f"  ·  ⚡ **{sp} SP**" if sp > 0 else ""
+    pts = []
+    if ap > 0: pts.append(f"🎯 **{ap} AP**")
+    if sp > 0: pts.append(f"⚡ **{sp} SP**")
+    sp_str    = ("  ·  " + "  ·  ".join(pts)) if pts else ""
 
     lines = []
 
@@ -450,6 +506,14 @@ def _build_quicksheet_embed(
             for s in STAT_LABELS
         ]
         lines.append("  ·  ".join(parts))
+
+    # ── Skilly (jen pokud do nich něco šlo) ───────────────────────────────────
+    if skills and any(skills.get(s, 0) for s in SKILL_LABELS):
+        sparts = [
+            f"*{_SKILL_EMOJI.get(s, '')} {s}* **{skills.get(s, 0)}**"
+            for s in SKILL_LABELS
+        ]
+        lines.append("  ·  ".join(sparts))
 
     # ── Aktivní statusy ───────────────────────────────────────────────────────
     active_statuses = p.get("statuses") or []
@@ -674,91 +738,96 @@ class _CureView(discord.ui.View):
 # LEVELUP VIEW — hráč rozděluje SP po levelupu
 # ══════════════════════════════════════════════════════════════════════════════
 
-class SpendSPView(discord.ui.View):
-    """Interaktivní view pro rozdělování SP — 6 tlačítek, 2 řádky."""
+class StatPointView(discord.ui.View):
+    """Rozdávání bodů s přepínačem: Atributy (AP) ↔ Skilly (SP)."""
 
-    def __init__(self, user_id: int):
+    def __init__(self, user_id: int, mode: str = "ap"):
         super().__init__(timeout=300)
         self.user_id = user_id
-        for idx, stat in enumerate(STAT_LABELS):
-            # Discord max 5 buttonů na řádek — prvních 5 v řádku 0, poslední v řádku 1
+        self.mode    = mode if mode in ("ap", "sp") else "ap"
+        targets = STAT_LABELS if self.mode == "ap" else SKILL_LABELS
+        emo     = _SP_EMOJI   if self.mode == "ap" else _SKILL_EMOJI
+        for idx, name in enumerate(targets):
             row = 0 if idx < 5 else 1
             btn = discord.ui.Button(
-                label=f"{_SP_EMOJI.get(stat, '')} {stat}",
+                label=f"{emo.get(name, '')} {name}",
                 style=discord.ButtonStyle.blurple,
                 row=row,
             )
-            btn.callback = self._make_cb(stat)
+            btn.callback = self._make_cb(name)
             self.add_item(btn)
+        # přepínač režimu
+        other = "Skilly (SP)" if self.mode == "ap" else "Atributy (AP)"
+        tbtn = discord.ui.Button(label=f"🔁 {other}", style=discord.ButtonStyle.secondary, row=2)
+        tbtn.callback = self._toggle
+        self.add_item(tbtn)
 
-    def _make_cb(self, stat: str):
+    def _header(self, p: dict) -> discord.Embed:
+        ap = p.get("ap", 0); sp = p.get("sp", 0); lvl = p.get("level", 0)
+        if self.mode == "ap":
+            title = "🎯 Attribute Pointy"
+            body  = (
+                f"Máš **{ap}** volných 🎯 AP.\n\n"
+                "Klikni na atribut, který chceš zvýšit (+1 atribut = +1 k hodům).\n"
+                f"-# Strop na lvl {lvl}: max **+{attr_cap(lvl)}** na jeden atribut."
+            )
+        else:
+            title = "⚡ Skill Pointy"
+            body  = (
+                f"Máš **{sp}** volných ⚡ SP.\n\n"
+                "Klikni na skill, který chceš zvýšit.\n"
+                f"-# Skilly: {', '.join(SKILL_LABELS)}"
+            )
+        e = discord.Embed(title=title, description=body, color=0x9b59b6)
+        e.set_footer(text=f"🎯 {ap} AP  ·  ⚡ {sp} SP")
+        return e
+
+    async def _toggle(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Toto není tvůj výběr.", ephemeral=True)
+            return
+        new_mode = "sp" if self.mode == "ap" else "ap"
+        p    = _profile(_load(), str(self.user_id))
+        view = StatPointView(self.user_id, mode=new_mode)
+        await interaction.response.edit_message(embed=view._header(p), view=view)
+
+    def _make_cb(self, name: str):
         async def cb(interaction: discord.Interaction):
             try:
-                # Kontrola oprávnění
                 if interaction.user.id != self.user_id:
-                    await interaction.response.send_message(
-                        "❌ Toto není tvůj výběr.", 
-                        ephemeral=True
-                    )
+                    await interaction.response.send_message("❌ Toto není tvůj výběr.", ephemeral=True)
                     return
-
-                # Načtení dat
-                data = _load()
-                uid  = str(self.user_id)
-                p    = _profile(data, uid)
-
-                # Kontrola SP
-                if p["sp"] <= 0:
-                    await interaction.response.send_message(
-                        "❌ Nemáš žádné volné SP.",
-                        ephemeral=True
-                    )
-                    return
-
-                # Útrata SP
-                p["sp"]          -= 1
-                p["stats"][stat]  = p["stats"].get(stat, 1) + 1
-                _save(data)
-                
-                remaining = p["sp"]
-                new_val   = p["stats"][stat]
-
-                # Vytvoření embedu
-                embed = discord.Embed(
-                    title="⚡ Skill Point utracen",
-                    description=(
-                        f"{_SP_EMOJI.get(stat, '')} **{stat}** zvýšen na **{new_val}**\n\n"
-                        f"Zbývající SP: **{remaining}**"
-                        + ("\n\n✅ *Vyber další stat.*" if remaining > 0 else "\n\n✅ *Všechny SP rozděleny!*")
-                    ),
-                    color=0x9b59b6,
-                )
-
-                # Odpověď s novou view (pokud zbývají SP)
-                if remaining > 0:
-                    await interaction.response.edit_message(
-                        embed=embed,
-                        view=SpendSPView(self.user_id),
-                    )
+                if self.mode == "ap":
+                    if not spend_ap(self.user_id, name, 1):
+                        p = _profile(_load(), str(self.user_id))
+                        lvl = p.get("level", 0)
+                        if p.get("ap", 0) <= 0:
+                            msg = "❌ Nemáš žádné volné AP."
+                        else:
+                            msg = f"❌ **{name}** je na stropu (+{attr_cap(lvl)} na lvl {lvl})."
+                        await interaction.response.send_message(msg, ephemeral=True)
+                        return
                 else:
-                    # Poslední SP — nezobrazuj view
-                    await interaction.response.edit_message(
-                        embed=embed,
-                        view=None,
-                    )
-
+                    if not spend_sp(self.user_id, name, 1):
+                        await interaction.response.send_message("❌ Nemáš žádné volné SP.", ephemeral=True)
+                        return
+                p = _profile(_load(), str(self.user_id))
+                if self.mode == "ap":
+                    new_val = p.get("stats", {}).get(name, 1)
+                else:
+                    new_val = p.get("skills", {}).get(name, 0)
+                view  = StatPointView(self.user_id, mode=self.mode)
+                embed = view._header(p)
+                embed.description = f"✅ **{name}** → **{new_val}**\n\n" + embed.description
+                await interaction.response.edit_message(embed=embed, view=view)
             except discord.errors.NotFound:
-                logger.warning(f"[SpendSPView] Message not found for user {self.user_id}")
+                logger.warning(f"[StatPointView] Message not found for user {self.user_id}")
             except Exception as e:
-                logger.exception(f"[SpendSPView] Error in callback for stat {stat}: {e}")
+                logger.exception(f"[StatPointView] Error for {name}: {e}")
                 try:
-                    await interaction.response.send_message(
-                        f"❌ Chyba: {str(e)[:100]}",
-                        ephemeral=True
-                    )
-                except:
+                    await interaction.response.send_message(f"❌ Chyba: {str(e)[:100]}", ephemeral=True)
+                except Exception:
                     pass
-
         return cb
 
 
@@ -778,7 +847,7 @@ class Stats(commands.Cog):
         try:
             target   = member or interaction.user
             data     = _load()
-            uid      = pkey(target.id)
+            uid      = str(target.id)
 
             if uid not in data:
                 await interaction.response.send_message(
@@ -810,41 +879,66 @@ class Stats(commands.Cog):
                 ephemeral=True,
             )
 
-    # ── /sp ───────────────────────────────────────────────────────────────────
+    # ── /staty ────────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="sp", description="Rozděl své skill pointy.")
-    async def sp_cmd(self, interaction: discord.Interaction):
+    @app_commands.command(name="staty", description="Rozděl své body — atributy (AP) a skilly (SP).")
+    async def staty_cmd(self, interaction: discord.Interaction):
         try:
             data = _load()
-            p    = _profile(data, pkey(interaction.user.id))
-            sp   = p["sp"]
-
-            if sp <= 0:
+            p    = _profile(data, str(interaction.user.id))
+            ap = p.get("ap", 0); sp = p.get("sp", 0)
+            if ap <= 0 and sp <= 0:
                 await interaction.response.send_message(
-                    "❌ Nemáš žádné volné skill pointy.", 
-                    ephemeral=True
+                    "❌ Nemáš žádné volné body (AP ani SP).", ephemeral=True
                 )
                 return
-
-            embed = discord.Embed(
-                title="⚡ Skill Pointy",
-                description=(
-                    f"Máš **{sp}** volných SP.\n\n"
-                    "Klikni a vyber stat, který chceš zvýšit.\n"
-                    f"-# Dostupné staty: {', '.join(STAT_LABELS)}"
-                ),
-                color=0x9b59b6,
-            )
+            mode = "ap" if ap > 0 else "sp"
+            view = StatPointView(interaction.user.id, mode=mode)
             await interaction.response.send_message(
-                embed=embed,
-                view=SpendSPView(user_id=interaction.user.id),
+                embed=view._header(p), view=view, ephemeral=True
+            )
+        except Exception as e:
+            logger.exception(f"[staty_cmd] Error: {e}")
+            await interaction.response.send_message(
+                f"❌ Chyba: {str(e)[:100]}", ephemeral=True
+            )
+
+    # ── /reset-stats ──────────────────────────────────────────────────────────
+
+    @app_commands.command(name="reset-stats", description="[Admin] Vynuluje rozdané staty/skilly a vrátí body dle levelu.")
+    @app_commands.describe(member="Hráč (výchozí: všichni)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def reset_stats_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
+        try:
+            data    = _load()
+            targets = [str(member.id)] if member else list(data.keys())
+            n = 0
+            for uid in targets:
+                if uid not in data:
+                    continue
+                p   = _profile(data, uid)
+                lvl = p.get("level", 0)
+                tot_sp = START_SP
+                tot_ap = START_AP
+                for L in range(1, lvl + 1):
+                    s, a = level_rewards(L)
+                    tot_sp += s; tot_ap += a
+                p["stats"]  = {s: 1 for s in STAT_LABELS}
+                p["skills"] = {s: 0 for s in SKILL_LABELS}
+                p["ap"] = tot_ap
+                p["sp"] = tot_sp
+                n += 1
+            _save(data)
+            scope = member.mention if member else f"**{n}** hráč(ů)"
+            await interaction.response.send_message(
+                f"♻️ Reset hotov pro {scope}.\nAtributy→1, skilly→0, body vráceny dle levelu "
+                "(rozdej znovu přes /staty).",
                 ephemeral=True,
             )
         except Exception as e:
-            logger.exception(f"[sp_cmd] Error: {e}")
+            logger.exception(f"[reset_stats] Error: {e}")
             await interaction.response.send_message(
-                f"❌ Chyba: {str(e)[:100]}",
-                ephemeral=True
+                f"❌ Chyba: {str(e)[:100]}", ephemeral=True
             )
 
     # ── /luck ─────────────────────────────────────────────────────────────────
@@ -855,7 +949,7 @@ class Stats(commands.Cog):
         try:
             target = member or interaction.user
             data   = _load()
-            p      = _profile(data, pkey(target.id))
+            p      = _profile(data, str(target.id))
             luck   = p["luck"]
 
             if luck >= 180:   desc = "🌟 Štěstěna se přímo usmívá"
@@ -947,7 +1041,7 @@ class Stats(commands.Cog):
                         description=(
                             f"{member.mention} dosáhl/a **{level_label(result['new_level'])}**!{levels_str}\n\n"
                             f"XP: **{result['xp']:,}** {cap_str}\n"
-                            f"Získané SP: **{result['sp_gained']}**"
+                            f"Získané body: 🎯 **{result['ap_gained']} AP**  ·  ⚡ **{result['sp_gained']} SP**"
                         ),
                         color=0xf1c40f,
                     )
@@ -1011,7 +1105,7 @@ class Stats(commands.Cog):
     ):
         try:
             data = _load()
-            uid  = pkey(member.id)
+            uid  = str(member.id)
             p    = _profile(data, uid)
             p["stats"][stat.value] = max(1, hodnota)
             _save(data)
@@ -1072,7 +1166,7 @@ class Stats(commands.Cog):
                 )
 
             data  = _load()
-            p     = _profile(data, pkey(target.id))
+            p     = _profile(data, str(target.id))
             level = p["level"]
             xp    = p["xp"]
             cap   = get_xp_cap(level)
@@ -1122,7 +1216,7 @@ class Stats(commands.Cog):
             guild      = interaction.guild
             lines      = []
             medals     = {1: "🥇", 2: "🥈", 3: "🥉"}
-            caller_uid = pkey(interaction.user.id)
+            caller_uid = str(interaction.user.id)
             caller_pos = next(
                 (i + 1 for i, (uid, *_) in enumerate(entries) if uid == caller_uid),
                 None,
@@ -1134,10 +1228,10 @@ class Stats(commands.Cog):
                 cap_str = f"/ {cap:,}" if cap else "(MAX)"
 
                 try:
-                    member = guild.get_member(int(uid.split(":")[0])) or await guild.fetch_member(int(uid.split(":")[0]))
+                    member = guild.get_member(int(uid)) or await guild.fetch_member(int(uid))
                     name   = member.display_name
                 except Exception:
-                    name = f"*Hráč {uid.split(":")[0][-4:]}*"
+                    name = f"*Hráč {uid[-4:]}*"
 
                 bold_open  = "**" if uid == caller_uid else ""
                 bold_close = "**" if uid == caller_uid else ""

@@ -837,7 +837,7 @@ async def _show_stats_intro(interaction: discord.Interaction, dest_key: str):
     embed.set_footer(text="⭐ Aurionis  ·  Rozděl své body.")
     labels     = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
     base_stats = {s: 0 for s in labels}
-    init_stats(interaction.user.id, base_stats=base_stats, sp=5)
+    init_stats(interaction.user.id, base_stats=base_stats, ap=5)
     await interaction.response.edit_message(
         embed=embed,
         view=TutorialSPView(
@@ -923,7 +923,7 @@ class MotivationModal(discord.ui.Modal, title="Tvá motivace"):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SP rozdělování v tutorialu
+# AP rozdělování v tutorialu
 # ══════════════════════════════════════════════════════════════════════════════
 
 STAT_FULL_NAMES = {
@@ -936,7 +936,7 @@ STAT_FULL_NAMES = {
 }
 
 class TutorialSPView(discord.ui.View):
-    """Hráč rozděluje 5 SP přímo v tutorialu — každý klik = 1 SP do statu."""
+    """Hráč rozděluje 5 AP přímo v tutorialu — každý klik = 1 AP do atributu."""
 
     def __init__(
         self,
@@ -984,8 +984,8 @@ class TutorialSPView(discord.ui.View):
 
     def _make_callback(self, stat: str):
         async def callback(interaction: discord.Interaction):
-            from src.logic.stats import spend_sp
-            success = spend_sp(interaction.user.id, stat, 1)
+            from src.logic.stats import spend_ap
+            success = spend_ap(interaction.user.id, stat, 1)
             if not success:
                 await interaction.response.defer()
                 return
@@ -1002,9 +1002,9 @@ class TutorialSPView(discord.ui.View):
                 desc = (
                     f"**+1 {stat}** — {STAT_FULL_NAMES[stat]} zvýšena.\n\n"
                     f"{stats_lines}\n\n"
-                    f"*Zbývá: **{self.sp_remaining} SP***"
+                    f"*Zbývá: **{self.sp_remaining} AP***"
                 )
-                footer = f"⭐ Aurionis  ·  {self.sp_remaining} SP zbývá"
+                footer = f"⭐ Aurionis  ·  {self.sp_remaining} AP zbývá"
             else:
                 desc = (
                     f"**+1 {stat}** — {STAT_FULL_NAMES[stat]} zvýšena.\n\n"
@@ -1012,10 +1012,10 @@ class TutorialSPView(discord.ui.View):
                     "*'Dobrá volba.'*\n\n"
                     "*Světelné koule zhasnou. Sken je kompletní.*"
                 )
-                footer = "⭐ Aurionis  ·  Všechny SP rozděleny"
+                footer = "⭐ Aurionis  ·  Všechny AP rozděleny"
 
             embed = discord.Embed(
-                title="⚡  Skill Pointy",
+                title="🎯  Attribute Pointy",
                 description=desc,
                 color=0x9b59b6,
             )
@@ -1027,20 +1027,20 @@ class TutorialSPView(discord.ui.View):
     async def _reset_callback(self, interaction: discord.Interaction):
         labels = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
         from src.logic.stats import init_stats
-        init_stats(interaction.user.id, base_stats={s: 0 for s in labels}, sp=5)
+        init_stats(interaction.user.id, base_stats={s: 0 for s in labels}, ap=5)
         self.stats = {s: 0 for s in labels}
         self.sp_remaining = 5
         self._build_buttons()
 
         embed = discord.Embed(
-            title="⚡  Skill Pointy",
+            title="🎯  Attribute Pointy",
             description=(
-                "SP resetovány. Rozhodni znovu.\n\n"
-                "*Zbývá: **5 SP***"
+                "AP resetovány. Rozhodni znovu.\n\n"
+                "*Zbývá: **5 AP***"
             ),
             color=0x9b59b6,
         )
-        embed.set_footer(text="⭐ Aurionis  ·  5 SP zbývá")
+        embed.set_footer(text="⭐ Aurionis  ·  5 AP zbývá")
         await interaction.response.edit_message(embed=embed, view=self)
 
     async def _done_callback(self, interaction: discord.Interaction):
