@@ -562,10 +562,10 @@ class ArionIntroView(discord.ui.View):
             title="🐱  Já jsem Arion!",
             description=(
                 f"{landing}\n\n"
-                "***'Já jsem Arion!'***  řekne pyšně jako by to bylo to "
+                "*'Já jsem Arion!'*  řekne pyšně jako by to bylo to "
                 "nejdůležitější sdělení světa.\n\n"
                 "Líně si olízne srst a zvedne pohled k tobě\n\n"
-                "***'A ty jsi?'***"
+                "*'A ty jsi?'*"
             ),
             color=0x3498db,
         )
@@ -614,7 +614,7 @@ class NameRegistrationModal(discord.ui.Modal, title="Jak se jmenuješ?"):
         embed = discord.Embed(
             title="🐱  Hm..",
             description=(
-                f"***'{new_name}.'***\n\n"
+                f"*'{new_name}.'*\n\n"
                 "Arion to zopakuje nahlas a pomalu jako by zkoušela jak tvé jméno zní ve vzduchu. "
                 "Zamračí se a prohlíží si tě velmi důkladně.\n\n"
                 "Pak se něco změní.\n\n"
@@ -654,17 +654,17 @@ class ArionLeapView(discord.ui.View):
                 "Chytíš ji za límec klobouku a prudce zahodíš.\n\n"
                 "Arion přistane na čtyřech tlapách pár metrů od tebe, "
                 "narovná si klobouk a kouká na tebe s novým respektem.\n\n"
-                "***'Oooh... Takže ty jsi tenhle typ.'***\n\n"
+                "*'Oooh... Takže ty jsi tenhle typ.'*\n\n"
                 "Chvíli vypadá jako by nad něčím přemýšlela.\n\n"
-                "***'Vzpomínáš si na něco?'***"
+                "*'Vzpomínáš si na něco?'*"
             )
         else:
             desc = (
                 f"-# 🎲 STR check — **{roll}**/20\n\n"
                 "Zkusíš ji shodit, ale Arion se drží jako klíště. "
                 "Přeleze přes tvé rameno, pak po zádech, pak zase zpátky..\n\n"
-                "***'Nedaří se ti mě shodit, že?'*** poznamená spokojeně.\n\n"
-                "***'Vzpomínáš si na něco?'***"
+                "*'Nedaří se ti mě shodit, že?'* poznamená spokojeně.\n\n"
+                "*'Vzpomínáš si na něco?'*"
             )
 
         embed = discord.Embed(title="🎲", description=desc, color=0xf0a500)
@@ -681,9 +681,9 @@ class ArionLeapView(discord.ui.View):
             description=(
                 "Necháš ji a Arion začne šplhat po tobě se soustředěným výrazem. "
                 "Přičichne ke tvému ramenu, pak ke krku, pak strčí nos přímo do tvých vlasů.\n\n"
-                "***'Hm..'***\n\n"
+                "*'Hm..'*\n\n"
                 "Sleze dolů a postaví se před tebe.\n\n"
-                "***'Vzpomínáš si na něco?'***"
+                "*'Vzpomínáš si na něco?'*"
             ),
             color=0x9b59b6,
         )
@@ -709,9 +709,9 @@ class ArionMemoryView(discord.ui.View):
         aura_reply = (
             "Arion zvedne hlavu a její výraz se vrátí do normálu — "
             "nebo aspoň do toho, co u ní jako normál působí.\n\n"
-            "***'…Ale nic, vyvolený. Jen máš zajímavou auru.'***\n\n"
+            "*'…Ale nic, vyvolený. Jen máš zajímavou auru.'*\n\n"
             "Otočí se a zamíří ke dveřím cechu. Klobouk se jí narovná sám od sebe.\n\n"
-            "***'Pojď dovnitř.'***"
+            "*'Pojď dovnitř.'*"
         )
         choices = [
             ("Hm?",         aura_reply),
@@ -731,7 +731,7 @@ class ArionMemoryView(discord.ui.View):
             title="🐱  Hm..",
             description=(
                 "Arion tě chvíli pozoruje a pak tiše sklopí pohled\n\n"
-                "***'Hm..'***\n\n"
+                "*'Hm..'*\n\n"
                 "*Trapné ticho přerušuje jen rušná ulice a zvednutý vítr*"
             ),
         )
@@ -743,7 +743,7 @@ class ArionMemoryView(discord.ui.View):
             title="🐱  ..",
             description=(
                 "Arion na tebe zírá s výrazem absolutní pohrdavé nadřazenosti\n\n"
-                "***'Většina lidí taky nemluví..'***\n\n"
+                "*'Většina lidí taky nemluví..'*\n\n"
                 "*Otočí se s pocitem povýšení. Diskuse zřejmě skončila*"
             ),
         )
@@ -755,7 +755,7 @@ class ArionMemoryView(discord.ui.View):
             title="🐱  ..",
             description=(
                 "Arion se na tebe podívá trochu jinak než předtím\n\n"
-                "***'Hm..'***\n\n"
+                "*'Hm..'*\n\n"
                 "*Nic neřekne. Ale chvíli trvá než odvrátí pohled*"
             ),
         )
@@ -773,10 +773,10 @@ class ArionHmView(discord.ui.View):
             description=(
                 "Arion zvedne hlavu a její výraz se vrátí do normálu "
                 "nebo aspoň do toho, co u ní jako normál působí.\n\n"
-                "***'...Ale nic, vyvolený.'***\n\n"
+                "*'...Ale nic, vyvolený.'*\n\n"
                 "Otočí se a zamíří ke dveřím cechu. "
                 "Klobouk se na hlavě narovná sám od sebe.\n\n"
-                "***'Pojď dovnitř'***"
+                "*'Pojď dovnitř'*"
             ),
             color=0x2c3e50,
         )
@@ -804,7 +804,7 @@ async def _show_acceptance(interaction: discord.Interaction, dest_key: str):
         description=(
             "Arion přeskočí pult jedním plynulým pohybem a přistane na druhé straně, "
             "kde otevře tlustou, živoucí knihu.\n\n"
-            "***„..Standardní procedura. Přijmu tě mezi dobrodruhy.“***"
+            "*„..Standardní procedura. Přijmu tě mezi dobrodruhy.“*"
         ),
         color=0x2c3e50,
     )
@@ -829,7 +829,7 @@ async def _show_stats_intro(interaction: discord.Interaction, dest_key: str):
         description=(
             "Přejede tlapkou přes zvláštní destičku vedle knihy a ta se rozsvítí "
             "modrou aurou, jako by reagovala na dotyk.\n\n"
-            "***„Tak se podíváme, z jakého jsi těsta.“***"
+            "*„Tak se podíváme, z jakého jsi těsta.“*"
         ),
         color=0x2c3e50,
     )
@@ -1008,7 +1008,7 @@ class TutorialSPView(discord.ui.View):
                 desc = (
                     f"**+1 {stat}** — {STAT_FULL_NAMES[stat]} zvýšena.\n\n"
                     f"{stats_lines}\n\n"
-                    "***'Dobrá volba.'***\n\n"
+                    "*'Dobrá volba.'*\n\n"
                     "*Světelné koule zhasnou. Sken je kompletní.*"
                 )
                 footer = "⭐ Aurionis  ·  Všechny SP rozděleny"
@@ -1051,7 +1051,7 @@ class TutorialSPView(discord.ui.View):
             description=(
                 f"-# {stats_lines}\n\n"
                 "Arion nakloní hlavu na stranu.\n\n"
-                "***'Můžu si tě nakreslit do záznamu? Miluji umění.'***\n\n"
+                "*'Můžu si tě nakreslit do záznamu? Miluji umění.'*\n\n"
                 "*Kouká na tebe s výrazem, který dává jasně najevo, "
                 "že odmítnutí by ji osobně urazilo.*"
             ),
@@ -1118,7 +1118,7 @@ async def _show_motivation_prompt(
             "Všechna pole jsou vyplněna... jméno, sken i tvůj portrét. "
             "Zbývá jen jedno prázdné místo ve spodní části\n\n"
             "*Pero se samo zdvihne nad stránku a začne zapisovat tvou odpověď*\n\n"
-            "***'Proč vlastně chceš být dobrodruhem?'***\n\n"
+            "*'Proč vlastně chceš být dobrodruhem?'*\n\n"
             "-# *Tohle pole uvidí každý, kdo si průkaz prohlédne.*"
         ),
         color=0x9b59b6,
@@ -1154,12 +1154,12 @@ async def _show_guild_card(
         portrait_text = (
             "Arion vytvoří magické plátno a chvíli tě soustředěně pozoruje. "
             "Pak začne kreslit. Za pár vteřin je hotovo a spokojeně přikývne sama pro sebe.\n\n"
-            "***'Moc hezké...'***\n\n"
+            "*'Moc hezké...'*\n\n"
         )
     else:
         portrait_text = (
             "Arion zavře knihu a jen mávne rukou\n\n"
-            "***'Jak chceš, tak se příště zastav.'***\n\n"
+            "*'Jak chceš, tak se příště zastav.'*\n\n"
         )
 
     embed = discord.Embed(
@@ -1167,10 +1167,10 @@ async def _show_guild_card(
         description=(
             portrait_text +
             "Sáhne pod pult a vytáhne starý kožený váček s cechovní pečetí\n\n"
-            "***'Mňau.. Vstupní poplatek je sto zlatých...'***\n\n"
+            "*'Mňau.. Vstupní poplatek je sto zlatých...'*\n\n"
             "Arion si hluboce povzdychne, ale následně výraz změní v euforii\n\n"
-            "***'...ale jsou temné časy a každý dobrodruh se počítá "
-            "...takže tentokrát platíme my vám!'***"
+            "*'...ale jsou temné časy a každý dobrodruh se počítá "
+            "...takže tentokrát platíme my vám!'*"
         ),
         color=0xFFD700,
     )
@@ -1179,7 +1179,7 @@ async def _show_guild_card(
     embed.set_footer(text="⭐ Aurionis  ·  Co řekneš?")
 
     choices = [
-        ("Neskončíte na mizině, když budete takhle rozdávat zlaťáky?",
+        ("Neskončíte na mizině brzo?",
          "„Pravděpodobně! Ale jak říkám — hodí se nám teď každý schopný dobrodruh!“"),
         ("Díky.", "„Není zač.“"),
         ("(mlčet)", None),
@@ -1241,10 +1241,10 @@ class StatsDialogView(discord.ui.View):
             title="🐱  Magický sken",
             description=(
                 "Arion se přehoupne přes pult a kouká na čísla na tvém průkazu.\n\n"
-                "***'Magický sken dokáže zčásti odhadnout tvou přirozenou sílu "
-                "a převést ji na konkrétní čísla.'***\n\n"
-                "***'Přirozená síla?..'***\n\n"
-                "***'Můžeš se od toho odrazit a vědět, v čem se chceš zlepšit.'***"
+                "*'Magický sken dokáže zčásti odhadnout tvou přirozenou sílu "
+                "a převést ji na konkrétní čísla.'*\n\n"
+                "*'Přirozená síla?..'*\n\n"
+                "*'Můžeš se od toho odrazit a vědět, v čem se chceš zlepšit.'*"
             ),
             color=0x9b59b6,
         )
@@ -1291,9 +1291,9 @@ class GoldView(discord.ui.View):
                 "Zlaté uvnitř cinkají velmi přesvědčivě\n\n"
                 f"**+100** {COIN} připsáno na tvé konto\n\n"
                 "Ještě než tě nechá odejít tak prohodí\n\n"
-                f"***'Svět tam venku není moc přívětivý.. "
-                f"obzvlášť teď, za Turnaje. Dávej na sebe pozor.'***\n\n"
-                f"***'{dest['emoji']} {dest['name']} tě čeká'***\n\n"
+                f"*'Svět tam venku není moc přívětivý.. "
+                f"obzvlášť teď, za Turnaje. Dávej na sebe pozor.'*\n\n"
+                f"*'{dest['emoji']} {dest['name']} tě čeká'*\n\n"
                 "*Arion ti přestane věnovat pozornost. Teď je čas se vyzbrojit.*"
             ),
             color=0xFFD700,
@@ -1677,7 +1677,7 @@ class MemoryCheckView(discord.ui.View):
 
         arion_line = (
             "*Arion zvedne oči od knihy a chvíli tě ostražitě sleduje bez pohnutí.*\n"
-            "***'..Paměť se ti vrací. Pomalu... ale vrací.'***"
+            "*'..Paměť se ti vrací. Pomalu... ale vrací.'*"
         )
         outcome_desc = (
             "Soustředíš se a zhluboka se nadechneš.\n\n"
@@ -1792,7 +1792,7 @@ class CharismaRollView(discord.ui.View):
         if nat20:
             arion_note = (
                 "*Arion zvedne oči od knihy. Jen se podívá. Pak se vrátí ke čtení.*\n"
-                "***'..Hmm.'***"
+                "*'..Hmm.'*"
             )
             outcome_title = "🌟  Přirozená 20!"
             outcome_desc  = (
@@ -1807,7 +1807,7 @@ class CharismaRollView(discord.ui.View):
         elif nat1:
             arion_note = (
                 "*Arion se podívá přes okraj knihy. Zavře ji.*\n"
-                "***'..Hmm.'***"
+                "*'..Hmm.'*"
             )
             outcome_title = "💀  Přirozená 1."
             outcome_desc  = (
@@ -1821,7 +1821,7 @@ class CharismaRollView(discord.ui.View):
         elif roll >= 10:
             arion_note = (
                 "*Arion si tě přeměří pohledem a vrátí se ke knize.*\n"
-                "***'Ujde to.'***"
+                "*'Ujde to.'*"
             )
             outcome_title = "✅  Úspěch."
             outcome_desc  = (
@@ -1919,7 +1919,7 @@ class FinalEnterView(discord.ui.View):
         embed = discord.Embed(
             title="✨  ..",
             description=(
-                "***'..Hm?'***\n\n"
+                "*'..Hm?'*\n\n"
                 "Chvíli ti trvá než se vzpamatuješ.\n\n"
                 "*Kde to jsem.. kdo jsem?*\n\n"
                 "Podíváš se na své ruce...\n\n"
