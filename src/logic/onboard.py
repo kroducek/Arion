@@ -825,7 +825,7 @@ async def _show_acceptance(interaction: discord.Interaction, dest_key: str):
 async def _show_stats_intro(interaction: discord.Interaction, dest_key: str):
     """Beat B: destička se rozsvítí → rozdělení statů."""
     embed = discord.Embed(
-        title="✨  Z jakého jsi těsta",
+        title="✨",
         description=(
             "Přejede tlapkou přes zvláštní destičku vedle knihy a ta se rozsvítí "
             "modrou aurou, jako by reagovala na dotyk.\n\n"
@@ -1162,7 +1162,44 @@ async def _show_guild_card(
             "***'Jak chceš, tak se příště zastav.'***\n\n"
         )
 
-    # Stats text — vryje se do průkazu
+    embed = discord.Embed(
+        title="📜  Průkaz dobrodruha",
+        description=(
+            portrait_text +
+            "Sáhne pod pult a vytáhne starý kožený váček s cechovní pečetí\n\n"
+            "***'Mňau.. Vstupní poplatek je sto zlatých...'***\n\n"
+            "Arion si hluboce povzdychne, ale následně výraz změní v euforii\n\n"
+            "***'...ale jsou temné časy a každý dobrodruh se počítá "
+            "...takže tentokrát platíme my vám!'***"
+        ),
+        color=0xFFD700,
+    )
+    if portrait_url:
+        embed.set_thumbnail(url=portrait_url)
+    embed.set_footer(text="⭐ Aurionis  ·  Co řekneš?")
+
+    choices = [
+        ("Neskončíte na mizině, když budete takhle rozdávat zlaťáky?",
+         "„Pravděpodobně! Ale jak říkám — hodí se nám teď každý schopný dobrodruh!“"),
+        ("Díky.", "„Není zač.“"),
+        ("(mlčet)", None),
+    ]
+    next_factory = lambda: StoryBeatView(
+        functools.partial(_show_card_handover, dest_key=dest_key,
+                          portrait_url=portrait_url, stats=stats)
+    )
+    await interaction.response.edit_message(
+        embed=embed,
+        view=DialogChoiceView(choices, next_factory),
+    )
+
+
+async def _show_card_handover(
+    interaction: discord.Interaction,
+    dest_key: str,
+    portrait_url: str | None,
+    stats: dict | None = None,
+):
     if stats:
         stats_line = "  ·  ".join(f"**{k}** {v}" for k, v in stats.items())
         stats_scene = (
@@ -1176,12 +1213,6 @@ async def _show_guild_card(
     embed = discord.Embed(
         title="📜  Průkaz dobrodruha",
         description=(
-            portrait_text +
-            "Sáhne pod pult a vytáhne starý kožený váček s cechovní pečetí\n\n"
-            "***'Mňau.. Vstupní poplatek je sto zlatých...'***\n\n"
-            "Arion si hluboce povzdychne, ale následně výraz změní v euforii\n\n"
-            "***'...ale jsou temné časy a každý dobrodruh se počítá "
-            "...takže tentokrát platíme my vám.'***\n\n"
             "Načmárá tvé jméno na nějaký formulář a pak ti podá váček přes pult."
             + stats_scene
         ),
@@ -1193,6 +1224,7 @@ async def _show_guild_card(
 
     view = StatsDialogView(dest_key=dest_key, portrait_url=portrait_url) if stats else GoldView(dest_key=dest_key, portrait_url=portrait_url)
     await interaction.response.edit_message(embed=embed, view=view)
+
 
 
 # ── Stats dialog — "Co to znamená?" ───────────────────────────────────────────
