@@ -11,6 +11,7 @@ import logging
 
 from src.utils.paths import PROFILES as DATA_FILE, ITEMS as ITEMS_FILE
 from src.utils.json_utils import load_json, save_json
+from src.database.characters import pkey
 import datetime
 
 logger = logging.getLogger("Stats")
@@ -212,7 +213,7 @@ def _append_xp_log(p: dict, delta: int, level_before: int,
 def get_xp_log(user_id: int) -> list[dict]:
     """Vrátí XP log hráče (od nejnovějšího)."""
     data = _load()
-    p    = _profile(data, str(user_id))
+    p    = _profile(data, pkey(user_id))
     return list(reversed(p.get("xp_log", [])))
 
 
@@ -277,7 +278,7 @@ def init_stats(user_id: int, base_stats: dict, sp: int = 0, ap: int = 0):
     sp: nerozdělené skill pointy (skilly),  ap: nerozdělené attribute pointy
     """
     data = _load()
-    uid  = str(user_id)
+    uid  = pkey(user_id)
     p    = _profile(data, uid)
     p["stats"]  = {s: base_stats.get(s, 1) for s in STAT_LABELS}
     p["skills"] = {s: 0 for s in SKILL_LABELS}
@@ -297,7 +298,7 @@ def add_xp(user_id: int, amount: int, reason: str = "") -> dict:
     reason: volitelný popis (zobrazí se v /xp-log), např. "Quest: Stíny minulosti"
     """
     if amount <= 0:
-        p = _profile(_load(), str(user_id))
+        p = _profile(_load(), pkey(user_id))
         return {
             "leveled_up":    False,
             "levels_gained": 0,
@@ -309,7 +310,7 @@ def add_xp(user_id: int, amount: int, reason: str = "") -> dict:
         }
 
     data          = _load()
-    uid           = str(user_id)
+    uid           = pkey(user_id)
     p             = _profile(data, uid)
     level_before  = p["level"]
     p["xp"]       = max(0, p["xp"] + amount)
@@ -356,7 +357,7 @@ def remove_xp(user_id: int, amount: int, reason: str = "") -> dict:
     if amount <= 0:
         raise ValueError("amount musí být kladné číslo")
     data = _load()
-    uid  = str(user_id)
+    uid  = pkey(user_id)
     p    = _profile(data, uid)
     level_before  = p["level"]
     p["xp"]       = max(0, p["xp"] - amount)
@@ -371,14 +372,14 @@ def remove_xp(user_id: int, amount: int, reason: str = "") -> dict:
 def get_stats(user_id: int) -> dict:
     """Vrátí stats dict hráče (vždy s plně inicializovanými poli)."""
     data = _load()
-    p    = _profile(data, str(user_id))
+    p    = _profile(data, pkey(user_id))
     _ensure_fields(p)
     return p
 
 def set_luck(user_id: int, value: int):
     """Nastaví luck hráče (0–200)."""
     data = _load()
-    uid  = str(user_id)
+    uid  = pkey(user_id)
     p    = _profile(data, uid)
     p["luck"] = max(0, min(200, value))
     _save(data)
@@ -386,7 +387,7 @@ def set_luck(user_id: int, value: int):
 def modify_luck(user_id: int, delta: int) -> int:
     """Upraví luck hráče o delta. Vrátí novou hodnotu."""
     data = _load()
-    uid  = str(user_id)
+    uid  = pkey(user_id)
     p    = _profile(data, uid)
     p["luck"] = max(0, min(200, p["luck"] + delta))
     _save(data)
@@ -397,7 +398,7 @@ def spend_ap(user_id: int, attr: str, amount: int = 1) -> bool:
     if attr not in STAT_LABELS:
         return False
     data = _load()
-    uid  = str(user_id)
+    uid  = pkey(user_id)
     p    = _profile(data, uid)
     if p.get("ap", 0) < amount:
         return False
@@ -415,7 +416,7 @@ def spend_sp(user_id: int, skill: str, amount: int = 1) -> bool:
     if skill not in SKILL_LABELS:
         return False
     data = _load()
-    uid  = str(user_id)
+    uid  = pkey(user_id)
     p    = _profile(data, uid)
     if p.get("sp", 0) < amount:
         return False
@@ -586,7 +587,7 @@ class _AdjustModal(discord.ui.Modal):
             return
 
         data = _load()
-        uid  = str(self.user_id)
+        uid  = pkey(self.user_id)
         p    = data.get(uid)
         if not p:
             await interaction.response.send_message("❌ Profil nenalezen.", ephemeral=True)
@@ -672,7 +673,7 @@ class QuickSheetView(discord.ui.View):
         if not await self._guard(interaction):
             return
         data = _load()
-        p    = data.get(str(self.user_id), {})
+        p    = data.get(pkey(self.user_id), {})
         _ensure_fields(p)
         items_db = _load_items_db()
         embed = _build_quicksheet_embed(interaction.user, p, items_db)
@@ -683,7 +684,7 @@ class QuickSheetView(discord.ui.View):
         if not await self._guard(interaction):
             return
         data = _load()
-        p    = data.get(str(self.user_id), {})
+        p    = data.get(pkey(self.user_id), {})
         _ensure_fields(p)
         if not (p.get("statuses") or []):
             return await interaction.response.send_message("✨ Žádné aktivní statusy.", ephemeral=True)
@@ -711,7 +712,7 @@ class _CureView(discord.ui.View):
         except Exception:
             return await interaction.response.send_message("❌ Status engine nedostupný.", ephemeral=True)
         data = _load()
-        p    = data.get(str(self.user_id), {})
+        p    = data.get(pkey(self.user_id), {})
         _ensure_fields(p)
         if cure_type == "vse":
             removed = [s.get("status") for s in p.get("statuses", [])]
@@ -788,7 +789,7 @@ class StatPointView(discord.ui.View):
             await interaction.response.send_message("❌ Toto není tvůj výběr.", ephemeral=True)
             return
         new_mode = "sp" if self.mode == "ap" else "ap"
-        p    = _profile(_load(), str(self.user_id))
+        p    = _profile(_load(), pkey(self.user_id))
         view = StatPointView(self.user_id, mode=new_mode)
         await interaction.response.edit_message(embed=view._header(p), view=view)
 
@@ -800,7 +801,7 @@ class StatPointView(discord.ui.View):
                     return
                 if self.mode == "ap":
                     if not spend_ap(self.user_id, name, 1):
-                        p = _profile(_load(), str(self.user_id))
+                        p = _profile(_load(), pkey(self.user_id))
                         lvl = p.get("level", 0)
                         if p.get("ap", 0) <= 0:
                             msg = "❌ Nemáš žádné volné AP."
@@ -812,7 +813,7 @@ class StatPointView(discord.ui.View):
                     if not spend_sp(self.user_id, name, 1):
                         await interaction.response.send_message("❌ Nemáš žádné volné SP.", ephemeral=True)
                         return
-                p = _profile(_load(), str(self.user_id))
+                p = _profile(_load(), pkey(self.user_id))
                 if self.mode == "ap":
                     new_val = p.get("stats", {}).get(name, 1)
                 else:
@@ -848,7 +849,7 @@ class Stats(commands.Cog):
         try:
             target   = member or interaction.user
             data     = _load()
-            uid      = str(target.id)
+            uid      = pkey(target.id)
 
             if uid not in data:
                 await interaction.response.send_message(
@@ -886,7 +887,7 @@ class Stats(commands.Cog):
     async def staty_cmd(self, interaction: discord.Interaction):
         try:
             data = _load()
-            p    = _profile(data, str(interaction.user.id))
+            p    = _profile(data, pkey(interaction.user.id))
             ap = p.get("ap", 0); sp = p.get("sp", 0)
             if ap <= 0 and sp <= 0:
                 await interaction.response.send_message(
@@ -912,7 +913,7 @@ class Stats(commands.Cog):
     async def reset_stats_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
         try:
             data    = _load()
-            targets = [str(member.id)] if member else list(data.keys())
+            targets = [pkey(member.id)] if member else list(data.keys())
             n = 0
             for uid in targets:
                 if uid not in data:
@@ -950,7 +951,7 @@ class Stats(commands.Cog):
         try:
             target = member or interaction.user
             data   = _load()
-            p      = _profile(data, str(target.id))
+            p      = _profile(data, pkey(target.id))
             luck   = p["luck"]
 
             if luck >= 180:   desc = "🌟 Štěstěna se přímo usmívá"
@@ -1094,7 +1095,7 @@ class Stats(commands.Cog):
     ):
         try:
             data = _load()
-            uid  = str(member.id)
+            uid  = pkey(member.id)
             p    = _profile(data, uid)
             p["stats"][stat.value] = max(1, hodnota)
             _save(data)
@@ -1155,7 +1156,7 @@ class Stats(commands.Cog):
                 )
 
             data  = _load()
-            p     = _profile(data, str(target.id))
+            p     = _profile(data, pkey(target.id))
             level = p["level"]
             xp    = p["xp"]
             cap   = get_xp_cap(level)
@@ -1205,7 +1206,7 @@ class Stats(commands.Cog):
             guild      = interaction.guild
             lines      = []
             medals     = {1: "🥇", 2: "🥈", 3: "🥉"}
-            caller_uid = str(interaction.user.id)
+            caller_uid = pkey(interaction.user.id)
             caller_pos = next(
                 (i + 1 for i, (uid, *_) in enumerate(entries) if uid == caller_uid),
                 None,
@@ -1217,7 +1218,8 @@ class Stats(commands.Cog):
                 cap_str = f"/ {cap:,}" if cap else "(MAX)"
 
                 try:
-                    member = guild.get_member(int(uid)) or await guild.fetch_member(int(uid))
+                    _did   = int(uid.split(":")[0])
+                    member = guild.get_member(_did) or await guild.fetch_member(_did)
                     name   = member.display_name
                 except Exception:
                     name = f"*Hráč {uid[-4:]}*"
