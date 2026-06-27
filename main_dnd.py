@@ -71,6 +71,7 @@ DND_COGS = [
     
     # D&D logika / postavy
     "src.logic.profile",
+    "src.logic.profile_render",
     "src.logic.stats",
     "src.logic.combat",
     "src.logic.inventory",

@@ -6,6 +6,7 @@ from typing import Optional
 from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, ITEMS as ITEMS_FILE, PLAYER_PERKS, ACHIEVEMENTS, REPUTATION
 from src.utils.json_utils import load_json, save_json
 from src.logic.stats import get_xp_cap, level_label, add_xp, SKILL_LABELS, STAT_LABELS
+from src.logic.profile_render import render_stats_card, render_prukaz_card
 from src.logic.economy import get_balance, set_balance, COIN_SILVER, COIN_STARDUST
 from src.database.characters import pkey
 
@@ -580,6 +581,80 @@ class ProfileView(discord.ui.View):
             "Co chceš na průkazu upravit?", view=EditProfileView(), ephemeral=True)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# POC: /test-profile — profil jako vyrenderované karty
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _test_stats_payload(target, profile):
+    char_name = profile.get("name", target.display_name)
+    buf   = render_stats_card(profile, char_name)
+    file  = discord.File(buf, filename="card.png")
+    embed = discord.Embed(color=profile.get("accent_color") or 0x2ecc71)
+    embed.set_image(url="attachment://card.png")
+    embed.set_footer(text=f"ID: {pkey(target.id)}  \u00b7  Aurionis \u00b7 Act II")
+    return embed, file
+
+
+def _test_prukaz_payload(target, profile):
+    char_name = profile.get("name", target.display_name)
+    economy   = load_economy()
+    gold      = economy.get(pkey(target.id), 0)
+    silver    = get_balance(target.id, "silver")
+    stardust  = get_balance(target.id, "stardust")
+    spirit    = get_equipped_spirit(profile)
+    buf   = render_prukaz_card(profile, char_name, gold, silver, stardust,
+                               profile.get("rank", "F3"),
+                               spirit["name"] if spirit else None)
+    file  = discord.File(buf, filename="card.png")
+    embed = discord.Embed(color=profile.get("accent_color") or 0x3498db)
+    embed.set_image(url="attachment://card.png")
+    embed.set_footer(text=f"ID: {pkey(target.id)}  \u00b7  Aurionis \u00b7 Act II")
+    return embed, file
+
+
+class TestProfileView(discord.ui.View):
+    def __init__(self, target, guild_id, can_edit: bool):
+        super().__init__(timeout=300)
+        self.target   = target
+        self.guild_id = guild_id
+        self.owner_id = target.id
+        if not can_edit:
+            self.remove_item(self.edit_btn)
+
+    def _load_profile(self):
+        data = load_data()
+        profile = data.get(pkey(self.target.id))
+        if profile:
+            _ensure_player_fields(profile)
+        return profile
+
+    @discord.ui.button(label="Průkaz", style=discord.ButtonStyle.primary, emoji="🪪")
+    async def prukaz_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        profile = self._load_profile()
+        if not profile:
+            await interaction.response.send_message("Průkaz už neexistuje.", ephemeral=True)
+            return
+        embed, file = _test_prukaz_payload(self.target, profile)
+        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+
+    @discord.ui.button(label="Staty", style=discord.ButtonStyle.success, emoji="📊")
+    async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        profile = self._load_profile()
+        if not profile:
+            await interaction.response.send_message("Průkaz už neexistuje.", ephemeral=True)
+            return
+        embed, file = _test_stats_payload(self.target, profile)
+        await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
+
+    @discord.ui.button(label="Upravit", style=discord.ButtonStyle.secondary, emoji="✏️", row=1)
+    async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Tohle není tvůj průkaz.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "Co chceš na průkazu upravit?", view=EditProfileView(), ephemeral=True)
+
+
 class Profile(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -610,6 +685,29 @@ class Profile(commands.Cog):
         view     = ProfileView(target, guild_id, can_edit)
         await interaction.response.send_message(embed=embed, view=view)
 
+
+    # ── /test-profile (POC obrázkové karty) ─────────────────────────────────────
+
+    @app_commands.command(name="test-profile", description="[POC] Profil jako vyrenderovaná karta.")
+    @app_commands.describe(member="Hráč (výchozí: ty).")
+    async def test_profile(self, interaction: discord.Interaction,
+                           member: Optional[discord.Member] = None):
+        target  = member or interaction.user
+        data    = load_data()
+        user_id = pkey(target.id)
+        if user_id not in data:
+            await interaction.response.send_message(
+                f"**{target.display_name}** zatím nemá průkaz dobrodruha. Musí projít tutoriálem!",
+                ephemeral=True,
+            )
+            return
+        profile = data[user_id]
+        _ensure_player_fields(profile)
+        embed, file = _test_prukaz_payload(target, profile)
+        can_edit = (target.id == interaction.user.id)
+        guild_id = interaction.guild.id if interaction.guild else None
+        view = TestProfileView(target, guild_id, can_edit)
+        await interaction.response.send_message(embed=embed, file=file, view=view)
 
     # ── /eat ───────────────────────────────────────────────────────────────────
 
