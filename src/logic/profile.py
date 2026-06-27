@@ -483,16 +483,14 @@ def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
 
     # ── Atributy (vždy všech 6 — bonus k hodům) ──
     stats = profile.get("stats", {})
-    attr_line = "    ".join(
-        f"{_ATTR_EMOJI.get(k, '')} **{k}** `{stats.get(k, 1)}`" for k in STAT_LABELS
-    )
+    _ap = [f"{_ATTR_EMOJI.get(k, '')} **{k}** `{stats.get(k, 0)}`" for k in STAT_LABELS]
+    attr_line = "    ".join(_ap[:3]) + "\n" + "    ".join(_ap[3:])
     embed.add_field(name="\U0001f3af  Atributy  ·  hody", value=attr_line, inline=False)
 
     # ── Skilly (vždy všechny 4 — požadavky na výzbroj) ──
     skills = profile.get("skills", {})
-    skill_line = "    ".join(
-        f"{_SKILL_EMOJI.get(s, '')} **{s}** `{skills.get(s, 0)}`" for s in SKILL_LABELS
-    )
+    _sk = [f"{_SKILL_EMOJI.get(s, '')} **{s}** `{skills.get(s, 0)}`" for s in SKILL_LABELS]
+    skill_line = "    ".join(_sk[:2]) + "\n" + "    ".join(_sk[2:])
     embed.add_field(name="\u2694\ufe0f  Skilly  ·  výzbroj", value=skill_line, inline=False)
 
     # ── Vliv ──

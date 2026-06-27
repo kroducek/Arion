@@ -155,7 +155,7 @@ def _profile(data: dict, uid: str) -> dict:
     p.setdefault("sp",           0)       # nerozdělené skill pointy (skilly)
     p.setdefault("ap",           0)       # nerozdělené attribute pointy
     p.setdefault("luck",         DEFAULT_LUCK)
-    p.setdefault("stats",        {s: 1 for s in STAT_LABELS})
+    p.setdefault("stats",        {s: 0 for s in STAT_LABELS})
     p.setdefault("skills",       {s: 0 for s in SKILL_LABELS})
     return p
 
@@ -178,7 +178,7 @@ def _ensure_fields(p: dict) -> None:
     p.setdefault("xp",              0)
     p.setdefault("sp",              0)
     p.setdefault("ap",              0)
-    p.setdefault("stats",           {s: 1 for s in STAT_LABELS})
+    p.setdefault("stats",           {s: 0 for s in STAT_LABELS})
     p.setdefault("skills",          {s: 0 for s in SKILL_LABELS})
 
 def _load_items_db() -> dict:
@@ -246,16 +246,16 @@ def get_xp_cap(level: int) -> int | None:
 
 def level_rewards(level: int) -> tuple[int, int]:
     """Body získané za DOSAŽENÍ daného levelu → (sp, ap).
-    SP (hojnější — skilly+perky) = (sudý level) + 3×(násobek 5)
-    AP (vzácnější — 6 atributů)  = (lichý level) + (násobek 10)."""
-    sp = (1 if level % 2 == 0 else 0) + (3 if level % 5 == 0 else 0)
-    ap = (1 if level % 2 == 1 else 0) + (1 if level % 10 == 0 else 0)
+    SP (hojnější — skilly+perky) = (lichý level) + 3×(násobek 5)
+    AP (vzácnější — 6 atributů)  = (sudý level) + (násobek 10)."""
+    sp = (1 if level % 2 == 1 else 0) + (3 if level % 5 == 0 else 0)
+    ap = (1 if level % 2 == 0 else 0) + (1 if level % 10 == 0 else 0)
     return sp, ap
 
 
 def attr_cap(level: int) -> int:
-    """Max BONUS na jeden atribut nad základ (base 1) podle tieru levelu.
-    ≤19 → +5,  ≤39 → +10.  Nad 40 zatím beze změny (TBD)."""
+    """Max hodnota jednoho atributu podle tieru levelu (base 0).
+    ≤19 → 5,  ≤39 → 10.  Nad 40 zatím beze změny (TBD)."""
     if level <= 19:
         return 5
     if level <= 39:
@@ -280,7 +280,7 @@ def init_stats(user_id: int, base_stats: dict, sp: int = 0, ap: int = 0):
     data = _load()
     uid  = pkey(user_id)
     p    = _profile(data, uid)
-    p["stats"]  = {s: base_stats.get(s, 1) for s in STAT_LABELS}
+    p["stats"]  = {s: base_stats.get(s, 0) for s in STAT_LABELS}
     p["skills"] = {s: 0 for s in SKILL_LABELS}
     p["level"]  = 0
     p["xp"]     = 0
@@ -402,9 +402,9 @@ def spend_ap(user_id: int, attr: str, amount: int = 1) -> bool:
     p    = _profile(data, uid)
     if p.get("ap", 0) < amount:
         return False
-    cur = p["stats"].get(attr, 1)
-    # strop: hodnota atributu nesmí přesáhnout 1 + attr_cap(level)
-    if (cur + amount) - 1 > attr_cap(p.get("level", 0)):
+    cur = p["stats"].get(attr, 0)
+    # strop: hodnota atributu nesmí přesáhnout attr_cap(level)
+    if (cur + amount) > attr_cap(p.get("level", 0)):
         return False
     p["ap"]           = p.get("ap", 0) - amount
     p["stats"][attr]  = cur + amount
@@ -504,7 +504,7 @@ def _build_quicksheet_embed(
     # ── Staty ─────────────────────────────────────────────────────────────────
     if stats:
         parts = [
-            f"*{_SP_EMOJI.get(s, '')} {s}* **{stats.get(s, 1)}**"
+            f"*{_SP_EMOJI.get(s, '')} {s}* **{stats.get(s, 0)}**"
             for s in STAT_LABELS
         ]
         lines.append("  ·  ".join(parts))
@@ -771,7 +771,7 @@ class StatPointView(discord.ui.View):
             body  = (
                 f"Máš **{ap}** volných 🎯 AP.\n\n"
                 "Klikni na atribut, který chceš zvýšit (+1 atribut = +1 k hodům).\n"
-                f"-# Strop na lvl {lvl}: max **+{attr_cap(lvl)}** na jeden atribut."
+                f"-# Strop na lvl {lvl}: max **{attr_cap(lvl)}** na jeden atribut."
             )
         else:
             title = "⚡ Skill Pointy"
@@ -806,7 +806,7 @@ class StatPointView(discord.ui.View):
                         if p.get("ap", 0) <= 0:
                             msg = "❌ Nemáš žádné volné AP."
                         else:
-                            msg = f"❌ **{name}** je na stropu (+{attr_cap(lvl)} na lvl {lvl})."
+                            msg = f"❌ **{name}** je na stropu (max {attr_cap(lvl)} na lvl {lvl})."
                         await interaction.response.send_message(msg, ephemeral=True)
                         return
                 else:
@@ -925,7 +925,7 @@ class Stats(commands.Cog):
                 for L in range(1, lvl + 1):
                     s, a = level_rewards(L)
                     tot_sp += s; tot_ap += a
-                p["stats"]  = {s: 1 for s in STAT_LABELS}
+                p["stats"]  = {s: 0 for s in STAT_LABELS}
                 p["skills"] = {s: 0 for s in SKILL_LABELS}
                 p["ap"] = tot_ap
                 p["sp"] = tot_sp
