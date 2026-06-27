@@ -837,13 +837,13 @@ async def _show_stats_intro(interaction: discord.Interaction, dest_key: str):
     embed.set_footer(text="⭐ Aurionis  ·  Rozděl své body.")
     labels     = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
     base_stats = {s: 0 for s in labels}
-    init_stats(interaction.user.id, base_stats=base_stats, ap=5)
+    init_stats(interaction.user.id, base_stats=base_stats, ap=3, sp=3)
     await interaction.response.edit_message(
         embed=embed,
         view=TutorialSPView(
             dest_key=dest_key,
             portrait_url=None,
-            sp_remaining=5,
+            sp_remaining=3,
             stats={s: 0 for s in labels},
         ),
     )
@@ -936,7 +936,7 @@ STAT_FULL_NAMES = {
 }
 
 class TutorialSPView(discord.ui.View):
-    """Hráč rozděluje 5 AP přímo v tutorialu — každý klik = 1 AP do atributu."""
+    """Hráč rozděluje 3 AP přímo v tutorialu — každý klik = 1 AP do atributu."""
 
     def __init__(
         self,
@@ -1027,7 +1027,7 @@ class TutorialSPView(discord.ui.View):
     async def _reset_callback(self, interaction: discord.Interaction):
         labels = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
         from src.logic.stats import init_stats
-        init_stats(interaction.user.id, base_stats={s: 0 for s in labels}, ap=5)
+        init_stats(interaction.user.id, base_stats={s: 0 for s in labels}, ap=3, sp=3)
         self.stats = {s: 0 for s in labels}
         self.sp_remaining = 5
         self._build_buttons()
@@ -1036,11 +1036,11 @@ class TutorialSPView(discord.ui.View):
             title="🎯  Attribute Pointy",
             description=(
                 "AP resetovány. Rozhodni znovu.\n\n"
-                "*Zbývá: **5 AP***"
+                "*Zbývá: **3 AP***"
             ),
             color=0x9b59b6,
         )
-        embed.set_footer(text="⭐ Aurionis  ·  5 AP zbývá")
+        embed.set_footer(text="⭐ Aurionis  ·  3 AP zbývá")
         await interaction.response.edit_message(embed=embed, view=self)
 
     async def _done_callback(self, interaction: discord.Interaction):
@@ -1568,8 +1568,8 @@ async def _show_ready(interaction, dest_key, portrait_url):
         description=(
             "Vybral/a sis loadout a perky.\n\n"
             "Teď už je čas vstoupit do Aurionisu.\n\n"
-            "-# Tip: /equip si nasadíš vybavení, /perks show zobrazí perky, "
-            "/stats ukáže statistiky a /profile je tvá vizitka!"
+            "-# Tip: /staty rozdělíš body, /equip nasadíš vybavení, "
+            "/perks show perky, /stats statistiky a /profile vizitka!"
         ),
         color=0x27ae60,
     )

@@ -21,8 +21,10 @@ XP_LOG_MAX_PER_USER = 50
 
 STAT_LABELS = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
 SKILL_LABELS = ['Síla', 'Obratnost', 'Magie', 'Výdrž']  # SP skilly (požadavky na výzbroj)
-START_AP = 5   # body do atributů na startu (tutoriál)
-START_SP = 0   # body do skillů na startu
+START_AP = 3   # body do atributů na startu (tutoriál)
+START_SP = 3   # body do skillů na startu
+BASE_HP_MAX   = 50  # základní max HP (skill Výdrž přidává +5/bod)
+BASE_MANA_MAX = 5   # základní max mana (skill Magie přidává +5/bod)
 
 # XP caps pro každý level (index = level)
 # Level 0 je startovní — hráč začíná zde po tutorialu
@@ -108,12 +110,6 @@ XP_CAPS = [
     1_139_000_000, # Lvl 78
     1_343_000_000, # Lvl 79  (MAX)
 ]
-
-# SP bonus na vybraných levelech  {level: bonus_sp}
-SP_BONUS = {9: 5, 20: 3, 40: 5, 60: 5, 79: 10}
-
-# Základní SP za levelup
-SP_PER_LEVEL = 1
 
 # Luck výchozí hodnota (procenta, 0–200, kde 100 = normál)
 DEFAULT_LUCK = 100
@@ -423,6 +419,13 @@ def spend_sp(user_id: int, skill: str, amount: int = 1) -> bool:
     p.setdefault("skills", {s: 0 for s in SKILL_LABELS})
     p["sp"]            = p.get("sp", 0) - amount
     p["skills"][skill] = p["skills"].get(skill, 0) + amount
+    # derivace: Magie → +5 many/bod, Výdrž → +5 HP/bod
+    if skill == "Magie":
+        p["mana_max"] = p.get("mana_max", BASE_MANA_MAX) + 5 * amount
+        p["mana_cur"] = p.get("mana_cur", 0) + 5 * amount
+    elif skill == "Výdrž":
+        p["hp_max"] = p.get("hp_max", BASE_HP_MAX) + 5 * amount
+        p["hp_cur"] = p.get("hp_cur", BASE_HP_MAX) + 5 * amount
     _save(data)
     return True
 
@@ -925,6 +928,15 @@ class Stats(commands.Cog):
                 for L in range(1, lvl + 1):
                     s, a = level_rewards(L)
                     tot_sp += s; tot_ap += a
+                # odeber skill-derived HP/manu (5/bod) než vynulujeme skilly
+                _mag = p.get("skills", {}).get("Magie", 0)
+                _vyd = p.get("skills", {}).get("Výdrž", 0)
+                if _mag:
+                    p["mana_max"] = max(BASE_MANA_MAX, p.get("mana_max", BASE_MANA_MAX) - 5 * _mag)
+                    p["mana_cur"] = min(p.get("mana_cur", 0), p["mana_max"])
+                if _vyd:
+                    p["hp_max"] = max(BASE_HP_MAX, p.get("hp_max", BASE_HP_MAX) - 5 * _vyd)
+                    p["hp_cur"] = min(p.get("hp_cur", BASE_HP_MAX), p["hp_max"])
                 p["stats"]  = {s: 0 for s in STAT_LABELS}
                 p["skills"] = {s: 0 for s in SKILL_LABELS}
                 p["ap"] = tot_ap
@@ -1043,7 +1055,8 @@ class Stats(commands.Cog):
                         description=(
                             f"{member.mention} dosáhl/a **{level_label(result['new_level'])}**!{levels_str}\n\n"
                             f"XP: **{result['xp']:,}** {cap_str}\n"
-                            f"Získané body: 🎯 **{result['ap_gained']} AP**  ·  ⚡ **{result['sp_gained']} SP**"
+                            f"Získané body: 🎯 **{result['ap_gained']} AP**  ·  ⚡ **{result['sp_gained']} SP**\n"
+                            f"-# rozděl přes /staty"
                         ),
                         color=0xf1c40f,
                     )
