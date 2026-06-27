@@ -5,7 +5,7 @@ from typing import Optional
 
 from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, ITEMS as ITEMS_FILE, PLAYER_PERKS, ACHIEVEMENTS, REPUTATION
 from src.utils.json_utils import load_json, save_json
-from src.logic.stats import get_xp_cap, level_label, add_xp, SKILL_LABELS
+from src.logic.stats import get_xp_cap, level_label, add_xp, SKILL_LABELS, STAT_LABELS
 from src.logic.economy import get_balance, set_balance, COIN_SILVER, COIN_STARDUST
 from src.database.characters import pkey
 
@@ -403,6 +403,10 @@ def _build_prukaz_embed(target, profile) -> discord.Embed:
     return embed
 
 
+_ATTR_EMOJI  = {"STR": "💪", "DEX": "🤸", "INS": "👁️", "INT": "🧠", "CHA": "✨", "WIS": "🔮"}
+_SKILL_EMOJI = {"Síla": "⚔️", "Obratnost": "🌀", "Magie": "🪄", "Výdrž": "🛡️"}
+
+
 def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
     """Progress strana — čísla (staty, XP, atributy, vliv, reputace)."""
     user_id   = pkey(target.id)
@@ -432,22 +436,14 @@ def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
     xp_bar = _bar(xp, cap if cap else 1)
     def_str = f"  \u00b7  \U0001f6e1\ufe0f **{total_def}** DEF" if total_def else ""
     xp_str = f"{xp} (MAX)" if not cap else f"{xp}/{cap}"
-    _pts = []
-    if ap > 0: _pts.append(f"\U0001f3af **{ap}** AP")
-    if sp > 0: _pts.append(f"\u26a1 **{sp}** SP")
-    sp_str = ("  \u00b7  " + "  \u00b7  ".join(_pts)) if _pts else ""
-
-    lines = []
-    lines.append(f"{HP_ON} Zdraví:  {hp_bar}  \u00b7  {hp_cur}/{hp_max}{def_str}")
-    lines.append(f"{MN_ON} Mana:  {mana_bar}  \u00b7  {mana_cur}/{mana_max}")
-    lines.append(f"{HN_ON} Hlad:  {hunger_bar}  \u00b7  {hunger_cur}/{hunger_max}")
+    # Furioka popisek
     if spirit_bonus > 0 and equipped_spirit:
         fury_display_str = f"{fury_cur}/{fury_max}  *(+{spirit_bonus} od {equipped_spirit['name']})*"
     else:
         fury_display_str = f"{fury_cur}/{fury_max}"
-    lines.append(f"{FU_EMO} Furioka:  {fury_bar}  \u00b7  {fury_display_str}")
-    lines.append(f"\u00b7  **{level_label(level)}**  \u00b7  {XP_EMO}  {xp_bar}  \u00b7  {xp_str}{sp_str}")
 
+    # Statusy (ikony)
+    status_icons = ""
     active_statuses = profile.get("statuses") or []
     if active_statuses:
         try:
@@ -455,54 +451,86 @@ def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
             _sreg = load_statuses()
         except Exception:
             _sreg = {}
-        icons = "".join(_sreg.get(st.get("status"), {}).get("emoji", "\u2022") for st in active_statuses)
-        lines.append(f"\U0001fa78 Statusy:  {icons}  *(detail v `/quicksheet`)*")
-
-    lines.append(f"{VLIV_EMO}  {SVETLO_EMO} **{v_svetlo}**  \u00b7  {TEMNOTA_EMO} **{v_temnota}**  \u00b7  {ROVNO_EMO} **{v_rovno}**")
-    lines.append("-# 1 Vliv = 5 furiok")
-
-    stats = profile.get("stats", {})
-    if stats:
-        lines.append("")
-        stats_line = "  \u00b7  ".join(f"**{k}** {v}" for k, v in stats.items())
-        lines.append(f"-# {stats_line}")
-
-    skills = profile.get("skills", {})
-    if skills and any(skills.get(s, 0) for s in SKILL_LABELS):
-        skills_line = "  \u00b7  ".join(
-            f"**{s}** {skills.get(s, 0)}" for s in SKILL_LABELS if skills.get(s, 0)
+        status_icons = "".join(
+            _sreg.get(st.get("status"), {}).get("emoji", "\u2022") for st in active_statuses
         )
-        lines.append(f"-# \u2694\ufe0f {skills_line}")
 
+    color = profile.get("accent_color") or 0x2ecc71
+    embed = discord.Embed(title=f"\U0001f4ca  Staty: {char_name}", color=color)
+    embed.set_thumbnail(url=target.display_avatar.url)
+
+    # ── Vitály (description) ──
+    vit = [
+        f"{HP_ON} **Zdraví**   {hp_bar}   `{hp_cur}/{hp_max}`{def_str}",
+        f"{MN_ON} **Mana**   {mana_bar}   `{mana_cur}/{mana_max}`",
+        f"{HN_ON} **Hlad**   {hunger_bar}   `{hunger_cur}/{hunger_max}`",
+        f"{FU_EMO} **Furioka**   {fury_bar}   {fury_display_str}",
+    ]
+    if status_icons:
+        vit.append(f"\U0001fa78 **Statusy**   {status_icons}   *(detail v /quicksheet)*")
+    embed.description = "\n".join(vit)
+
+    # ── Postup (level / XP / body) ──
+    embed.add_field(
+        name="\u2b50  Postup",
+        value=(
+            f"**{level_label(level)}**    {XP_EMO} {xp_bar}  `{xp_str}`\n"
+            f"\U0001f3af **{ap}** AP      \u00b7      \u26a1 **{sp}** SP\n"
+            f"-# rozděl body přes /staty"
+        ),
+        inline=False,
+    )
+
+    # ── Atributy (vždy všech 6 — bonus k hodům) ──
+    stats = profile.get("stats", {})
+    attr_line = "    ".join(
+        f"{_ATTR_EMOJI.get(k, '')} **{k}** `{stats.get(k, 1)}`" for k in STAT_LABELS
+    )
+    embed.add_field(name="\U0001f3af  Atributy  ·  hody", value=attr_line, inline=False)
+
+    # ── Skilly (vždy všechny 4 — požadavky na výzbroj) ──
+    skills = profile.get("skills", {})
+    skill_line = "    ".join(
+        f"{_SKILL_EMOJI.get(s, '')} **{s}** `{skills.get(s, 0)}`" for s in SKILL_LABELS
+    )
+    embed.add_field(name="\u2694\ufe0f  Skilly  ·  výzbroj", value=skill_line, inline=False)
+
+    # ── Vliv ──
+    embed.add_field(
+        name="\U0001f311  Vliv",
+        value=(
+            f"{SVETLO_EMO} **{v_svetlo}**   \u00b7   {TEMNOTA_EMO} **{v_temnota}**   "
+            f"\u00b7   {ROVNO_EMO} **{v_rovno}**\n-# 1 Vliv = 5 furiok"
+        ),
+        inline=False,
+    )
+
+    # ── Reputace ──
     if guild_id is not None:
         try:
             rep_all = load_json(REPUTATION, {})
             g = rep_all.get(str(guild_id), {})
             reps = g.get("players", {}).get(user_id, {})
-            rep_line = "  \u00b7  ".join(f"{f} `{v:+d}`" for f, v in reps.items() if v)
+            rep_line = "    ".join(f"{f} `{v:+d}`" for f, v in reps.items() if v)
             if rep_line:
-                lines.append("")
-                lines.append(f"\U0001f4dc Reputace:  {rep_line}")
+                embed.add_field(name="\U0001f4dc  Reputace", value=rep_line, inline=False)
         except Exception:
             pass
 
+    # ── Sbírka ──
     try:
         pp_data  = load_json(PLAYER_PERKS, {})
         ach_data = load_json(ACHIEVEMENTS, {})
         perk_cnt = len(pp_data.get(user_id, {}).get("perks", []))
-        ach_cnt  = len(ach_data.get(str(target.id), []))   # achievementy = účet (holé)
-        lines.append("")
-        lines.append(f"\U0001f3f7\ufe0f Perky: **{perk_cnt}**  \u00b7  \U0001f3c6 Achievementy: **{ach_cnt}**")
+        ach_cnt  = len(ach_data.get(str(target.id), []))
+        embed.add_field(
+            name="\U0001f3f7\ufe0f  Sbírka",
+            value=f"Perky **{perk_cnt}**     \u00b7     \U0001f3c6 Achievementy **{ach_cnt}**",
+            inline=False,
+        )
     except Exception:
         pass
 
-    color = profile.get("accent_color") or 0x2ecc71
-    embed = discord.Embed(
-        title=f"\U0001f4ca  Staty: {char_name}",
-        description="\n".join(lines),
-        color=color,
-    )
-    embed.set_thumbnail(url=target.display_avatar.url)
     embed.set_footer(text=f"ID: {user_id}  \u00b7  Act: Aurionis \u00b7 Act II")
     return embed
 
