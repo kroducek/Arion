@@ -5,7 +5,7 @@ from typing import Optional
 
 from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, ITEMS as ITEMS_FILE, PLAYER_PERKS, ACHIEVEMENTS, REPUTATION
 from src.utils.json_utils import load_json, save_json
-from src.logic.stats import get_xp_cap, level_label, add_xp
+from src.logic.stats import get_xp_cap, level_label, add_xp, SKILL_LABELS
 from src.logic.economy import get_balance, set_balance, COIN_SILVER, COIN_STARDUST
 from src.database.characters import pkey
 
@@ -420,6 +420,7 @@ def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
     level = profile.get("level", 0)
     xp = profile.get("xp", 0)
     sp = profile.get("sp", 0)
+    ap = profile.get("ap", 0)
     cap = get_xp_cap(level)
     total_def = _compute_total_def(profile, items_db)
 
@@ -431,7 +432,10 @@ def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
     xp_bar = _bar(xp, cap if cap else 1)
     def_str = f"  \u00b7  \U0001f6e1\ufe0f **{total_def}** DEF" if total_def else ""
     xp_str = f"{xp} (MAX)" if not cap else f"{xp}/{cap}"
-    sp_str = f"  \u26a1 **{sp}** SP" if sp > 0 else ""
+    _pts = []
+    if ap > 0: _pts.append(f"\U0001f3af **{ap}** AP")
+    if sp > 0: _pts.append(f"\u26a1 **{sp}** SP")
+    sp_str = ("  \u00b7  " + "  \u00b7  ".join(_pts)) if _pts else ""
 
     lines = []
     lines.append(f"{HP_ON} Zdraví:  {hp_bar}  \u00b7  {hp_cur}/{hp_max}{def_str}")
@@ -462,6 +466,13 @@ def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
         lines.append("")
         stats_line = "  \u00b7  ".join(f"**{k}** {v}" for k, v in stats.items())
         lines.append(f"-# {stats_line}")
+
+    skills = profile.get("skills", {})
+    if skills and any(skills.get(s, 0) for s in SKILL_LABELS):
+        skills_line = "  \u00b7  ".join(
+            f"**{s}** {skills.get(s, 0)}" for s in SKILL_LABELS if skills.get(s, 0)
+        )
+        lines.append(f"-# \u2694\ufe0f {skills_line}")
 
     if guild_id is not None:
         try:

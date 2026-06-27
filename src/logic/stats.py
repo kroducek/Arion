@@ -245,9 +245,10 @@ def get_xp_cap(level: int) -> int | None:
 
 def level_rewards(level: int) -> tuple[int, int]:
     """Body získané za DOSAŽENÍ daného levelu → (sp, ap).
-    SP = (lichý level) + (násobek 10);  AP = (sudý level) + 3×(násobek 5)."""
-    sp = (1 if level % 2 == 1 else 0) + (1 if level % 10 == 0 else 0)
-    ap = (1 if level % 2 == 0 else 0) + (3 if level % 5 == 0 else 0)
+    SP (hojnější — skilly+perky) = (sudý level) + 3×(násobek 5)
+    AP (vzácnější — 6 atributů)  = (lichý level) + (násobek 10)."""
+    sp = (1 if level % 2 == 0 else 0) + (3 if level % 5 == 0 else 0)
+    ap = (1 if level % 2 == 1 else 0) + (1 if level % 10 == 0 else 0)
     return sp, ap
 
 
@@ -1045,21 +1046,9 @@ class Stats(commands.Cog):
                         ),
                         color=0xf1c40f,
                     )
-                    await interaction.response.send_message(embed=embed)
-                    try:
-                        await interaction.followup.send(
-                            content=member.mention,
-                            embed=discord.Embed(
-                                title="⬆️ Level Up!",
-                                description=(
-                                    f"Dosáhl/a jsi **{level_label(result['new_level'])}**!{levels_str}\n\n"
-                                    f"Získal/a jsi **{result['sp_gained']} SP** — rozděl je přes `/sp`."
-                                ),
-                                color=0xf1c40f,
-                            ),
-                        )
-                    except Exception as e:
-                        logger.warning(f"[admin_xp] Failed to send followup: {e}")
+                    await interaction.response.send_message(
+                        content=member.mention, embed=embed
+                    )
                 else:
                     cap_str = f"/ {result['cap']:,}" if result["cap"] else "(MAX)"
                     await interaction.response.send_message(
