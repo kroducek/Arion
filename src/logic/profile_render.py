@@ -213,7 +213,8 @@ def render_prukaz_card(profile, char_name, gold, silver, stardust, rank="F3",
     W, H = 1000, 760
     portrait = _open_portrait(portrait_bytes)
     accent = _accent_rgb(profile, (70, 110, 180))
-    img, d = _base(W, H, accent=accent, tint=(20, 40, 90), bg_portrait=portrait)
+    use_bg = profile.get("card_bg", "portrait") != "plain"
+    img, d = _base(W, H, accent=accent, tint=(20, 40, 90), bg_portrait=portrait if use_bg else None)
     px, py, pw, ph = 40, 60, 340, 560
     _portrait(img, portrait, px, py, pw, ph, r=20, frame=accent)
     d = ImageDraw.Draw(img)

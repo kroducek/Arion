@@ -316,6 +316,20 @@ class EditProfileView(discord.ui.View):
     async def edit_accent(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EditAccentModal())
 
+    @discord.ui.button(label="Pozadí", style=discord.ButtonStyle.secondary, emoji="🌗")
+    async def toggle_bg(self, interaction: discord.Interaction, button: discord.ui.Button):
+        data = load_data()
+        uid  = pkey(interaction.user.id)
+        p    = data.setdefault(uid, {})
+        new  = "plain" if p.get("card_bg", "portrait") != "plain" else "portrait"
+        p["card_bg"] = new
+        save_data(data)
+        popis = "🖼️ portrét na pozadí" if new == "portrait" else "🌑 tmavé (bez portrétu)"
+        await interaction.response.send_message(
+            f"✅ Pozadí karty přepnuto na: **{popis}**.\n-# Projeví se v /test-profile.",
+            ephemeral=True,
+        )
+
 # ══════════════════════════════════════════════════════════════════════════════
 # COG
 def _apply_vliv_fury(profile: dict) -> None:
