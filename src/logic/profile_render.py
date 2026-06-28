@@ -2,7 +2,7 @@
 POC render karet pro /test-profile — profilové embedy jako obrázky (PIL).
 Čisté PIL, vrací io.BytesIO (PNG). Portrét se předává jako bajty (stáhne cog).
 """
-import io, os, random
+import io, os, random, re
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 try:
@@ -33,15 +33,29 @@ def _font(size, serif=False):
 
 GOLD = (232, 220, 192); GREY = (150, 150, 165); GOLD_HARD = (212, 175, 55)
 
+def _accent_rgb(profile, default):
+    c = profile.get("accent_color")
+    if isinstance(c, int) and c > 0:
+        return ((c >> 16) & 255, (c >> 8) & 255, c & 255)
+    return default
+
 # ── stavební bloky ────────────────────────────────────────────────────────────
-def _base(W, H, accent=(184, 137, 58), tint=(0, 0, 0)):
+def _base(W, H, accent=(184, 137, 58), tint=(0, 0, 0), bg_portrait=None):
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    panel = Image.new("RGBA", (W, H), (0, 0, 0, 0)); pd = ImageDraw.Draw(panel)
-    for y in range(H):
-        t = y / H
-        pd.line([(0, y), (W, y)], fill=(int(24 - 10*t + tint[0]*0.04),
-                                        int(24 - 10*t + tint[1]*0.04),
-                                        int(36 - 14*t + tint[2]*0.04), 255))
+    if bg_portrait is not None:
+        bg = _cover(bg_portrait, W, H).convert("RGBA").filter(ImageFilter.GaussianBlur(26))
+        bg = Image.alpha_composite(bg, Image.new("RGBA", (W, H), (8, 8, 16, 120)))
+        grad = Image.new("L", (W, H), 0); gd = ImageDraw.Draw(grad)
+        for x in range(W):
+            gd.line([(x, 0), (x, H)], fill=int(55 + 165 * (x / W)))
+        panel = Image.composite(Image.new("RGBA", (W, H), (6, 7, 14, 255)), bg, grad)
+    else:
+        panel = Image.new("RGBA", (W, H), (0, 0, 0, 0)); pd = ImageDraw.Draw(panel)
+        for y in range(H):
+            t = y / H
+            pd.line([(0, y), (W, y)], fill=(int(24 - 10*t + tint[0]*0.04),
+                                            int(24 - 10*t + tint[1]*0.04),
+                                            int(36 - 14*t + tint[2]*0.04), 255))
     mask = Image.new("L", (W, H), 0)
     ImageDraw.Draw(mask).rounded_rectangle([4, 4, W-5, H-5], radius=30, fill=255)
     img.paste(panel, (0, 0), mask)
@@ -81,7 +95,7 @@ def _corner_flourish(d, W, H, accent):
 def _cover(im, w, h):
     iw, ih = im.size; s = max(w/iw, h/ih)
     im = im.resize((max(1, int(iw*s)), max(1, int(ih*s))), Image.LANCZOS)
-    nw, nh = im.size; x, y = (nw-w)//2, (nh-h)//2
+    nw, nh = im.size; x, y = (nw-w)//2, int((nh-h)*0.18)  # crop spíš odshora (obličeje)
     return im.crop((x, y, x+w, y+h))
 
 def _rmask(w, h, r):
@@ -156,52 +170,106 @@ def _xp_bar(img, d, level, xp, cap, x, y, w):
     txt = (f"{xp:,} / {cap:,}".replace(",", " ")) if cap else (f"{xp:,}  (MAX)".replace(",", " "))
     d.text((bx+bw//2, by+bh//2), txt, font=_font(19), fill=(20, 20, 20), anchor="mm")
 
-# ── KARTA: PRŮKAZ (velký portrét) ─────────────────────────────────────────────
+def _truncate(d, text, font, maxw):
+    if d.textlength(text, font=font) <= maxw:
+        return text
+    while text and d.textlength(text + "…", font=font) > maxw:
+        text = text[:-1]
+    return text + "…"
+
+def _wrap(d, text, font, maxw, max_lines=99):
+    words = (text or "").split()
+    lines, line = [], ""
+    for w in words:
+        test = (line + " " + w).strip()
+        if d.textlength(test, font=font) <= maxw:
+            line = test
+        else:
+            if line:
+                lines.append(line)
+            line = w
+            if len(lines) == max_lines:
+                last = lines[-1]
+                while last and d.textlength(last + " …", font=font) > maxw:
+                    last = last[:-1]
+                lines[-1] = last + " …"
+                return lines
+    if line and len(lines) < max_lines:
+        lines.append(line)
+    return lines[:max_lines]
+
+def _currency_row(d, x, y, items):
+    cx = x
+    fnt = _font(20)
+    for col, label, val in items:
+        d.polygon([(cx, y + 11), (cx + 7, y + 18), (cx, y + 25), (cx - 7, y + 18)], fill=col + (255,))
+        txt = f"{label} {val}"
+        d.text((cx + 16, y), txt, font=fnt, fill=(226, 216, 184))
+        cx += 16 + int(d.textlength(txt, font=fnt)) + 34
+
+# ── KARTA: PRŮKAZ (velký portrét + rozmazané pozadí) ──────────────────────────
 def render_prukaz_card(profile, char_name, gold, silver, stardust, rank="F3",
                        spirit_name=None, portrait_bytes=None):
-    W, H = 1000, 640
-    img, d = _base(W, H, accent=(70, 110, 180), tint=(20, 40, 90))
+    W, H = 1000, 760
     portrait = _open_portrait(portrait_bytes)
-    # velký portrét vlevo
-    px, py, pw, ph = 40, 60, 320, 440
-    _portrait(img, portrait, px, py, pw, ph, r=20, frame=(212, 175, 55))
+    accent = _accent_rgb(profile, (70, 110, 180))
+    img, d = _base(W, H, accent=accent, tint=(20, 40, 90), bg_portrait=portrait)
+    px, py, pw, ph = 40, 60, 340, 560
+    _portrait(img, portrait, px, py, pw, ph, r=20, frame=accent)
     d = ImageDraw.Draw(img)
 
     rx = px + pw + 40
-    d.text((rx, 56), char_name, font=_font(50, serif=True), fill=GOLD)
+    maxw = W - 50 - rx
+    d.text((rx, 60), _truncate(d, char_name, _font(48, serif=True), maxw), font=_font(48, serif=True), fill=GOLD)
     title = profile.get("title", "")
     if title:
-        d.text((rx, 118), title, font=_font(24, serif=True), fill=GREY)
-    d.text((rx, 158), f"Rank {rank}", font=_font(24), fill=GOLD); _rank_stars(d, rx+150, 170, 1)
+        d.text((rx, 122), _truncate(d, title, _font(24, serif=True), maxw), font=_font(24, serif=True), fill=GREY)
+    m = re.search(r"(\d+)", rank or "")
+    filled = min(int(m.group(1)), 3) if m else 1
+    d.text((rx, 160), f"Rank {rank}", font=_font(24), fill=GOLD)
+    _rank_stars(d, rx + 150, 172, filled)
 
-    _divider(d, rx, W-50, 212)
-    # měny
-    d.text((rx, 232), f"\u25c6 Zlato {gold}", font=_font(24), fill=(241, 196, 15))
-    d.text((rx, 268), f"\u25c6 Stříbro {silver}", font=_font(24), fill=(189, 195, 199))
-    d.text((rx, 304), f"\u25c6 Stardust {stardust}", font=_font(24), fill=(155, 120, 230))
+    _divider(d, rx, W - 50, 206, accent=accent)
+    y = 220
+    # MOTIVACE (prominentně, nad bio)
+    motivation = profile.get("motivation", "")
+    if motivation:
+        d.text((rx, y), "◆ Motivace", font=_font(19, serif=True), fill=(212, 175, 55)); y += 28
+        for ln in _wrap(d, f"„{motivation}“", _font(24, serif=True), maxw, max_lines=2):
+            d.text((rx, y), ln, font=_font(24, serif=True), fill=(245, 232, 190)); y += 33
+        y += 8
+    # BIO (sekundárně)
+    bio = profile.get("bio", "")
+    if bio:
+        d.text((rx, y), "O postavě", font=_font(18, serif=True), fill=(150, 150, 165)); y += 26
+        for ln in _wrap(d, bio, _font(20, serif=True), maxw, max_lines=2):
+            d.text((rx, y), ln, font=_font(20, serif=True), fill=(205, 205, 218)); y += 28
+        y += 8
+    _divider(d, rx, W - 50, y, accent=accent); y += 18
+
+    _currency_row(d, rx, y,
+                  [((241, 196, 15), "Zlato", gold),
+                   ((189, 195, 199), "Stříbro", silver),
+                   ((155, 120, 230), "Stardust", stardust)])
+    y += 40
     if spirit_name:
-        d.text((rx, 348), f"Strážný duch: {spirit_name}", font=_font(20, serif=True), fill=GREY)
+        d.text((rx, y), f"Strážný duch: {spirit_name}", font=_font(19, serif=True), fill=GREY); y += 34
+    _divider(d, rx, W - 50, y, accent=accent); y += 18
 
-    _divider(d, rx, W-50, 396)
-    d.text((rx, 412), "Poslední vzpomínka", font=_font(22, serif=True), fill=(210, 100, 100))
+    d.text((rx, y), "Poslední vzpomínka", font=_font(21, serif=True), fill=(210, 100, 100)); y += 32
     mem = (profile.get("memories") or ["Zatím žádná vzpomínka…"])[-1]
-    fnt = _font(23, serif=True); line, yy, maxw = "", 448, W-50-rx
-    for word in mem.split():
-        if d.textlength(line+" "+word, font=fnt) > maxw:
-            d.text((rx, yy), line, font=fnt, fill=(212, 212, 222)); line = word; yy += 34
-            if yy > H-70: break
-        else:
-            line = (line+" "+word).strip()
-    if line and yy <= H-70:
-        d.text((rx, yy), line, font=fnt, fill=(212, 212, 222))
+    maxlines = max(1, (H - 54 - y) // 30)
+    for ln in _wrap(d, mem, _font(21, serif=True), maxw, max_lines=maxlines):
+        d.text((rx, y), ln, font=_font(21, serif=True), fill=(212, 212, 222)); y += 30
     return _save(img)
 
 # ── KARTA: STATY (portrét jako akcent) ────────────────────────────────────────
 def render_stats_card(profile, char_name, portrait_bytes=None):
     W, H = 1000, 760
-    img, d = _base(W, H, accent=(184, 137, 58), tint=(40, 30, 10))
+    accent = _accent_rgb(profile, (184, 137, 58))
+    img, d = _base(W, H, accent=accent, tint=(40, 30, 10))
     portrait = _open_portrait(portrait_bytes)
-    _portrait(img, portrait, 44, 44, 130, 130, circle=True, frame=(212, 175, 55))
+    _portrait(img, portrait, 44, 44, 130, 130, circle=True, frame=accent)
     d = ImageDraw.Draw(img)
     d.text((196, 56), char_name, font=_font(46, serif=True), fill=GOLD)
     d.text((200, 116), "Statistiky", font=_font(22, serif=True), fill=GREY)
@@ -221,7 +289,7 @@ def render_stats_card(profile, char_name, portrait_bytes=None):
         d.text((838, y+3), val, font=_font(20), fill=GOLD, anchor="la")
         y += 52
 
-    _divider(d, 48, W-48, y+10)
+    _divider(d, 48, W-48, y+10, accent=accent)
     stats  = profile.get("stats", {}); skills = profile.get("skills", {})
     d.text((48, y+30), "Atributy", font=_font(19, serif=True), fill=GREY)
     d.text((48, y+58), "    ".join(f"{k} {stats.get(k, 0)}" for k in STAT_LABELS), font=_font(22), fill=(222, 222, 232))

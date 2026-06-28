@@ -1,5 +1,5 @@
 import discord
-import os, hashlib
+import os, hashlib, asyncio
 from discord.ext import commands
 from discord import app_commands
 from typing import Optional
@@ -630,7 +630,7 @@ async def _fetch_portrait_bytes(target, profile):
 async def _test_stats_payload(target, profile):
     char_name = profile.get("name", target.display_name)
     pbytes = await _fetch_portrait_bytes(target, profile)
-    buf   = render_stats_card(profile, char_name, portrait_bytes=pbytes)
+    buf   = await asyncio.to_thread(render_stats_card, profile, char_name, portrait_bytes=pbytes)
     file  = discord.File(buf, filename="card.png")
     embed = discord.Embed(color=profile.get("accent_color") or 0x2ecc71)
     embed.set_image(url="attachment://card.png")
@@ -646,10 +646,10 @@ async def _test_prukaz_payload(target, profile):
     stardust  = get_balance(target.id, "stardust")
     spirit    = get_equipped_spirit(profile)
     pbytes    = await _fetch_portrait_bytes(target, profile)
-    buf   = render_prukaz_card(profile, char_name, gold, silver, stardust,
-                               profile.get("rank", "F3"),
-                               spirit["name"] if spirit else None,
-                               portrait_bytes=pbytes)
+    buf   = await asyncio.to_thread(
+        render_prukaz_card, profile, char_name, gold, silver, stardust,
+        profile.get("rank", "F3"), spirit["name"] if spirit else None,
+        portrait_bytes=pbytes)
     file  = discord.File(buf, filename="card.png")
     embed = discord.Embed(color=profile.get("accent_color") or 0x3498db)
     embed.set_image(url="attachment://card.png")
