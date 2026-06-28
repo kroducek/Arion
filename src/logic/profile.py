@@ -1,9 +1,10 @@
 import discord
+import os, hashlib
 from discord.ext import commands
 from discord import app_commands
 from typing import Optional
 
-from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, ITEMS as ITEMS_FILE, PLAYER_PERKS, ACHIEVEMENTS, REPUTATION
+from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, ITEMS as ITEMS_FILE, PLAYER_PERKS, ACHIEVEMENTS, REPUTATION, DATA_DIR
 from src.utils.json_utils import load_json, save_json
 from src.logic.stats import get_xp_cap, level_label, add_xp, SKILL_LABELS, STAT_LABELS
 from src.logic.profile_render import render_stats_card, render_prukaz_card
@@ -585,16 +586,39 @@ class ProfileView(discord.ui.View):
 # POC: /test-profile — profil jako vyrenderované karty
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _portrait_cache_path(key, url):
+    h    = hashlib.md5((url or "").encode()).hexdigest()[:8]
+    safe = str(key).replace(":", "_")
+    d    = os.path.join(DATA_DIR, "portraits")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, f"{safe}_{h}.png")
+
+
 async def _fetch_portrait_bytes(target, profile):
-    """Stáhne portrét (portrait_url, fallback avatar) jako bajty pro render."""
+    """Portrét pro render: lokální cache → stažení portrait_url (a uložení) → avatar.
+    Discord CDN URL (?ex=) expirují, proto si bajty cacheujeme na volume (/data/portraits)."""
     url = profile.get("portrait_url")
     if url:
+        cpath = _portrait_cache_path(pkey(target.id), url)
+        try:
+            if os.path.exists(cpath):
+                with open(cpath, "rb") as fh:
+                    return fh.read()
+        except Exception:
+            pass
         try:
             import aiohttp
-            async with aiohttp.ClientSession() as s:
+            headers = {"User-Agent": "Mozilla/5.0 (compatible; ArionBot/1.0)"}
+            async with aiohttp.ClientSession(headers=headers) as s:
                 async with s.get(url) as r:
                     if r.status == 200:
-                        return await r.read()
+                        b = await r.read()
+                        try:
+                            with open(cpath, "wb") as fh:
+                                fh.write(b)
+                        except Exception:
+                            pass
+                        return b
         except Exception:
             pass
     try:
