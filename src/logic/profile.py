@@ -585,9 +585,28 @@ class ProfileView(discord.ui.View):
 # POC: /test-profile — profil jako vyrenderované karty
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _test_stats_payload(target, profile):
+async def _fetch_portrait_bytes(target, profile):
+    """Stáhne portrét (portrait_url, fallback avatar) jako bajty pro render."""
+    url = profile.get("portrait_url")
+    if url:
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as s:
+                async with s.get(url) as r:
+                    if r.status == 200:
+                        return await r.read()
+        except Exception:
+            pass
+    try:
+        return await target.display_avatar.read()
+    except Exception:
+        return None
+
+
+async def _test_stats_payload(target, profile):
     char_name = profile.get("name", target.display_name)
-    buf   = render_stats_card(profile, char_name)
+    pbytes = await _fetch_portrait_bytes(target, profile)
+    buf   = render_stats_card(profile, char_name, portrait_bytes=pbytes)
     file  = discord.File(buf, filename="card.png")
     embed = discord.Embed(color=profile.get("accent_color") or 0x2ecc71)
     embed.set_image(url="attachment://card.png")
@@ -595,16 +614,18 @@ def _test_stats_payload(target, profile):
     return embed, file
 
 
-def _test_prukaz_payload(target, profile):
+async def _test_prukaz_payload(target, profile):
     char_name = profile.get("name", target.display_name)
     economy   = load_economy()
     gold      = economy.get(pkey(target.id), 0)
     silver    = get_balance(target.id, "silver")
     stardust  = get_balance(target.id, "stardust")
     spirit    = get_equipped_spirit(profile)
+    pbytes    = await _fetch_portrait_bytes(target, profile)
     buf   = render_prukaz_card(profile, char_name, gold, silver, stardust,
                                profile.get("rank", "F3"),
-                               spirit["name"] if spirit else None)
+                               spirit["name"] if spirit else None,
+                               portrait_bytes=pbytes)
     file  = discord.File(buf, filename="card.png")
     embed = discord.Embed(color=profile.get("accent_color") or 0x3498db)
     embed.set_image(url="attachment://card.png")
@@ -634,7 +655,7 @@ class TestProfileView(discord.ui.View):
         if not profile:
             await interaction.response.send_message("Průkaz už neexistuje.", ephemeral=True)
             return
-        embed, file = _test_prukaz_payload(self.target, profile)
+        embed, file = await _test_prukaz_payload(self.target, profile)
         await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
 
     @discord.ui.button(label="Staty", style=discord.ButtonStyle.success, emoji="📊")
@@ -643,7 +664,7 @@ class TestProfileView(discord.ui.View):
         if not profile:
             await interaction.response.send_message("Průkaz už neexistuje.", ephemeral=True)
             return
-        embed, file = _test_stats_payload(self.target, profile)
+        embed, file = await _test_stats_payload(self.target, profile)
         await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
 
     @discord.ui.button(label="Upravit", style=discord.ButtonStyle.secondary, emoji="✏️", row=1)
@@ -703,7 +724,7 @@ class Profile(commands.Cog):
             return
         profile = data[user_id]
         _ensure_player_fields(profile)
-        embed, file = _test_prukaz_payload(target, profile)
+        embed, file = await _test_prukaz_payload(target, profile)
         can_edit = (target.id == interaction.user.id)
         guild_id = interaction.guild.id if interaction.guild else None
         view = TestProfileView(target, guild_id, can_edit)
