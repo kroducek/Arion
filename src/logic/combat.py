@@ -16,6 +16,11 @@ def _load_profiles() -> dict:
 def _save_profiles(data: dict):
     save_json(PROFILES, data)
 
+def _pk(profiles: dict, uid) -> str:
+    """Klíč profilu: pkey (uid:slot) když existuje, jinak holé uid (nemigrovaní)."""
+    k = pkey(uid)
+    return k if k in profiles else str(uid)
+
 def _load_items_db() -> dict:
     return load_json(ITEMS, default={})
 
@@ -42,7 +47,7 @@ def _writeback_player_state(uid: int, carrier: dict, bs) -> None:
     """Hráči zapíše hp_cur + statusy zpět do profilu a ubere kolo jeho nátěrům."""
     try:
         profiles = _load_profiles()
-        p = profiles.get(pkey(uid))
+        p = profiles.get(_pk(profiles, uid))
         if not p:
             return
         p["hp_cur"]   = max(0, min(carrier.get("hp", 0), p.get("hp_max", 50)))
@@ -70,7 +75,7 @@ def _sync_player_from_profile(mention: str, user_id: int) -> dict | None:
     Vrátí dict {hp, max_hp, def, fur} nebo None pokud profil neexistuje.
     """
     profiles = _load_profiles()
-    profile  = profiles.get(pkey(user_id))
+    profile  = profiles.get(_pk(profiles, user_id))
     if not profile:
         return None
     items_db = _load_items_db()
@@ -93,7 +98,7 @@ def _writeback_hp_to_profile(user_id: int, new_hp: int):
     """
     try:
         profiles = _load_profiles()
-        profile  = profiles.get(pkey(user_id))
+        profile  = profiles.get(_pk(profiles, user_id))
         if not profile:
             return
         hp_max = profile.get("hp_max", 50)
