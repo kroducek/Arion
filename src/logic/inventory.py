@@ -7,6 +7,7 @@ from typing import Optional
 
 from src.utils.paths import PROFILES as PROFILES_FILE, ITEMS as ITEMS_FILE
 from src.utils.json_utils import load_json, save_json
+from src.database.characters import pkey
 
 logger = logging.getLogger(__name__)
 
@@ -142,8 +143,15 @@ def _load_items() -> dict:
 def _save_items(data: dict) -> None:
     save_json(ITEMS_FILE, data)
 
+def _pk(profiles: dict, uid) -> str:
+    """Klíč profilu: pkey (uid:slot) když existuje, jinak holé uid (nemigrovaní)."""
+    k = pkey(uid)
+    return k if k in profiles else str(uid)
+
+
 def _get_profile(uid: int) -> dict | None:
-    return _load_profiles().get(str(uid))
+    profiles = _load_profiles()
+    return profiles.get(_pk(profiles, uid))
 
 def _default_equipment() -> dict:
     return {slot: None for slot in EQUIPMENT_SLOTS}
@@ -1522,7 +1530,7 @@ class InvPageView(discord.ui.View):
 
     async def _refresh(self, interaction: discord.Interaction):
         profiles = _load_profiles()
-        profile  = profiles.get(str(self.member.id))
+        profile  = profiles.get(_pk(profiles, self.member.id))
         if profile:
             _ensure_inv_fields(profile)
             _migrate_storages(profile)
@@ -1552,7 +1560,7 @@ class InvPageView(discord.ui.View):
     async def equip_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Vrátí zpět na úvodní equip embed."""
         profiles = _load_profiles()
-        profile  = profiles.get(str(self.member.id))
+        profile  = profiles.get(_pk(profiles, self.member.id))
         if profile:
             _ensure_inv_fields(profile)
             _migrate_storages(profile)
@@ -1589,7 +1597,7 @@ class Inventory(commands.Cog):
         await interaction.response.defer()
         target   = member or interaction.user
         profiles = _load_profiles()
-        profile  = profiles.get(str(target.id))
+        profile  = profiles.get(_pk(profiles, target.id))
         if not profile:
             await interaction.followup.send(
                 f"❌ **{target.display_name}** nemá profil.", ephemeral=True)
@@ -1618,7 +1626,7 @@ class Inventory(commands.Cog):
     async def inv_note_add(self, interaction: discord.Interaction, text: str):
         await interaction.response.defer(ephemeral=True)
         profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
+        profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
             await interaction.followup.send("❌ Nemáš profil. Nejdřív `/start`.")
             return
@@ -1641,7 +1649,7 @@ class Inventory(commands.Cog):
                             cislo: int, text: str):
         await interaction.response.defer(ephemeral=True)
         profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
+        profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
             await interaction.followup.send("❌ Nemáš profil.")
             return
@@ -1664,7 +1672,7 @@ class Inventory(commands.Cog):
     async def inv_note_remove(self, interaction: discord.Interaction, cislo: int):
         await interaction.response.defer(ephemeral=True)
         profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
+        profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
             await interaction.followup.send("❌ Nemáš profil.")
             return
@@ -1690,7 +1698,7 @@ class Inventory(commands.Cog):
                          item: str, qty: int = 1):
         await interaction.response.defer(ephemeral=True)
         profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
+        profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
             await interaction.followup.send("❌ Nemáš profil.")
             return
@@ -1718,8 +1726,8 @@ class Inventory(commands.Cog):
             await interaction.followup.send("❌ Nemůžeš posílat sám sobě.")
             return
         profiles = _load_profiles()
-        giver_p  = profiles.get(str(interaction.user.id))
-        recvr_p  = profiles.get(str(member.id))
+        giver_p  = profiles.get(_pk(profiles, interaction.user.id))
+        recvr_p  = profiles.get(_pk(profiles, member.id))
         if not giver_p:
             await interaction.followup.send("❌ Nemáš profil.")
             return
@@ -1763,7 +1771,7 @@ class Inventory(commands.Cog):
     async def inv_use(self, interaction: discord.Interaction, item: str):
         await interaction.response.defer()
         profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
+        profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
             await interaction.followup.send("❌ Nemáš profil.", ephemeral=True)
             return
@@ -1862,7 +1870,7 @@ class Inventory(commands.Cog):
         """Stejná logika jako /inv-use, ale s filtrovaným autocomplete."""
         await interaction.response.defer()
         profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
+        profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
             await interaction.followup.send("❌ Nemáš profil.", ephemeral=True)
             return
@@ -1960,7 +1968,7 @@ class Inventory(commands.Cog):
                     item: str, slot: Optional[str] = None):
         await interaction.response.defer(ephemeral=True)
         profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
+        profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
             await interaction.followup.send("❌ Nemáš profil.")
             return
@@ -1980,7 +1988,7 @@ class Inventory(commands.Cog):
     async def unequip(self, interaction: discord.Interaction, slot: str):
         await interaction.response.defer(ephemeral=True)
         profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
+        profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
             await interaction.followup.send("❌ Nemáš profil.")
             return
@@ -2007,7 +2015,7 @@ class Inventory(commands.Cog):
                        item: str, number: int = -1):
         await interaction.response.defer(ephemeral=True)
         profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
+        profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
             await interaction.followup.send("❌ Nemáš profil. Nejdřív `/start`.")
             return
@@ -2419,7 +2427,7 @@ class Inventory(commands.Cog):
                            odkud: str, item: str, kam: str, qty: int = 1):
         await interaction.response.defer(ephemeral=True)
         profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
+        profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
             await interaction.followup.send("❌ Nemáš profil.")
             return
@@ -2482,7 +2490,7 @@ class Inventory(commands.Cog):
     async def inv_boh_note_add(self, interaction: discord.Interaction, text: str):
         await interaction.response.defer(ephemeral=True)
         profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
+        profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
             await interaction.followup.send("❌ Nemáš profil.")
             return
@@ -2503,7 +2511,7 @@ class Inventory(commands.Cog):
                                 cislo: int, text: str):
         await interaction.response.defer(ephemeral=True)
         profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
+        profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
             await interaction.followup.send("❌ Nemáš profil.")
             return
@@ -2525,7 +2533,7 @@ class Inventory(commands.Cog):
     async def inv_boh_note_remove(self, interaction: discord.Interaction, cislo: int):
         await interaction.response.defer(ephemeral=True)
         profiles = _load_profiles()
-        profile  = profiles.get(str(interaction.user.id))
+        profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
             await interaction.followup.send("❌ Nemáš profil.")
             return
@@ -2560,7 +2568,7 @@ class Inventory(commands.Cog):
             await interaction.followup.send("❌ Jen DM.")
             return
         profiles = _load_profiles()
-        profile  = profiles.get(str(member.id))
+        profile  = profiles.get(_pk(profiles, member.id))
         if not profile:
             await interaction.followup.send(
                 f"❌ **{member.display_name}** nemá profil.")
@@ -2591,7 +2599,7 @@ class Inventory(commands.Cog):
             await interaction.followup.send("❌ Jen DM.")
             return
         profiles = _load_profiles()
-        profile  = profiles.get(str(member.id))
+        profile  = profiles.get(_pk(profiles, member.id))
         if not profile:
             await interaction.followup.send(
                 f"❌ **{member.display_name}** nemá profil.")
@@ -2628,7 +2636,7 @@ class Inventory(commands.Cog):
             await interaction.followup.send("❌ Počet slotů musí být 1–6.")
             return
         profiles = _load_profiles()
-        profile  = profiles.get(str(member.id))
+        profile  = profiles.get(_pk(profiles, member.id))
         if not profile:
             await interaction.followup.send(
                 f"❌ **{member.display_name}** nemá profil.")
@@ -2659,7 +2667,7 @@ class Inventory(commands.Cog):
             await interaction.followup.send("❌ Jen DM.")
             return
         profiles = _load_profiles()
-        profile  = profiles.get(str(member.id))
+        profile  = profiles.get(_pk(profiles, member.id))
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
             return
@@ -2703,7 +2711,7 @@ class Inventory(commands.Cog):
             await interaction.followup.send("❌ Jen DM.")
             return
         profiles = _load_profiles()
-        profile  = profiles.get(str(member.id))
+        profile  = profiles.get(_pk(profiles, member.id))
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
             return
@@ -2777,7 +2785,7 @@ class Inventory(commands.Cog):
                 f"❌ `{storage_item}` není storage item (chybí pole `storage` v DB).")
             return
         profiles = _load_profiles()
-        profile  = profiles.get(str(member.id))
+        profile  = profiles.get(_pk(profiles, member.id))
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
             return
@@ -2818,7 +2826,7 @@ class Inventory(commands.Cog):
             await interaction.followup.send("❌ Jen DM.")
             return
         profiles = _load_profiles()
-        profile  = profiles.get(str(member.id))
+        profile  = profiles.get(_pk(profiles, member.id))
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
             return
@@ -2864,7 +2872,7 @@ class Inventory(commands.Cog):
             await interaction.followup.send("❌ Jen DM.")
             return
         profiles = _load_profiles()
-        profile  = profiles.get(str(member.id))
+        profile  = profiles.get(_pk(profiles, member.id))
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
             return
