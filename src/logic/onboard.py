@@ -14,22 +14,51 @@ logger = logging.getLogger("onboard")
 _ONBOARD_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 IMAGES_DIR = os.path.join(_ONBOARD_ROOT, "src", "assets", "onboard")
 
+# Jednorázová diagnostika při startu — co je reálně nasazené
+try:
+    if os.path.isdir(IMAGES_DIR):
+        logger.info("[onboard] IMAGES_DIR=%s OBSAH=%s", IMAGES_DIR, sorted(os.listdir(IMAGES_DIR)))
+    else:
+        _p = os.path.dirname(IMAGES_DIR)
+        logger.warning("[onboard] IMAGES_DIR NEEXISTUJE: %s | %s obsahuje: %s",
+                       IMAGES_DIR, _p, sorted(os.listdir(_p)) if os.path.isdir(_p) else "(neexistuje)")
+except Exception:
+    logger.exception("[onboard] diag obrázků")
+
+_IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+
+def _resolve_image(fname):
+    """Najde reálný soubor podle jména bez ohledu na velikost písmen a příponu
+    (např. 'main_aurionis.png' najde i 'main_aurionis.PNG' nebo 'arion_guild.jpg').
+    Vrací (cesta, attachment_jméno) nebo (None, None)."""
+    if not fname:
+        return None, None
+    stem = os.path.splitext(fname)[0].lower()
+    try:
+        for real in os.listdir(IMAGES_DIR):
+            rstem, rext = os.path.splitext(real)
+            if rstem.lower() == stem and rext.lower() in _IMG_EXTS:
+                return os.path.join(IMAGES_DIR, real), f"{stem}{rext.lower()}"
+    except FileNotFoundError:
+        pass
+    return None, None
+
 def _img(fname):
     """discord.File z src/assets/onboard (nebo None, když soubor chybí)."""
-    if not fname:
+    path, att = _resolve_image(fname)
+    if path is None:
+        logger.warning("[onboard] chybí obrázek: %s (hledáno v %s)", fname, IMAGES_DIR)
         return None
-    path = os.path.join(IMAGES_DIR, fname)
-    if not os.path.exists(path):
-        logger.warning("[onboard] chybí obrázek: %s", path)
-        return None
-    return discord.File(path, filename=fname)
+    return discord.File(path, filename=att)
 
 def _attach(embed, fname):
     """Nastaví obrázek embedu z lokálního souboru a vrátí discord.File (nebo None)."""
-    f = _img(fname)
-    if f is not None:
-        embed.set_image(url=f"attachment://{fname}")
-    return f
+    path, att = _resolve_image(fname)
+    if path is None:
+        logger.warning("[onboard] chybí obrázek: %s", fname)
+        return None
+    embed.set_image(url=f"attachment://{att}")
+    return discord.File(path, filename=att)
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey, ensure_active
 from src.core.dnd.roll_stats import record_roll
