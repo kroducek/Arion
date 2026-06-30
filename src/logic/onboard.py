@@ -6,7 +6,10 @@ import asyncio
 import os
 import json
 import functools
+import logging
 from src.logic.stats import init_stats, STAT_LABELS
+
+logger = logging.getLogger("onboard")
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey, ensure_active
 from src.core.dnd.roll_stats import record_roll
@@ -219,14 +222,14 @@ class TutorialPartOneView(discord.ui.View):
             try:
                 with open(DATA_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                if data.get(uid, {}).get("gold_received"):
+                if data.get(uid, {}).get("loadout_selected"):
                     return await interaction.response.send_message(
                         "Už jsi tutorial dokončil/a! "
                         "Pokud potřebuješ pomoc, napiš DM",
                         ephemeral=True,
                     )
             except Exception:
-                pass
+                logger.exception('[onboard] potlačená chyba')
 
         embed = discord.Embed(
             title="🌌 Aurionis: Act II",
@@ -592,7 +595,7 @@ class NameRegistrationModal(discord.ui.Modal, title="Jak se jmenuješ?"):
         try:
             await interaction.user.edit(nick=new_name)
         except Exception:
-            pass
+            logger.exception('[onboard] potlačená chyba')
 
         embed = discord.Embed(
             title="🐱  Hm..",
@@ -817,7 +820,7 @@ async def _show_stats_intro(interaction: discord.Interaction, dest_key: str):
         color=0x2c3e50,
     )
     embed.set_footer(text="⭐ Aurionis  ·  Rozděl své body.")
-    labels     = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
+    labels     = STAT_LABELS
     base_stats = {s: 0 for s in labels}
     init_stats(interaction.user.id, base_stats=base_stats, ap=3, sp=3)
     await interaction.response.edit_message(
@@ -862,7 +865,7 @@ class EnterGuildInsideView(discord.ui.View):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# KROK 8c — Motivace (po portrétu — Arion zapíše poslední pole průkazu)
+# KROK 8c — Motivace (View + Modal)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class MotivationView(discord.ui.View):
@@ -905,7 +908,7 @@ class MotivationModal(discord.ui.Modal, title="Tvá motivace"):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AP rozdělování v tutorialu
+# KROK 8a — Rozdělení atributů (AP)
 # ══════════════════════════════════════════════════════════════════════════════
 
 STAT_FULL_NAMES = {
@@ -936,7 +939,7 @@ class TutorialSPView(discord.ui.View):
 
     def _build_buttons(self):
         self.clear_items()
-        labels = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
+        labels = STAT_LABELS
         for stat in labels:
             btn = discord.ui.Button(
                 label=f"{stat} {self.stats.get(stat, 0)}  ({STAT_FULL_NAMES[stat]})",
@@ -977,7 +980,7 @@ class TutorialSPView(discord.ui.View):
             self._build_buttons()
 
             stats_lines = "  ·  ".join(
-                f"**{s}** {self.stats.get(s, 0)}" for s in ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
+                f"**{s}** {self.stats.get(s, 0)}" for s in STAT_LABELS
             )
 
             if self.sp_remaining > 0:
@@ -1007,11 +1010,11 @@ class TutorialSPView(discord.ui.View):
         return callback
 
     async def _reset_callback(self, interaction: discord.Interaction):
-        labels = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
+        labels = STAT_LABELS
         from src.logic.stats import init_stats
         init_stats(interaction.user.id, base_stats={s: 0 for s in labels}, ap=3, sp=3)
         self.stats = {s: 0 for s in labels}
-        self.sp_remaining = 5
+        self.sp_remaining = 3
         self._build_buttons()
 
         embed = discord.Embed(
@@ -1026,7 +1029,7 @@ class TutorialSPView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
 
     async def _done_callback(self, interaction: discord.Interaction):
-        labels      = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
+        labels      = STAT_LABELS
         stats_lines = "  ·  ".join(f"**{s}** {self.stats.get(s, 0)}" for s in labels)
 
         embed = discord.Embed(
@@ -1085,7 +1088,7 @@ class PortraitModal(discord.ui.Modal, title="Portrét postavy"):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# KROK 8b — Motivace prompt (po portrétu, před průkazem)
+# KROK 8c — Motivace (prompt)
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _show_motivation_prompt(
@@ -1131,7 +1134,7 @@ async def _show_motivation_prompt(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# KROK 8c — Průkaz dobrodruha
+# KROK 8d — Průkaz dobrodruha
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _show_guild_card(
@@ -1146,7 +1149,7 @@ async def _show_guild_card(
         try:
             await interaction.user.add_roles(role)
         except Exception:
-            pass
+            logger.exception('[onboard] potlačená chyba')
 
     embed = discord.Embed(
         title="📜  Průkaz dobrodruha",
@@ -1260,15 +1263,10 @@ class GoldView(discord.ui.View):
 
         uid = pkey(interaction.user.id)
         profile = load_json(DATA_FILE, default={})
-        if profile.get(uid, {}).get("gold_received"):
-            await interaction.followup.send(
-                "Zlaté jsi už jednou převzal/a! *(Pokud myslíš, že jde o chybu, piš adminovi.)*",
-                ephemeral=True,
-            )
-            return
-        add_gold(interaction.user.id, 100)
-        set_balance(interaction.user.id, get_balance(interaction.user.id, "silver") + 100, "silver")
-        update_profile(interaction.user.id, gold_received=True)
+        if not profile.get(uid, {}).get("gold_received"):
+            add_gold(interaction.user.id, 100)
+            set_balance(interaction.user.id, get_balance(interaction.user.id, "silver") + 100, "silver")
+            update_profile(interaction.user.id, gold_received=True)
 
         dest = DESTINATIONS[self.dest_key]
         embed = discord.Embed(
@@ -1449,7 +1447,7 @@ class PerkSelectionView(discord.ui.View):
             from src.core.dnd.perks import load_perks
             perks = load_perks()
         except Exception as e:
-            print(f"[onboard] Chyba při načtení perků: {e}")
+            logger.exception(f"[onboard] Chyba při načtení perků: {e}")
             perks = {}
 
         perk_list = []
@@ -1646,6 +1644,11 @@ async def _finalize_tutorial(
         if not loadout:
             return
 
+        # Anti double-grant: pokud už loadout přidělen, nedávej znovu
+        if load_json(DATA_FILE, default={}).get(user_id, {}).get("loadout_selected"):
+            await _show_arion_farewell(interaction, dest_key, portrait_url)
+            return
+
         # Přidej všechny perky (prvotní + dodatečné)
         all_perks = [loadout["perk"]] + additional_perks
         player_perks = load_player_perks()
@@ -1665,7 +1668,7 @@ async def _finalize_tutorial(
         update_profile(interaction.user.id, loadout_selected=loadout_id, perks_selected=len(additional_perks))
 
     except Exception as e:
-        print(f"[onboard] Chyba při finalizaci tutoriálu: {e}")
+        logger.exception(f"[onboard] Chyba při finalizaci tutoriálu: {e}")
 
     # Rozloučení s Arion → plakát Poslední Aurelion → nástěnka
     await _show_arion_farewell(interaction, dest_key, portrait_url)
@@ -1818,7 +1821,7 @@ class MemoryCheckView(discord.ui.View):
                         f"📜 **{interaction.user.display_name}** si úspěšně vzpomněl/a."
                     )
         except Exception as e:
-            print(f"[onboard] Nepodařilo se zapsat vzpomínku: {e}")
+            logger.exception(f"[onboard] Nepodařilo se zapsat vzpomínku: {e}")
 
 
 class CollisionTransitionView(discord.ui.View):
@@ -1862,7 +1865,7 @@ class CharismaRollView(discord.ui.View):
         self.portrait_url = portrait_url
         self._rolled      = False
 
-    @discord.ui.button(label="🎲 Hodit na Charisma  /roll 1d20", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="🎲 Hodit na Charisma  ·  1d20 + CHA", style=discord.ButtonStyle.primary)
     async def roll_charisma(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self._rolled:
             await interaction.response.defer()
@@ -1871,14 +1874,21 @@ class CharismaRollView(discord.ui.View):
         button.disabled = True
         await interaction.response.defer()
 
-        roll  = random.randint(1, 20)
-        nat20 = roll == 20
-        nat1  = roll == 1
+        die = random.randint(1, 20)
+        try:
+            _prof = load_json(DATA_FILE, default={}).get(pkey(interaction.user.id), {})
+            cha   = _prof.get("stats", {}).get("CHA", 0)
+        except Exception:
+            cha = 0
+        roll     = die + cha          # celkový výsledek (1d20 + CHA)
+        roll_str = f"**{die}**" + (f" + **{cha}** CHA = **{roll}**" if cha else "")
+        nat20    = die == 20
+        nat1     = die == 1
 
         if interaction.guild:
             record_roll(
                 interaction.guild.id, interaction.user.id,
-                nat20=nat20, nat1=nat1, hit24=(roll == 24), is_check=True,
+                nat20=nat20, nat1=nat1, hit24=(roll >= 24), is_check=True,
             )
 
         if nat20:
@@ -1888,7 +1898,7 @@ class CharismaRollView(discord.ui.View):
             )
             outcome_title = "🌟  Přirozená 20!"
             outcome_desc  = (
-                f"Hodil/a jsi **{roll}** — přirozená dvacítka.\n\n"
+                f"Hodil/a jsi **{die}** — přirozená dvacítka.\n\n"
                 "Zvládneš situaci s překvapivou elegancí. "
                 "Muž s rohy se zastaví, přeměří tě — pak se krátce zasměje.\n\n"
                 "***\"První den v práci, co? "
@@ -1903,7 +1913,7 @@ class CharismaRollView(discord.ui.View):
             )
             outcome_title = "💀  Přirozená 1."
             outcome_desc  = (
-                f"Hodil/a jsi **{roll}** — přirozená jednička.\n\n"
+                f"Hodil/a jsi **{die}** — přirozená jednička.\n\n"
                 "Snažíš se omluvit — a při tom omylem strčíš do korbelu. "
                 "Zbytek piva se vylije přímo na muže s rohy.\n\n"
                 "*Vedlejší stůl, který už sledoval celou situaci, umírá smíchy.*\n\n"
@@ -1917,7 +1927,7 @@ class CharismaRollView(discord.ui.View):
             )
             outcome_title = "✅  Úspěch."
             outcome_desc  = (
-                f"Hodil/a jsi **{roll}** — úspěch.\n\n"
+                f"Hodil/a jsi {roll_str} — úspěch.\n\n"
                 "Rychle se zorientuješ a omluvíš se dřív než situace stihne eskalovat.\n\n"
                 "***\"V pohodě, sakra.. dávej větší pozor.\"***\n\n"
                 "*Muž s rohy si prorazí cestu ke dveřím. Situace zažehnána.*\n\n"
@@ -1927,7 +1937,7 @@ class CharismaRollView(discord.ui.View):
             arion_note = "*Arion se ani nepodívá.*"
             outcome_title = "❌  Neúspěch."
             outcome_desc  = (
-                f"Hodil/a jsi **{roll}** — neúspěch.\n\n"
+                f"Hodil/a jsi {roll_str} — neúspěch.\n\n"
                 "Něco zakoktáš. Ani sám nevíš co.\n\n"
                 "*Muž s rohy zakroutí očima a odejde naštvaně pryč.*\n\n"
                 f"{arion_note}"
@@ -1936,7 +1946,7 @@ class CharismaRollView(discord.ui.View):
         emoji = "🌟" if nat20 else ("💀" if nat1 else "🎲")
         embed = discord.Embed(
             title=f"{emoji}  {outcome_title}",
-            description=f"-# *Charisma check — /roll 1d20*\n\n{outcome_desc}",
+            description=f"-# *Charisma check — 1d20 + CHA*\n\n{outcome_desc}",
             color=0x27ae60 if roll >= 10 else 0xe74c3c,
         )
         if self.portrait_url:
@@ -2005,7 +2015,7 @@ class FinalEnterView(discord.ui.View):
                 try:
                     await interaction.user.add_roles(role)
                 except Exception as e:
-                    print(f"[onboard] Nepodařilo se přidat roli destinace: {e}")
+                    logger.exception(f"[onboard] Nepodařilo se přidat roli destinace: {e}")
 
         # ── První stránka — probuzení ──────────────────────────────────────
         embed = discord.Embed(
@@ -2059,7 +2069,7 @@ class FinalEnterView(discord.ui.View):
             save_diaries(diaries)
             save_quests(quests)
         except Exception as e:
-            print(f"[onboard] Auto-quest chyba: {e}")
+            logger.exception(f"[onboard] Auto-quest chyba: {e}")
 
         # ── Pošli uvítání do hub kanálu destinace ─────────────────────────
         hub_channel_id = DEST_HUB_CHANNEL_IDS.get(self.dest_key, 0)
@@ -2092,7 +2102,7 @@ class FinalEnterView(discord.ui.View):
                     hub_embed.set_footer(text="⭐ Aurionis  ·  /diary show — zobraz svůj deník")
                     await hub_channel.send(embed=hub_embed)
                 except Exception as e:
-                    print(f"[onboard] Nepodařilo se poslat uvítání do hub kanálu: {e}")
+                    logger.exception(f"[onboard] Nepodařilo se poslat uvítání do hub kanálu: {e}")
 
         # ── Přidej hráče do chat kanálu (vidí + píší) ─────────────────────
         chat_channel_id = DEST_CHAT_CHANNEL_IDS.get(self.dest_key, 0)
@@ -2110,7 +2120,7 @@ class FinalEnterView(discord.ui.View):
                         f"{interaction.user.mention} {dest['emoji']} *přichází do {dest['name']}.*"
                     )
                 except Exception as e:
-                    print(f"[onboard] Nepodařilo se přidat do chat kanálu: {e}")
+                    logger.exception(f"[onboard] Nepodařilo se přidat do chat kanálu: {e}")
 
         # ── Zápis do deníku ────────────────────────────────────────────────
         try:
@@ -2135,7 +2145,7 @@ class FinalEnterView(discord.ui.View):
             with open(diary_path, "w", encoding="utf-8") as f:
                 json.dump(diaries, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"[onboard] Nepodařilo se zapsat do deníku: {e}")
+            logger.exception(f"[onboard] Nepodařilo se zapsat do deníku: {e}")
 
         # Achievement se udělí úplně nakonec, až po uvítání v hubu i městském chatu.
         # Nový system: Achievement se jmenuje podle destinace, aby hráči věděli kam přišli.
@@ -2153,11 +2163,11 @@ class FinalEnterView(discord.ui.View):
             if grant_achievement(interaction.user.id, achievement_id):
                 await announce_achievement(interaction.user, interaction.channel, achievement_id)
         except Exception as e:
-            print(f"[onboard] Nepodařilo se udělit tutorial achievement: {e}")
+            logger.exception(f"[onboard] Nepodařilo se udělit tutorial achievement: {e}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# KROK 11 — Příjezd: Ulice
+# KROK 12 — Příjezd: Ulice
 # ══════════════════════════════════════════════════════════════════════════════
 
 class ArrivalStreetView(discord.ui.View):
@@ -2320,7 +2330,7 @@ class Onboarding(commands.Cog):
             stored = load_json(TUTORIAL_MSG_FILE, default={})
             msg_id = stored.get("message_id")
         except Exception:
-            pass
+            logger.exception('[onboard] potlačená chyba')
 
         if msg_id:
             try:
@@ -2328,13 +2338,13 @@ class Onboarding(commands.Cog):
                 await old_msg.edit(embed=embed, view=TutorialWarningView())
                 return
             except Exception:
-                pass
+                logger.exception('[onboard] potlačená chyba')
 
         new_msg = await tutorial_channel.send(embed=embed, view=TutorialWarningView())
         try:
             save_json(TUTORIAL_MSG_FILE, {"message_id": new_msg.id})
         except Exception:
-            pass
+            logger.exception('[onboard] potlačená chyba')
 
     @app_commands.command(name="admin-class-give", description="[ADMIN] Přidělí hráči startovní vybavení třídy")
     @app_commands.checks.has_permissions(administrator=True)
