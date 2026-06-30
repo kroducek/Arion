@@ -11,7 +11,8 @@ from src.logic.stats import init_stats, STAT_LABELS
 
 logger = logging.getLogger("onboard")
 
-IMAGES_DIR = os.path.join(ROOT, "src", "assets", "onboard")
+_ONBOARD_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+IMAGES_DIR = os.path.join(_ONBOARD_ROOT, "src", "assets", "onboard")
 
 def _img(fname):
     """discord.File z src/assets/onboard (nebo None, když soubor chybí)."""
@@ -36,7 +37,7 @@ from src.core.dnd.roll_stats import record_roll
 # ── Konfigurace ───────────────────────────────────────────────────────────────
 
 ROLE_DOBRODRUH_F3_ID = 1476056192643104768
-from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, TUTORIAL_MSG as TUTORIAL_MSG_FILE, ITEMS, ROOT
+from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, TUTORIAL_MSG as TUTORIAL_MSG_FILE, ITEMS
 from src.logic.economy import get_balance, set_balance, COIN_SILVER
 
 TUTORIAL_CHANNEL_ID = 1476045697496252607
