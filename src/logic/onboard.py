@@ -14,7 +14,7 @@ from src.core.dnd.roll_stats import record_roll
 # ── Konfigurace ───────────────────────────────────────────────────────────────
 
 ROLE_DOBRODRUH_F3_ID = 1476056192643104768
-from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, TUTORIAL_MSG as TUTORIAL_MSG_FILE
+from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, TUTORIAL_MSG as TUTORIAL_MSG_FILE, ITEMS
 
 TUTORIAL_CHANNEL_ID = 1476045697496252607
 COIN                 = "<:goldcoin:1490171741237018795>"
@@ -56,84 +56,65 @@ DESTINATIONS = {
 # ── Loadouty (tutorial) ────────────────────────────────────────────────────────
 
 LOADOUTS = {
+    "crossbow": {
+        "emoji": "🎯",
+        "name": "Kuše",
+        "desc": "Střelec s kuší",
+        "items": [("mala_kuse", 1), ("obycejna_sipka", 10), ("stredni_lektvar_zivota", 1), ("brasna", 1)],
+        "perk": "crossbow_1",
+    },
     "one_handed": {
         "emoji": "🗡️",
-        "name": "Lehký meč",
+        "name": "Meč",
         "desc": "Klasický bojovník s jednoruční zbraní",
-        "items": ["mec_z_praveke_kosti", "brasna", "kozena_tunika", "lektvar_zivota"],
+        "items": [("stary_mec", 1), ("brasna", 1), ("stredni_lektvar_zivota", 1)],
         "perk": "one_handed_1",
+    },
+    "wand": {
+        "emoji": "🪄",
+        "name": "Magická hůlka",
+        "desc": "Čaroděj ovládající runovou magii hůlkou",
+        "items": [("zakladni_hulka", 1), ("brasna", 1), ("stredni_lektvar_many", 1)],
+        "perk": "rune_basics_1",
+    },
+    "scrolls": {
+        "emoji": "📜",
+        "name": "Magické svitky",
+        "desc": "Sesilatel kouzel ze svitků",
+        "items": [("svitek_ohnivy_sip", 2), ("svitek_ledovy_blok", 2), ("svitek_slabeho_uzdraveni", 2), ("svitek_jedovy_osten", 2), ("brasna", 1), ("stredni_lektvar_many", 1)],
+        "perk": "rune_basics_1",
     },
     "two_handed": {
         "emoji": "⚔️",
         "name": "Obouruční meč",
         "desc": "Silný bojovník s obouruční zbraní",
-        "items": ["halapartna_ohne", "brasna", "ocelovy_kyrys", "lektvar_zivota"],
+        "items": [("stary_obourucni_mec", 1), ("brasna", 1), ("stredni_lektvar_zivota", 1)],
         "perk": "two_handed_1",
     },
     "bow": {
         "emoji": "🏹",
-        "name": "Krátký luk",
+        "name": "Luk",
         "desc": "Lukostřelec s lukem a šípy",
-        "items": ["jasanovy_luk", "sipky_10x", "brasna", "kozena_tunika", "lektvar_zivota"],
+        "items": [("maly_luk", 1), ("obycejny_sip", 10), ("brasna", 1), ("stredni_lektvar_zivota", 1)],
         "perk": "archery_1",
-    },
-    "crossbow": {
-        "emoji": "🎯",
-        "name": "Kuše",
-        "desc": "Střelec s kuší",
-        "items": ["mala_kuse", "sipky_10x", "brasna", "ocelovy_kyrys", "lektvar_zivota"],
-        "perk": "archery_1",
-    },
-    "mage": {
-        "emoji": "🔮",
-        "name": "Mág",
-        "desc": "Čaroděj ovládající magii",
-        "items": ["magicka_hulka", "brasna", "magicka_roba", "lektvar_many"],
-        "perk": "fire_magic_1",
-    },
-    "fire_magic": {
-        "emoji": "🔥",
-        "name": "Ohnivá magie",
-        "desc": "Mág ovládající oheň",
-        "items": ["ogniva_runa", "brasna", "magicka_roba", "lektvar_many"],
-        "perk": "fire_magic_1",
-    },
-    "ice_magic": {
-        "emoji": "❄️",
-        "name": "Ledová magie",
-        "desc": "Mág ovládající led",
-        "items": ["ledova_runa", "brasna", "magicka_roba", "lektvar_many"],
-        "perk": "ice_magic_1",
-    },
-    "healing_magic": {
-        "emoji": "💚",
-        "name": "Uzdravovací magie",
-        "desc": "Lékař pomocí magie",
-        "items": ["uzdravovaci_runa", "brasna", "magicka_roba", "lektvar_many"],
-        "perk": "healing_magic_1",
-    },
-    "rogue": {
-        "emoji": "🗡️",
-        "name": "Tulák",
-        "desc": "Rychlý tulák se dvěma dýkami",
-        "items": ["nuz", "nuz", "brasna", "kozena_tunika", "lektvar_zivota"],
-        "perk": "stealth_1",
-    },
-    "staff": {
-        "emoji": "🤖",
-        "name": "Bojovník s holí",
-        "desc": "Mních bojující s holí",
-        "items": ["bojova_hul", "brasna", "kozena_tunika", "lektvar_zivota"],
-        "perk": "unarmed_1",
-    },
-    "acrobat": {
-        "emoji": "🤸",
-        "name": "Akrobata",
-        "desc": "Hbitý bojovník",
-        "items": ["mec_z_praveke_kosti", "brasna", "kozena_tunika", "lektvar_zivota"],
-        "perk": "acrobacy_1",
     },
 }
+
+
+def _loadout_items_db() -> dict:
+    try:
+        return load_json(ITEMS, default={})
+    except Exception:
+        return {}
+
+
+def _perk_name(perk_id: str) -> str:
+    try:
+        from src.core.dnd.perks import load_perks
+        return load_perks().get(perk_id, {}).get("name", perk_id)
+    except Exception:
+        return perk_id
+
 
 # ── Databáze ──────────────────────────────────────────────────────────────────
 
@@ -1336,13 +1317,76 @@ class LoadoutSelectView(discord.ui.View):
 
     def _make_callback(self, loadout_id: str):
         async def callback(interaction: discord.Interaction):
-            await _show_perk_selection(
+            await _show_loadout_confirm(
                 interaction,
                 dest_key=self.dest_key,
                 portrait_url=self.portrait_url,
                 loadout_id=loadout_id,
             )
         return callback
+
+
+async def _show_loadout_confirm(interaction, dest_key, portrait_url, loadout_id):
+    """Ukáže tabulku vybavení + perku a tlačítka Potvrdit / Vybrat znovu."""
+    loadout = LOADOUTS.get(loadout_id)
+    if not loadout:
+        await interaction.response.defer()
+        return
+    items_db = _loadout_items_db()
+    radky = []
+    for item_id, qty in loadout.get("items", []):
+        nazev = items_db.get(item_id, {}).get("name", item_id)
+        radky.append(f"• {nazev}" + (f"  **×{qty}**" if qty > 1 else ""))
+    embed = discord.Embed(
+        title=f"{loadout['emoji']}  {loadout['name']}",
+        description=(
+            f"*{loadout['desc']}*\n\n"
+            "**Dostaneš toto vybavení:**\n" + "\n".join(radky) +
+            f"\n\n**Prvotní perk:** `{_perk_name(loadout['perk'])}`\n\n"
+            "Pokud souhlasíš, potvrď. Jinak se vrať a vyber jiné."
+        ),
+        color=0xFFD700,
+    )
+    if portrait_url:
+        embed.set_thumbnail(url=portrait_url)
+    embed.set_footer(text="⭐ Aurionis  ·  Potvrď své vybavení.")
+    await interaction.response.edit_message(
+        embed=embed,
+        view=LoadoutConfirmView(dest_key, portrait_url, loadout_id),
+    )
+
+
+class LoadoutConfirmView(discord.ui.View):
+    """Potvrzení loadoutu před výběrem perků."""
+    def __init__(self, dest_key, portrait_url, loadout_id):
+        super().__init__(timeout=600)
+        self.dest_key = dest_key
+        self.portrait_url = portrait_url
+        self.loadout_id = loadout_id
+
+    @discord.ui.button(label="Potvrdit", style=discord.ButtonStyle.success, emoji="✅")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _show_perk_selection(
+            interaction,
+            dest_key=self.dest_key,
+            portrait_url=self.portrait_url,
+            loadout_id=self.loadout_id,
+        )
+
+    @discord.ui.button(label="Vybrat znovu", style=discord.ButtonStyle.secondary, emoji="↩️")
+    async def reselect(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="🎒  Výběr vybavení",
+            description="*Vyber si startovní vybavení a prvotní perk.*",
+            color=0xFFD700,
+        )
+        if self.portrait_url:
+            embed.set_thumbnail(url=self.portrait_url)
+        embed.set_footer(text="⭐ Aurionis  ·  Vyber si vybavení.")
+        await interaction.response.edit_message(
+            embed=embed,
+            view=LoadoutSelectView(dest_key=self.dest_key, portrait_url=self.portrait_url),
+        )
 
 
 async def _show_perk_selection(
@@ -1609,8 +1653,8 @@ async def _finalize_tutorial(
 
         profiles = load_json(DATA_FILE, default={})
         profile = profiles.setdefault(user_id, {"rank": "F3"})
-        for item_id in loadout.get("items", []):
-            add_registered_item_to_profile(profile, item_id)
+        for item_id, qty in loadout.get("items", []):
+            add_registered_item_to_profile(profile, item_id, qty)
         save_json(DATA_FILE, profiles)
 
         # Zapiš do profilu, že je hotovo
@@ -2325,8 +2369,8 @@ class Onboarding(commands.Cog):
             ensure_active(target_user.id)
             profile = profiles.setdefault(pkey(target_user.id), {"rank": "F3"})
             
-            for item_id in loadout_data.get("items", []):
-                add_registered_item_to_profile(profile, item_id, qty=1)
+            for item_id, qty in loadout_data.get("items", []):
+                add_registered_item_to_profile(profile, item_id, qty)
             
             save_json(DATA_FILE, profiles)
             
@@ -2334,7 +2378,7 @@ class Onboarding(commands.Cog):
                 title="✅  Loadout přidělen",
                 description=(
                     f"**{target_user.mention}** ({loadout}) nyní má:\n\n"
-                    + "\n".join(f"• {item_id}" for item_id in loadout_data.get("items", []))
+                    + "\n".join((f"• {iid} ×{q}" if q > 1 else f"• {iid}") for iid, q in loadout_data.get("items", []))
                 ),
                 color=0x27ae60,
             )
