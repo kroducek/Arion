@@ -10,6 +10,25 @@ import logging
 from src.logic.stats import init_stats, STAT_LABELS
 
 logger = logging.getLogger("onboard")
+
+IMAGES_DIR = os.path.join(ROOT, "src", "assets", "onboard")
+
+def _img(fname):
+    """discord.File z src/assets/onboard (nebo None, když soubor chybí)."""
+    if not fname:
+        return None
+    path = os.path.join(IMAGES_DIR, fname)
+    if not os.path.exists(path):
+        logger.warning("[onboard] chybí obrázek: %s", path)
+        return None
+    return discord.File(path, filename=fname)
+
+def _attach(embed, fname):
+    """Nastaví obrázek embedu z lokálního souboru a vrátí discord.File (nebo None)."""
+    f = _img(fname)
+    if f is not None:
+        embed.set_image(url=f"attachment://{fname}")
+    return f
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey, ensure_active
 from src.core.dnd.roll_stats import record_roll
@@ -17,19 +36,19 @@ from src.core.dnd.roll_stats import record_roll
 # ── Konfigurace ───────────────────────────────────────────────────────────────
 
 ROLE_DOBRODRUH_F3_ID = 1476056192643104768
-from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, TUTORIAL_MSG as TUTORIAL_MSG_FILE, ITEMS
+from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, TUTORIAL_MSG as TUTORIAL_MSG_FILE, ITEMS, ROOT
 from src.logic.economy import get_balance, set_balance, COIN_SILVER
 
 TUTORIAL_CHANNEL_ID = 1476045697496252607
 COIN                 = "<:goldcoin:1490171741237018795>"
 
 # Obrázky
-URL_PLAKAT_HVEZDA   = "https://media.discordapp.net/attachments/1484572118267068598/1484572264123994215/Copilot-20260316-144814.png?ex=69beb729&is=69bd65a9&hm=76e19b81f3b4a6e9effa21f03950a4eab18828ca8e1e81a93b42ff3cb8ddc63b&=&format=webp&quality=lossless&width=432&height=648"
-URL_RECAP_ALICE     = "https://media.discordapp.net/attachments/1478419662101287013/1479883190075134155/image.png?ex=69be22df&is=69bcd15f&hm=f261fb2aa148fe41ed07dfbee52506f633f62513ea436fc4a08ddd269b00bd47&=&format=webp&quality=lossless&width=432&height=648"
-URL_RECAP_VLADCE    = "https://media.discordapp.net/attachments/1483970683485818961/1483970683817037944/BCO.1f1170a1-b53c-4f30-8a02-ebd298842c77.png?ex=69be8125&is=69bd2fa5&hm=ce5d6884329783b959b4aa618c0fcda2d885cbb7a7677f80921647ed19baa4ce&=&format=webp&quality=lossless&width=432&height=648"
-URL_RECAP_REINHARD  = "https://media.discordapp.net/attachments/1479869197784711168/1479895462273089707/image.png?ex=69be2e4d&is=69bcdccd&hm=d6ad1dfaa4a1a5086a9972b7f74fd0f69f1850f72a3c0ed948aa7e601c5a27c6&=&format=webp&quality=lossless&width=432&height=648"
-URL_ARION_ENCOUNTER = "https://media.discordapp.net/attachments/1484572118267068598/1484573144831230105/Copilot_20260320_151711.png?ex=69beb7fb&is=69bd667b&hm=6a22f9c9bacc138a38a75675ba56fb33f2435943869d7063982049a108f6acb9&=&format=webp&quality=lossless&width=432&height=648"
-URL_TUTORIAL_END    = "https://media.discordapp.net/attachments/1484572118267068598/1484572790521860238/Copilot_20260320_152810.png?ex=69beb7a7&is=69bd6627&hm=acda23f306ba646170ea9ae589fa7315be735841124f2c2bcd3ca8efae6f4dec&=&format=webp&quality=lossless&width=822&height=548"
+URL_PLAKAT_HVEZDA = "main_aurionis.png"
+URL_RECAP_ALICE = "recap_alice.png"
+URL_RECAP_VLADCE = "recap_gabriel.png"
+URL_RECAP_REINHARD = "recap_reinhard.png"
+URL_ARION_ENCOUNTER = "arion_guild.png"
+URL_TUTORIAL_END = "tutorial_end.png"
 
 # ── Destinace ─────────────────────────────────────────────────────────────────
 
@@ -39,21 +58,21 @@ DESTINATIONS = {
         "name":  "Lumenie",
         "desc":  "Město začátků. Každý slavný dobrodruh napsal první řádek svého příběhu zrovna tady. Dominuje mu **katedrála světla** a kamenný most přes řeku **Auriel**, symbol naděje a řádu. Domov nejvyššího paladina **Reinharda** a jeho bratrstva paladinů a rytířů. Lumenie nyní prochází krizí.",
         "color": 0x3498db,
-        "image": "https://media.discordapp.net/attachments/1484572118267068598/1484572933023334621/Copilot_20260320_145920.png?ex=69beb7c9&is=69bd6649&hm=a624e462ff950ed84f2542777c22d63ca5710c50834113b85afbc532176cc430&=&format=webp&quality=lossless&width=822&height=548",
+        "image": "lumenie.png",
     },
     "aquion": {
         "emoji": "🌊",
         "name":  "Aquion",
         "desc":  "Největší obchodní město Aurionisu, postavené na síti kanálů a plovoucích plošin. Říká se, že tady se dá koupit cokoliv: pravda i lež. Klášter mágů vody střeží rovnováhu sil a prakticky řídí celou ekonomickou situaci Kalexie.",
         "color": 0x1abc9c,
-        "image": "https://media.discordapp.net/attachments/1484572118267068598/1484572857559285801/Copilot_20260320_150340.png?ex=69beb7b7&is=69bd6637&hm=80ace1e169079d9845326e567a5ded22e9d6bcf3dd3dc01a0b22c214864cbc40&=&format=webp&quality=lossless&width=822&height=548",
+        "image": "aquion.png",
     },
     "draci_skala": {
         "emoji": "🏔️",
         "name":  "Dračí skála",
         "desc":  "Mladé město vytesané do útesů vyhaslé sopky, kde vládne **Alice Aurelion** — samozvaná královna s darem dračí řeči. Její draci krouží nad hradbami a každý nový příchozí si musí vybrat: věrně sloužit, nebo odejít. Alice nebyla viděna na veřejnosti od chvíle, kdy se ukázala v Aquionu.",
         "color": 0xe74c3c,
-        "image": "https://media.discordapp.net/attachments/1484572118267068598/1484573012585087057/Copilot_20260320_150049.png?ex=69beb7dc&is=69bd665c&hm=7a0e1d64b751d2b6476e900a3f8b2f2ade7b238bfcf5b662b2487eee7d775d05&=&format=webp&quality=lossless&width=822&height=548",
+        "image": "draci_skala.png",
     },
 }
 
@@ -155,10 +174,10 @@ def add_registered_item_to_profile(profile: dict, item_id: str, qty: int = 1) ->
 # ═════════════════════════════════════════════════════════════
 
 # Plakát Aurionis: Act II (pozn.: Discord CDN URL s ?ex=... expiruje — ideálně přehostit)
-URL_PLAKAT_ACT2 = "https://cdn.discordapp.com/attachments/1477815245908082779/1519240012724699158/IMG_0441.png?ex=6a3d7ec5&is=6a3c2d45&hm=26f0ff116d82c11d495eefb60575000635d870d73184d4fa0ebfc890f3edd2b7&"
+URL_PLAKAT_ACT2 = "plakat_hao.png"
 
-URL_PLAKAT_ALICE = "https://cdn.discordapp.com/attachments/1477815245908082779/1519240013882200194/IMG_0176.png?ex=6a3d7ec5&is=6a3c2d45&hm=cedc265b8206e076339265f104ffdebdaccb43eb58ff3b36ecfc8a6af174cf3e&"
-URL_PLAKAT_AURELION = "https://cdn.discordapp.com/attachments/1477815245908082779/1520054580463796314/IMG_0479.png?ex=6a3fcca5&is=6a3e7b25&hm=e67202576084d8a35f7919a0de46ee21bb1ac3d9c1d5366465323e024f8884fb&"
+URL_PLAKAT_ALICE = "plakat_vladce_stinu.png"
+URL_PLAKAT_AURELION = "plakat_posledni_aurelion.png"
 ARION_COLOR = 0xb87333  # bronz — Arionina barva
 
 
@@ -266,7 +285,8 @@ class ActSelectionView(discord.ui.View):
     @discord.ui.button(label="Chci recap Actu I.", style=discord.ButtonStyle.secondary, emoji="📖")
     async def new_player(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = RecapView(page=1)
-        await interaction.response.edit_message(embed=view.get_embed(), view=view)
+        embed = view.get_embed()
+        await interaction.response.edit_message(embed=embed, view=view, attachments=[view._pending_file] if view._pending_file else [])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -320,20 +340,20 @@ class RecapView(discord.ui.View):
         }
         embed = pages[self.page]
         imgs  = {1: URL_RECAP_ALICE, 2: URL_RECAP_REINHARD, 3: URL_RECAP_VLADCE}
-        embed.set_image(url=imgs[self.page])
+        self._pending_file = _attach(embed, imgs[self.page])
         return embed
 
     @discord.ui.button(label="Zpět", style=discord.ButtonStyle.secondary, emoji="⬅️")
     async def prev_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.page -= 1
         self._update_buttons()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        await interaction.response.edit_message(embed=self.get_embed(), view=self, attachments=[self._pending_file] if self._pending_file else [])
 
     @discord.ui.button(label="Dále", style=discord.ButtonStyle.secondary, emoji="➡️")
     async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.page += 1
         self._update_buttons()
-        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        await interaction.response.edit_message(embed=self.get_embed(), view=self, attachments=[self._pending_file] if self._pending_file else [])
 
     @discord.ui.button(label="Chápu, chci pokračovat", style=discord.ButtonStyle.success, emoji="✅")
     async def finish_recap(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -391,10 +411,11 @@ async def _show_act2_poster(interaction: discord.Interaction, dest_key: str):
     """Beat: plakát Aurionis Act II → první kontakt s Arion."""
     update_profile(interaction.user.id, destination=dest_key)
     embed = discord.Embed(title="Velký omnyoji Hao", color=0x1a1a2e)
-    embed.set_image(url=URL_PLAKAT_ACT2)
+    _f = _attach(embed, URL_PLAKAT_ACT2)
     await interaction.response.edit_message(
         embed=embed,
         view=StoryBeatView(functools.partial(_show_first_contact, dest_key=dest_key)),
+        attachments=[_f] if _f else [],
     )
 
 
@@ -774,12 +795,13 @@ class ArionHmView(discord.ui.View):
 
 
 async def _show_alice_poster(interaction: discord.Interaction, dest_key: str):
-    """Beat: plakát Matka draků Alice Aurelion → vstup do cechu."""
-    embed = discord.Embed(title="Matka draků Alice Aurelion", color=0x1a1a2e)
-    embed.set_image(url=URL_PLAKAT_ALICE)
+    """Beat: plakát Vládce stínů → vstup do cechu."""
+    embed = discord.Embed(title="Vládce stínů", color=0x1a1a2e)
+    _f = _attach(embed, URL_PLAKAT_ALICE)
     await interaction.response.edit_message(
         embed=embed,
         view=EnterGuildInsideView(dest_key=dest_key),
+        attachments=[_f] if _f else [],
     )
 
 
@@ -794,7 +816,7 @@ async def _show_acceptance(interaction: discord.Interaction, dest_key: str):
         ),
         color=0x2c3e50,
     )
-    embed.set_image(url=URL_ARION_ENCOUNTER)
+    _f = _attach(embed, URL_ARION_ENCOUNTER)
     embed.set_footer(text="⭐ Aurionis  ·  Co řekneš?")
     choices = [
         ("Co když nechci být dobrodruh?",          "„Hloupost! Každý chce být dobrodruh!“"),
@@ -805,6 +827,7 @@ async def _show_acceptance(interaction: discord.Interaction, dest_key: str):
     await interaction.response.edit_message(
         embed=embed,
         view=DialogChoiceView(choices, next_factory),
+        attachments=[_f] if _f else [],
     )
 
 
@@ -1597,13 +1620,14 @@ async def _show_arion_farewell(interaction, dest_key, portrait_url):
 async def _show_aurelion_poster(interaction, dest_key, portrait_url):
     """Beat: plakát Poslední Aurelion → nástěnka."""
     embed = discord.Embed(title="Poslední Aurelion", color=0x1a1a2e)
-    embed.set_image(url=URL_PLAKAT_AURELION)
+    _f = _attach(embed, URL_PLAKAT_AURELION)
     embed.set_footer(text="⭐ Aurionis  ·  Podívej se na nástěnku.")
     await interaction.response.edit_message(
         embed=embed,
         view=StoryBeatView(
             functools.partial(_show_ready, dest_key=dest_key, portrait_url=portrait_url)
         ),
+        attachments=[_f] if _f else [],
     )
 
 
@@ -2219,8 +2243,7 @@ class ArrivalStreetView(discord.ui.View):
             description=street_desc,
             color=dest["color"],
         )
-        if dest.get("image"):
-            embed.set_image(url=dest["image"])
+        _f = _attach(embed, dest.get("image"))
         if self.portrait_url:
             embed.set_thumbnail(url=self.portrait_url)
         embed.set_footer(text=f"⭐ Aurionis  ·  Vítej v {dest['name']}.")
@@ -2228,6 +2251,7 @@ class ArrivalStreetView(discord.ui.View):
         await interaction.response.edit_message(
             embed=embed,
             view=FirstStepView(),
+            attachments=[_f] if _f else [],
         )
 
 
@@ -2245,9 +2269,9 @@ class FirstStepView(discord.ui.View):
             ),
             color=0xFFD700,
         )
-        embed.set_image(url=URL_TUTORIAL_END)
+        _f = _attach(embed, URL_TUTORIAL_END)
         embed.set_footer(text="⭐ Aurionis")
-        await interaction.response.edit_message(embed=embed, view=None)
+        await interaction.response.edit_message(embed=embed, view=None, attachments=[_f] if _f else [])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2271,8 +2295,8 @@ class TutorialWarningView(discord.ui.View):
             ),
             color=0xFFD700,
         )
-        embed.set_image(url=URL_PLAKAT_HVEZDA)
-        await interaction.response.send_message(embed=embed, view=TutorialPartOneView(), ephemeral=True)
+        _f = _attach(embed, URL_PLAKAT_HVEZDA)
+        await interaction.response.send_message(embed=embed, view=TutorialPartOneView(), ephemeral=True, **({"file": _f} if _f else {}))
 
     @discord.ui.button(label="Už mám postavu", style=discord.ButtonStyle.secondary, emoji="📜", row=0, custom_id="onboard:has_char")
     async def has_character(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2315,7 +2339,7 @@ class Onboarding(commands.Cog):
             ),
             color=0xFFD700,
         )
-        embed.set_image(url=URL_PLAKAT_HVEZDA)
+        _attach(embed, URL_PLAKAT_HVEZDA)
         embed.set_footer(text="⭐ Aurionis  ·  Act II  ·  Tvůj příběh začíná zde.")
 
         await interaction.response.send_message("✅ Brána do Actu II byla vztyčena.", ephemeral=True)
@@ -2335,12 +2359,14 @@ class Onboarding(commands.Cog):
         if msg_id:
             try:
                 old_msg = await tutorial_channel.fetch_message(msg_id)
-                await old_msg.edit(embed=embed, view=TutorialWarningView())
+                _ef = _img(URL_PLAKAT_HVEZDA)
+                await old_msg.edit(embed=embed, view=TutorialWarningView(), attachments=[_ef] if _ef else [])
                 return
             except Exception:
                 logger.exception('[onboard] potlačená chyba')
 
-        new_msg = await tutorial_channel.send(embed=embed, view=TutorialWarningView())
+        _nf = _img(URL_PLAKAT_HVEZDA)
+        new_msg = await tutorial_channel.send(embed=embed, view=TutorialWarningView(), **({"file": _nf} if _nf else {}))
         try:
             save_json(TUTORIAL_MSG_FILE, {"message_id": new_msg.id})
         except Exception:
