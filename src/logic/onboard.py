@@ -15,6 +15,7 @@ from src.core.dnd.roll_stats import record_roll
 
 ROLE_DOBRODRUH_F3_ID = 1476056192643104768
 from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, TUTORIAL_MSG as TUTORIAL_MSG_FILE, ITEMS
+from src.logic.economy import get_balance, set_balance, COIN_SILVER
 
 TUTORIAL_CHANNEL_ID = 1476045697496252607
 COIN                 = "<:goldcoin:1490171741237018795>"
@@ -74,14 +75,14 @@ LOADOUTS = {
         "emoji": "🪄",
         "name": "Magická hůlka",
         "desc": "Čaroděj ovládající runovou magii hůlkou",
-        "items": [("zakladni_hulka", 1), ("brasna", 1), ("stredni_lektvar_many", 1)],
+        "items": [("zakladni_hulka", 1), ("brasna", 1), ("stredni_lektvar_mana", 1)],
         "perk": "rune_basics_1",
     },
     "scrolls": {
         "emoji": "📜",
         "name": "Magické svitky",
         "desc": "Sesilatel kouzel ze svitků",
-        "items": [("svitek_ohnivy_sip", 2), ("svitek_ledovy_blok", 2), ("svitek_slabeho_uzdraveni", 2), ("svitek_jedovy_osten", 2), ("brasna", 1), ("stredni_lektvar_many", 1)],
+        "items": [("svitek_ohnivy_sip", 2), ("svitek_ledovy_blok", 2), ("svitek_slabeho_uzdraveni", 2), ("svitek_jedovy_osten", 2), ("brasna", 1), ("stredni_lektvar_mana", 1)],
         "perk": "rune_basics_1",
     },
     "two_handed": {
@@ -1093,12 +1094,27 @@ async def _show_motivation_prompt(
     portrait_url: str | None,
     stats: dict | None,
 ):
+    if portrait_url:
+        reakce = (
+            "Arion vezme tvůj portrét a chvíli ho soustředěně zkoumá. "
+            "Pak spokojeně přikývne sama pro sebe.\n\n"
+            "*'Moc hezké...'*\n\n"
+            "Otočí průkaz dobrodruha k tobě\n\n"
+            "Všechna pole jsou vyplněna... jméno, sken i tvůj portrét. "
+            "Zbývá jen jedno prázdné místo ve spodní části\n\n"
+        )
+    else:
+        reakce = (
+            "Arion mávne tlapkou, že to nevadí\n\n"
+            "*'Jak chceš — tak třeba příště.'*\n\n"
+            "Otočí průkaz dobrodruha k tobě\n\n"
+            "Hlavní pole jsou vyplněna... jméno i sken. Portrét sis nechal/a prázdný. "
+            "Zbývá ještě jedno místo ve spodní části\n\n"
+        )
     embed = discord.Embed(
         title="📜",
         description=(
-            "Arion otočí průkaz dobrodruha k tobě\n\n"
-            "Všechna pole jsou vyplněna... jméno, sken i tvůj portrét. "
-            "Zbývá jen jedno prázdné místo ve spodní části\n\n"
+            reakce +
             "*Pero se samo zdvihne nad stránku a začne zapisovat tvou odpověď*\n\n"
             "*'Proč vlastně chceš být dobrodruhem?'*\n\n"
             "-# *Tohle pole uvidí každý, kdo si průkaz prohlédne.*"
@@ -1132,23 +1148,10 @@ async def _show_guild_card(
         except Exception:
             pass
 
-    if portrait_url:
-        portrait_text = (
-            "Arion vytvoří magické plátno a chvíli tě soustředěně pozoruje. "
-            "Pak začne kreslit. Za pár vteřin je hotovo a spokojeně přikývne sama pro sebe.\n\n"
-            "*'Moc hezké...'*\n\n"
-        )
-    else:
-        portrait_text = (
-            "Arion zavře knihu a jen mávne rukou\n\n"
-            "*'Jak chceš, tak se příště zastav.'*\n\n"
-        )
-
     embed = discord.Embed(
         title="📜  Průkaz dobrodruha",
         description=(
-            portrait_text +
-            "Sáhne pod pult a vytáhne starý kožený váček s cechovní pečetí\n\n"
+            "Arion sáhne pod pult a vytáhne starý kožený váček s cechovní pečetí\n\n"
             "*'Mňau.. Vstupní poplatek je sto zlatých...'*\n\n"
             "Arion si hluboce povzdychne, ale následně výraz změní v euforii\n\n"
             "*'...ale jsou temné časy a každý dobrodruh se počítá "
@@ -1264,6 +1267,7 @@ class GoldView(discord.ui.View):
             )
             return
         add_gold(interaction.user.id, 100)
+        set_balance(interaction.user.id, get_balance(interaction.user.id, "silver") + 100, "silver")
         update_profile(interaction.user.id, gold_received=True)
 
         dest = DESTINATIONS[self.dest_key]
@@ -1271,7 +1275,7 @@ class GoldView(discord.ui.View):
             title="🪙  Měšec se zlatými",
             description=(
                 "Zlaté uvnitř cinkají velmi přesvědčivě\n\n"
-                f"**+100** {COIN} připsáno na tvé konto\n\n"
+                f"**+100** {COIN}  \u00b7  **+100** {COIN_SILVER} připsáno na tvé konto\n\n"
                 "Ještě než tě nechá odejít tak prohodí\n\n"
                 f"*'Svět tam venku není moc přívětivý.. "
                 f"obzvlášť teď, za Turnaje. Dávej na sebe pozor.'*\n\n"
