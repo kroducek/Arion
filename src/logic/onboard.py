@@ -1853,7 +1853,7 @@ class MemoryCheckView(discord.ui.View):
 
         await interaction.edit_original_response(
             embed=embed,
-            view=CollisionTransitionView(
+            view=_GuildHubEntryView(
                 dest_key=self.dest_key,
                 portrait_url=self.portrait_url,
             ),
@@ -2011,6 +2011,237 @@ class CharismaRollView(discord.ui.View):
             embed=embed,
             view=FinalEnterView(dest_key=self.dest_key, portrait_url=self.portrait_url),
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# KROK 10b — Síň cechu: NPC hub (promluv si s lidmi, nebo odejdi)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Registr NPC v síni — přidat dalšího = přidat položku + handler do _NPC_HANDLERS
+GUILD_NPCS = [
+    {"id": "runar", "label": "Promluvit s runovým mágem", "emoji": "🔮"},
+]
+
+
+async def _show_guild_hub(interaction: discord.Interaction, dest_key: str, portrait_url: str | None = None):
+    """Rozcestník v síni cechu — NPC tlačítka + odchod."""
+    embed = discord.Embed(
+        title="🏛️  Síň cechu",
+        description=(
+            "Vzpamatuješ se. Jsi pořád v síni cechu — *nikdo si ničeho nevšiml.*\n\n"
+            "Kolem postává pár dobrodruhů. Někteří si tě měří pohledem, jiní se baví mezi sebou. "
+            "Než vyrazíš do světa, můžeš si s někým promluvit.\n\n"
+            "*Nebo prostě odejdi.*"
+        ),
+        color=0x8e44ad,
+    )
+    if portrait_url:
+        embed.set_thumbnail(url=portrait_url)
+    embed.set_footer(text="⭐ Aurionis  ·  Promluv si, nebo odejdi.")
+    await interaction.response.edit_message(
+        embed=embed,
+        view=GuildHubView(dest_key, portrait_url),
+        attachments=[],
+    )
+
+
+class _GuildNPCButton(discord.ui.Button):
+    def __init__(self, npc: dict, dest_key: str, portrait_url: str | None):
+        super().__init__(label=npc["label"], style=discord.ButtonStyle.secondary,
+                         emoji=npc.get("emoji"), row=0)
+        self.npc = npc
+        self.dest_key = dest_key
+        self.portrait_url = portrait_url
+
+    async def callback(self, interaction: discord.Interaction):
+        handler = _NPC_HANDLERS.get(self.npc["id"])
+        if handler is None:
+            await interaction.response.defer()
+            return
+        await handler(interaction, self.dest_key, self.portrait_url)
+
+
+class GuildHubView(discord.ui.View):
+    """Hub v síni cechu — dynamická NPC tlačítka + odchod."""
+    def __init__(self, dest_key: str, portrait_url: str | None = None):
+        super().__init__(timeout=600)
+        self.dest_key = dest_key
+        self.portrait_url = portrait_url
+        for npc in GUILD_NPCS:
+            self.add_item(_GuildNPCButton(npc, dest_key, portrait_url))
+
+    @discord.ui.button(label="Odejít z cechu", style=discord.ButtonStyle.primary, emoji="🚪", row=1)
+    async def leave_hub(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="🚪  ..",
+            description="Naposledy se rozhlédneš po síni a vykročíš ke dveřím.",
+            color=0x2c3e50,
+        )
+        if self.portrait_url:
+            embed.set_thumbnail(url=self.portrait_url)
+        embed.set_footer(text="⭐ Aurionis")
+        await interaction.response.edit_message(
+            embed=embed,
+            view=FinalEnterView(dest_key=self.dest_key, portrait_url=self.portrait_url),
+            attachments=[],
+        )
+
+
+class _GuildHubEntryView(discord.ui.View):
+    """Přechod z vize zpět do reality → síň cechu (hub)."""
+    def __init__(self, dest_key: str, portrait_url: str | None = None):
+        super().__init__(timeout=600)
+        self.dest_key = dest_key
+        self.portrait_url = portrait_url
+
+    @discord.ui.button(label="Vzpamatovat se", style=discord.ButtonStyle.secondary, emoji="👁️")
+    async def snap_back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _show_guild_hub(interaction, self.dest_key, self.portrait_url)
+
+
+class _BackToHubView(discord.ui.View):
+    """Návrat do síně cechu po rozhovoru s NPC."""
+    def __init__(self, dest_key: str, portrait_url: str | None = None):
+        super().__init__(timeout=600)
+        self.dest_key = dest_key
+        self.portrait_url = portrait_url
+
+    @discord.ui.button(label="Zpět do síně", style=discord.ButtonStyle.primary, emoji="↩️")
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await _show_guild_hub(interaction, self.dest_key, self.portrait_url)
+
+
+# ── NPC: Runový mág ───────────────────────────────────────────────────────────
+async def _show_npc_runar(interaction: discord.Interaction, dest_key: str, portrait_url: str | None = None):
+    embed = discord.Embed(
+        title="🔮  Runový mág",
+        description=(
+            "*Podsaditý muž v bohatě zdobeném rouchu se opírá o sloup. "
+            "V dlani mu líně víří chuchvalec fialové runové energie. "
+            "Když si tě všimne, zazubí se od ucha k uchu.*\n\n"
+            "**„Hej ty! Co koukáš jak péro z ptáka…“**\n\n"
+            "**„Vypadáš zmateně. Ty vůbec nevypadáš jako někdo, kdo ví, jak funguje magie… "
+            "Já jo. Hehe.“**\n\n"
+            "**„Ale neboj, já nejsem žádnej chamtivec… Chceš to slyšet?“**"
+        ),
+        color=0x8e44ad,
+    )
+    _f = _attach(embed, "npc_runar.png")
+    embed.set_footer(text="⭐ Aurionis  ·  Co uděláš?")
+    await interaction.response.edit_message(
+        embed=embed,
+        view=NpcRunarView(dest_key, portrait_url),
+        attachments=[_f] if _f else [],
+    )
+
+
+class NpcRunarView(discord.ui.View):
+    def __init__(self, dest_key: str, portrait_url: str | None = None):
+        super().__init__(timeout=600)
+        self.dest_key = dest_key
+        self.portrait_url = portrait_url
+
+    @discord.ui.button(label="Chci to slyšet", style=discord.ButtonStyle.success, emoji="👂")
+    async def listen(self, interaction: discord.Interaction, button: discord.ui.Button):
+        view  = RunarMonologueView(self.dest_key, self.portrait_url, page=0)
+        embed = view._embed()
+        _f    = _attach(embed, "npc_runar.png")
+        await interaction.response.edit_message(
+            embed=embed, view=view, attachments=[_f] if _f else [])
+
+    @discord.ui.button(label="Ignorovat", style=discord.ButtonStyle.secondary, emoji="🙄")
+    async def ignore(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="🔮  Runový mág",
+            description="**„Ok.“**\n\n*Pokrčí rameny a znovu se opře o sloup.*",
+            color=0x8e44ad,
+        )
+        await interaction.response.edit_message(
+            embed=embed, view=_BackToHubView(self.dest_key, self.portrait_url), attachments=[])
+
+
+# ── Runový mág: monolog o runách (stránkovaný, ukecanej) ──────────────────────
+_RUNAR_MONO = [
+    {"kind": "next", "text":
+        "**„Jak používat magii je tvá otázka?“**\n\n"
+        "„Na to mám jednoduchou odpověď…“\n\n"
+        "**„Runy!“**"},
+    {"kind": "interject", "opts": ["…runové kameny?", "(mlčet)"], "text":
+        "„Runy jsou ve světě magie všude kolem nás…“\n\n"
+        "„Svitek? Runy. Zbraně se speciálním efektem? Runy. To magické tetování, "
+        "co dává nějakému šílenci nadlidské schopnosti? Runy.“\n\n"
+        "„Šutry, co mají na sobě runy? Eh… co by to tak asi mohlo být…“"},
+    {"kind": "next", "text":
+        "*Než stačíš pořádně otevřít pusu, přeruší tě.*\n\n"
+        "**„—Ano ano! Runové kameny!“**\n\n"
+        "„Ehm ehm… Runy ovšem nemůže kdokoliv dát kamkoliv a pak to jakkoliv "
+        "využívat. Mají svoje pravidla…“"},
+    {"kind": "next", "text":
+        "„Určité věci použití run na nich vyrytých nesnesou dobře. Například svitky — "
+        "pokud je nedáš do grimoáru, většinou se ti po jednom použití rozpadnou v ruce.“\n\n"
+        "„A když se runy vyryjí na člověka? Ty můžou způsobit až smrt — při větším "
+        "množství, někdy i při malém…“"},
+    {"kind": "next", "text":
+        "„Proto runy nejčastěji používáme na hůlkách, speciálních kamenech a na "
+        "ostatních věcech, co jejich sílu snesou.“"},
+    {"kind": "interject", "opts": ["Takže když…", "(mlčet)"], "text":
+        "„Taky bych mohl dodat, že runy rozdělujeme na **pasivní** a **aktivní**.“\n\n"
+        "„Aktivní jsou většinou třeba kouzla v hůlkách — a většinou žerou manu. "
+        "Pasivní bývají na zbroji — mečích, brnění, lukách…“\n\n"
+        "„Toto ovšem není pravidlem…“"},
+    {"kind": "end", "text":
+        "*Nenechá tě dokončit.*\n\n"
+        "**„—Pšt! Ještě jsem neskončil.“**\n\n"
+        "„Runy jsou komplikovaná věc. Neměl by sis se žádnýma silnýma runama "
+        "zahrávat, pokud nejsi pod dozorem experta…“"},
+]
+
+
+class RunarMonologueView(discord.ui.View):
+    """Ukecanej monolog runového mága — stránkování + interjekce (přeruší tě)."""
+    def __init__(self, dest_key: str, portrait_url: str | None = None, page: int = 0):
+        super().__init__(timeout=600)
+        self.dest_key = dest_key
+        self.portrait_url = portrait_url
+        self.page = page
+        self._build()
+
+    def _build(self):
+        self.clear_items()
+        p = _RUNAR_MONO[self.page]
+        if p["kind"] == "next":
+            b = discord.ui.Button(label="Poslouchat dál", style=discord.ButtonStyle.secondary, emoji="➡️")
+            b.callback = self._advance
+            self.add_item(b)
+        elif p["kind"] == "interject":
+            for opt in p["opts"]:
+                b = discord.ui.Button(label=opt, style=discord.ButtonStyle.secondary)
+                b.callback = self._advance
+                self.add_item(b)
+        else:  # end
+            b = discord.ui.Button(label="Zpět do síně", style=discord.ButtonStyle.success, emoji="✅")
+            b.callback = self._end
+            self.add_item(b)
+
+    def _embed(self):
+        return discord.Embed(title="🔮  Runový mág",
+                             description=_RUNAR_MONO[self.page]["text"], color=0x8e44ad)
+
+    async def _advance(self, interaction: discord.Interaction):
+        self.page += 1
+        self._build()
+        embed = self._embed()
+        _f = _attach(embed, "npc_runar.png")
+        await interaction.response.edit_message(embed=embed, view=self, attachments=[_f] if _f else [])
+
+    async def _end(self, interaction: discord.Interaction):
+        await _show_guild_hub(interaction, self.dest_key, self.portrait_url)
+
+
+# Registr handlerů NPC (musí být až po definici funkcí)
+_NPC_HANDLERS = {
+    "runar": _show_npc_runar,
+}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
