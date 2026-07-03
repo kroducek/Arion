@@ -2021,6 +2021,7 @@ class CharismaRollView(discord.ui.View):
 GUILD_NPCS = [
     {"id": "runar",     "label": "Promluvit s runovým mágem", "emoji": "🔮"},
     {"id": "trpaslici", "label": "Přisednout k trpaslíkům",    "emoji": "🍺"},
+    {"id": "rohac",     "label": "Přisednout k muži s rohy",   "emoji": "😈"},
 ]
 
 
@@ -2399,10 +2400,145 @@ async def _show_npc_trpaslici(interaction: discord.Interaction, dest_key: str, p
     await interaction.response.edit_message(embed=embed, view=view, attachments=[_f] if _f else [])
 
 
+# ── NPC: Muž s rohy (provokace → páka STR → odměna) ───────────────────────────
+_HORNED_TITLE = "😈  Muž s rohy"
+_HORNED_NODES = {
+    "intro": {
+        "text": "*U stolu sedí muž s démonními rohy, korbel v ruce. Když k němu "
+                "přistoupíš, líně zvedne pohled.*\n\n**„Co chceš?“**",
+        "opts": [("Jsem tu nový…", "r_new"), ("Čau.", "r_hi"), ("…mlčet.", "r_silent")],
+    },
+    "r_new":    {"text": "„To mě nezajímá. Odprejskni.“", "opts": [("(zůstat stát)", "escalate")]},
+    "r_hi":     {"text": "„Tak vidíš, pozdravil jsi. Můžeš jít.“", "opts": [("(zůstat stát)", "escalate")]},
+    "r_silent": {"text": "*Chvíli tě měří pohledem, pak taky mlčí a odvrátí zrak.*",
+                 "opts": [("(zůstat stát)", "escalate")]},
+    "escalate": {
+        "text": "*Ani se nehneš. Přimhouří oči.*",
+        "opts": [("Jsi protivnej jak prdel.", "provoke"),
+                 ("Nebudu tě rušit.", "__hub__"),
+                 ("…mlčet.", "stare")],
+    },
+    "provoke": {
+        "text": "„Abych ti brzo nezlomil všechny kosti, co máš v těle. Zmiz mi z očí.“",
+        "opts": [("Vsadím se, že jsi slaboch.", "challenge"), ("…mlčet.", "__hub__")],
+    },
+    "stare": {"text": "„Co je? Nezírej na mě tak.“", "opts": [("…mlčet.", "__hub__")]},
+    "challenge": {
+        "text": "*„Já ti ukážu, kdo je slaboch!“ Prudce se zvedne, připravený tě zmlátit — "
+                "ale když zahlédne Arionin výraz, honem si to rozmyslí a zase dosedne.*\n\n"
+                "**„Vyzývám tě na páku. Ukážu ti svou sílu.“**",
+        "opts": [("Přijímám.", "duel"), ("Nechci.", "decline")],
+    },
+    "decline": {"text": "„A pak kdo je tu slaboch.“", "opts": [("Odejít", "__hub__")]},
+    "duel": {"kind": "str_duel",
+             "text": "*Opřete se lokty o stůl. Sevře ti dlaň jak svěrák a zakření se.*"},
+    "reward": {"text": "…", "opts": [("A co odměna za výhru?", "reward_ask"), ("(Odejít)", "__hub__")]},
+    "reward_ask": {"text": "„…Když ti dám odměnu, dáš mi pokoj?“",
+                   "opts": [("Ano.", "reward_yes"), ("Ne.", "reward_no")]},
+    "reward_no": {"text": "„Radši tě nechám být…“\n\n*Vražedný pohled v jeho očích "
+                          "naznačuje, že by tu brzy mohlo dojít k tragédii.*",
+                  "opts": [("Odejít", "__hub__")]},
+    "duel_lose": {"text": "…", "opts": [("Odejít", "__hub__")]},
+    "reward_done": {"text": "…", "opts": [("Odejít", "__hub__")]},
+}
+
+
+class HornedDialogueView(discord.ui.View):
+    """Muž s rohy — provokační strom, páka na STR, jednorázová odměna."""
+    def __init__(self, dest_key: str, portrait_url: str | None = None, node: str = "intro"):
+        super().__init__(timeout=600)
+        self.dest_key = dest_key
+        self.portrait_url = portrait_url
+        self.node = node
+        self._build()
+
+    def _build(self):
+        self.clear_items()
+        n = _HORNED_NODES[self.node]
+        if n.get("kind") == "str_duel":
+            b = discord.ui.Button(label="💪 Zapřít se  ·  1d20 + STR", style=discord.ButtonStyle.danger)
+            b.callback = self._str_duel
+            self.add_item(b)
+            return
+        for label, target in n["opts"]:
+            b = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary)
+            b.callback = self._make_nav(target)
+            self.add_item(b)
+
+    def _embed(self, text: str | None = None):
+        return discord.Embed(title=_HORNED_TITLE,
+                             description=text if text is not None else _HORNED_NODES[self.node]["text"],
+                             color=0x922b21)
+
+    def _make_nav(self, target: str):
+        async def cb(interaction: discord.Interaction):
+            await self._goto(interaction, target)
+        return cb
+
+    async def _edit(self, interaction, text=None):
+        embed = self._embed(text)
+        _f = _attach(embed, "npc_rohac.png")
+        await interaction.response.edit_message(embed=embed, view=self, attachments=[_f] if _f else [])
+
+    async def _goto(self, interaction: discord.Interaction, target: str):
+        if target == "__hub__":
+            await _show_guild_hub(interaction, self.dest_key, self.portrait_url)
+            return
+        if target == "reward_yes":
+            await self._reward(interaction)
+            return
+        self.node = target
+        self._build()
+        await self._edit(interaction)
+
+    async def _str_duel(self, interaction: discord.Interaction):
+        prof   = load_json(DATA_FILE, default={}).get(pkey(interaction.user.id), {})
+        my_str = prof.get("stats", {}).get("STR", 0)
+        my_die = random.randint(1, 20)
+        my     = my_die + my_str
+        npc    = random.randint(1, 20) + 3          # NPC bonus +3
+        if interaction.guild:
+            record_roll(interaction.guild.id, interaction.user.id,
+                        nat20=(my_die == 20), nat1=(my_die == 1), is_check=True)
+        cap = f"-# 💪 Páka — ty **{my}** ({my_die}+{my_str} STR) vs. on **{npc}**"
+        if my > npc:                                # remíza → NPC vyhrává
+            self.node = "reward"
+            text = f"{cap}  ✔️\n\n„…Ubohé. Odejdi pryč.“"
+        else:
+            self.node = "duel_lose"
+            text = f"{cap}  ❌\n\n„Máš ruce jako párátka… Pche.“"
+        self._build()
+        await self._edit(interaction, text)
+
+    async def _reward(self, interaction: discord.Interaction):
+        uid  = pkey(interaction.user.id)
+        data = load_json(DATA_FILE, default={})
+        prof = data.setdefault(uid, {})
+        if not prof.get("rohac_reward"):
+            add_gold(interaction.user.id, 30)
+            prof["rohac_reward"] = True
+            save_json(DATA_FILE, data)
+            text = ("„A už mě nech být.“\n\n**+30 🪙**\n\n"
+                    "*„Díky.“ Vezmeš zlato a otočíš se k odchodu.*")
+        else:
+            text = "„Už jsem ti dal dost. Zmiz.“"
+        self.node = "reward_done"
+        self._build()
+        await self._edit(interaction, text)
+
+
+async def _show_npc_rohac(interaction: discord.Interaction, dest_key: str, portrait_url: str | None = None):
+    view  = HornedDialogueView(dest_key, portrait_url, node="intro")
+    embed = view._embed()
+    _f    = _attach(embed, "npc_rohac.png")
+    await interaction.response.edit_message(embed=embed, view=view, attachments=[_f] if _f else [])
+
+
 # Registr handlerů NPC (musí být až po definici funkcí)
 _NPC_HANDLERS = {
     "runar":     _show_npc_runar,
     "trpaslici": _show_npc_trpaslici,
+    "rohac":     _show_npc_rohac,
 }
 
 
