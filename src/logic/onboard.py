@@ -2019,7 +2019,8 @@ class CharismaRollView(discord.ui.View):
 
 # Registr NPC v síni — přidat dalšího = přidat položku + handler do _NPC_HANDLERS
 GUILD_NPCS = [
-    {"id": "runar", "label": "Promluvit s runovým mágem", "emoji": "🔮"},
+    {"id": "runar",     "label": "Promluvit s runovým mágem", "emoji": "🔮"},
+    {"id": "trpaslici", "label": "Přisednout k trpaslíkům",    "emoji": "🍺"},
 ]
 
 
@@ -2238,9 +2239,170 @@ class RunarMonologueView(discord.ui.View):
         await _show_guild_hub(interaction, self.dest_key, self.portrait_url)
 
 
+# ── NPC: Trpaslíci z Kazad'horu (větvený dialog + CHA check o láhev) ───────────
+_DWARF_TITLE = "🍺  Trpaslíci z Kazad'horu"
+_DWARF_NODES = {
+    "intro": {
+        "text": "*Podsaditá parta trpaslíků u stolu zvedne korbele. Ten největší — "
+                "rusý plnovous, nos jak brambora — na tebe zamává.*\n\n"
+                "„Helehme se! Ty seš tu novej, co? **Herdek fagot**, vypadáš jak "
+                "čerstvě vytaženej z kejdy!“",
+        "opts": [("Já jsem…", "borin"), ("…mlčet", "borin")],
+    },
+    "borin": {
+        "text": "„Já jsem **Borin**, tamhle **Thrain**, **Gundrik** a nejmenší z nás – "
+                "**Dwalin**. Banda jak z Kazad'horu, heh!“\n\n"
+                "„Jsme dobrodruzi, zrovna jako ty, chlapče. A máme tu železný pravidlo: "
+                "**prvně chlast, pak práce!** Tak co, dáš si štamprli, než ti kejdy zmrznou?“",
+        "opts": [("Jo s chutí", "drink1"), ("Nepiju", "nodrink"), ("…", "nodrink")],
+    },
+    "drink1": {
+        "text": "*Borin ti naleje štamprli staré trpasličí pálenky — tak silné, že by "
+                "probudila i mrtvýho gryfa. Pořádně tě to prohnalo.*",
+        "opts": [("To je síla!", "drink2"), ("…", "drink2")],
+    },
+    "drink2": {
+        "text": "„Heh! To je kvalitní trpasličí pálenka od našich bratří z **Kazad'horu**. "
+                "Ne žádnej patok, co tu ta kočka rozlejvá.“",
+        "opts": [("Kazad'hor?", "lore"), ("…mlčet", "lore")],
+    },
+    "lore": {
+        "text": "„Ejhle kejhák, ty jsi o Kazad'horu fakt neslyšel?! Největší trpasličí "
+                "město široko daleko!“\n\n"
+                "„Hluboko v dole stejnýho jména — tam, kde kámen zpívá a kov se rodí. "
+                "Náš domov, naše pýcha… naše špajzka na pivo!“",
+        "opts": [("Jak se dostanu do Kazad'horu?", "teleport")],
+    },
+    "teleport": {
+        "text": "„Jo, tvoje největší šance je koupit si jeden z těch nablýskanejch "
+                "**teleportačních svitků**. Lidi je prodávaj draze, ale funguje to. "
+                "Teda… pokud máš trochu štěstí.“",
+        "opts": [("🧪 „Ta pálenka byla dobrá…“", "cha")],
+    },
+    "cha": {
+        "kind": "cha",
+        "text": "*Pálenka ti ještě hřeje v krku. Možná kdybys trpaslíky správně upoval, "
+                "ukápla by ti láhev na cestu…*",
+    },
+    "nodrink": {
+        "text": "*Trpaslíci se napijí bez tebe.*\n\n"
+                "„No jak chceš, tvoje smůla. Ty toho moc nenamluvíš, co? **Herdek fagot**, "
+                "takovej tichej typ…“",
+        "opts": [("Rozhlédnout se", "minihub")],
+    },
+    "minihub": {
+        "text": "„Tak co ještě potřebuješ, chlapče?“",
+        "opts": [("Potřebuju lepší zbraň", "zbran"),
+                 ("Potřebuju práci", "prace"),
+                 ("Odejít od trpaslíků", "farewell")],
+    },
+    "zbran": {
+        "text": "„Eh, slyšel jsem, že **lumenijskej kovář** prodává základní vybavení… "
+                "Šunt to je, ale poslouží.“\n\n"
+                "„Jestli chceš pořádný železo, zajdi za nějakým trpasličím kovářem! "
+                "Ti vědí, jak ukovat čepel, co ti neupadne po prvním švihu.“",
+        "opts": [("Zpět", "minihub")],
+    },
+    "prace": {
+        "text": "„A nech mě hádat — jsi zelenáč, na kterýho nezbyl úkol na nástěnce.“\n\n"
+                "„Zkus **strážnici**, prej tam platěj slušně. Nebo se poptej lidí po městě — "
+                "někdo vždycky potřebuje pomocnou ruku… nebo meč.“",
+        "opts": [("Zpět", "minihub")],
+    },
+    "farewell": {
+        "text": "„Tak se měj, chlapče! A někdy se zastav — ať z tebe není takovej "
+                "němej balvan.“",
+        "opts": [("Zpět do síně", "__hub__")],
+    },
+}
+
+
+class DwarfDialogueView(discord.ui.View):
+    """Větvený dialog s trpaslíky — pití/nepití, lore, CHA check o láhev, mini-hub."""
+    def __init__(self, dest_key: str, portrait_url: str | None = None, node: str = "intro"):
+        super().__init__(timeout=600)
+        self.dest_key = dest_key
+        self.portrait_url = portrait_url
+        self.node = node
+        self._build()
+
+    def _build(self):
+        self.clear_items()
+        n = _DWARF_NODES[self.node]
+        if n.get("kind") == "cha":
+            b = discord.ui.Button(label="🧪 Zkusit to  ·  1d20 + CHA", style=discord.ButtonStyle.primary)
+            b.callback = self._cha_roll
+            self.add_item(b)
+            return
+        for label, target in n["opts"]:
+            b = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary)
+            b.callback = self._make_nav(target)
+            self.add_item(b)
+
+    def _embed(self, text: str | None = None):
+        return discord.Embed(title=_DWARF_TITLE,
+                             description=text if text is not None else _DWARF_NODES[self.node]["text"],
+                             color=0xb9770e)
+
+    def _make_nav(self, target: str):
+        async def cb(interaction: discord.Interaction):
+            await self._goto(interaction, target)
+        return cb
+
+    async def _goto(self, interaction: discord.Interaction, target: str):
+        if target == "__hub__":
+            await _show_guild_hub(interaction, self.dest_key, self.portrait_url)
+            return
+        self.node = target
+        self._build()
+        embed = self._embed()
+        _f = _attach(embed, "npc_trpaslici.png")
+        await interaction.response.edit_message(embed=embed, view=self, attachments=[_f] if _f else [])
+
+    async def _cha_roll(self, interaction: discord.Interaction):
+        uid  = pkey(interaction.user.id)
+        data = load_json(DATA_FILE, default={})
+        prof = data.setdefault(uid, {})
+        cha  = prof.get("stats", {}).get("CHA", 0)
+        die  = random.randint(1, 20)
+        total = die + cha
+        if interaction.guild:
+            record_roll(interaction.guild.id, interaction.user.id,
+                        nat20=(die == 20), nat1=(die == 1), hit24=(total >= 24), is_check=True)
+        cap = f"-# 🧪 Charisma — 1d20 + CHA → **{die}** + {cha} = **{total}**"
+        already = prof.get("dwarf_bottle", False)
+        if total >= 11 and not already:
+            add_registered_item_to_profile(prof, "trpaslici_palenka", 1)
+            prof["dwarf_bottle"] = True
+            save_json(DATA_FILE, data)
+            text = (f"{cap}  ✔️\n\n**+1 Trpasličí pálenka**\n\n"
+                    "„Tak si vezmi láhev — na nás, na přátelství! Ať ti to zahřeje kejdy, "
+                    "až budeš bloudit po světě.“")
+        elif total >= 11 and already:
+            text = (f"{cap}  ✔️\n\n„Ale ale, jednu láhev už u tebe vidím! "
+                    "Nebuď chamtivec, chlapče. Heh!“")
+        else:
+            text = (f"{cap}  ❌\n\n„Taky že je to kvalita! Ale láhev si nech zajít chuť — "
+                    "ta je jen pro nás, heh.“")
+        # výsledek + rovnou mini-hub tlačítka
+        self.node = "minihub"
+        self._build()
+        embed = self._embed(text)
+        _f = _attach(embed, "npc_trpaslici.png")
+        await interaction.response.edit_message(embed=embed, view=self, attachments=[_f] if _f else [])
+
+
+async def _show_npc_trpaslici(interaction: discord.Interaction, dest_key: str, portrait_url: str | None = None):
+    view  = DwarfDialogueView(dest_key, portrait_url, node="intro")
+    embed = view._embed()
+    _f    = _attach(embed, "npc_trpaslici.png")
+    await interaction.response.edit_message(embed=embed, view=view, attachments=[_f] if _f else [])
+
+
 # Registr handlerů NPC (musí být až po definici funkcí)
 _NPC_HANDLERS = {
-    "runar": _show_npc_runar,
+    "runar":     _show_npc_runar,
+    "trpaslici": _show_npc_trpaslici,
 }
 
 
