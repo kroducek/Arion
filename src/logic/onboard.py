@@ -2499,7 +2499,7 @@ class HornedDialogueView(discord.ui.View):
         npc    = random.randint(1, 20) + 3          # NPC bonus +3
         if interaction.guild:
             record_roll(interaction.guild.id, interaction.user.id,
-                        nat20=(my_die == 20), nat1=(my_die == 1), is_check=True)
+                        nat20=(my_die == 20), nat1=(my_die == 1), hit24=(my >= 24), is_check=True)
         cap = f"-# 💪 Páka — ty **{my}** ({my_die}+{my_str} STR) vs. on **{npc}**"
         if my > npc:                                # remíza → NPC vyhrává
             self.node = "reward"
