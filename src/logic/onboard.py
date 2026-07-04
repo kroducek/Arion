@@ -61,7 +61,6 @@ def _attach(embed, fname):
     return discord.File(path, filename=att)
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey, ensure_active
-from src.core.dnd.roll_stats import record_roll
 
 # ── Konfigurace ───────────────────────────────────────────────────────────────
 
@@ -218,10 +217,39 @@ def _arion_reply_embed(text: str, title: str = "🐱  Arion") -> discord.Embed:
     return e
 
 
-class StoryBeatView(discord.ui.View):
+class TutorialView(discord.ui.View):
+    """Základ tutoriálových views — ošetří timeout i chyby, ať hráč neuvízne."""
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        self.message = interaction.message
+        return True
+
+    async def on_timeout(self) -> None:
+        for item in self.children:
+            if hasattr(item, "disabled"):
+                item.disabled = True
+        msg = getattr(self, "message", None)
+        if msg is not None:
+            try:
+                await msg.edit(content="⏳ *Vypršel čas nečinnosti — spusť tutorial znovu.*", view=self)
+            except Exception:
+                pass
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item) -> None:
+        logger.exception("[onboard] chyba ve view (%s): %s", type(item).__name__, error)
+        text = "⚠️ Něco se pokazilo. Zkus to prosím znovu — nebo spusť tutorial znovu."
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(text, ephemeral=True)
+            else:
+                await interaction.response.send_message(text, ephemeral=True)
+        except Exception:
+            pass
+
+
+class StoryBeatView(TutorialView):
     """Vizuální beat (obrázek/text) + jediné tlačítko → on_continue(interaction)."""
     def __init__(self, on_continue, *, label="Pokračovat", emoji="▶️"):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self._on_continue = on_continue
         self.go.label = label
         self.go.emoji = emoji
@@ -231,14 +259,14 @@ class StoryBeatView(discord.ui.View):
         await self._on_continue(interaction)
 
 
-class DialogChoiceView(discord.ui.View):
+class DialogChoiceView(TutorialView):
     """
     Dialog s volbami. choices = [(label, Arionova_odpověď)].
     Po kliknutí ukáže Arionovu reakci na danou volbu + view z next_view_factory().
     Volby konvergují do stejného pokračování (žádné větvení stavu).
     """
     def __init__(self, choices, next_view_factory, *, reply_title="🐱  Arion"):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self._next        = next_view_factory
         self._reply_title = reply_title
         for label, reply in choices:
@@ -259,9 +287,9 @@ class DialogChoiceView(discord.ui.View):
         return cb
 
 
-class TutorialPartOneView(discord.ui.View):
+class TutorialPartOneView(TutorialView):
     def __init__(self):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
 
     @discord.ui.button(label="Naslouchat hlasu", style=discord.ButtonStyle.primary, emoji="✨")
     async def listen(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -304,9 +332,9 @@ class TutorialPartOneView(discord.ui.View):
 # KROK 2 — Rozcestník
 # ══════════════════════════════════════════════════════════════════════════════
 
-class ActSelectionView(discord.ui.View):
+class ActSelectionView(TutorialView):
     def __init__(self):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
 
     @discord.ui.button(label="Já už příběh znám", style=discord.ButtonStyle.success, emoji="⏩")
     async def old_player(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -323,9 +351,9 @@ class ActSelectionView(discord.ui.View):
 # KROK 3 — Rekapitulace (volitelné)
 # ══════════════════════════════════════════════════════════════════════════════
 
-class RecapView(discord.ui.View):
+class RecapView(TutorialView):
     def __init__(self, page=1):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.page = page
         self._update_buttons()
 
@@ -416,9 +444,9 @@ async def _show_destination_choice_followup(interaction: discord.Interaction):
     await interaction.edit_original_response(embed=_destination_embed(), view=DestinationView())
 
 
-class DestinationView(discord.ui.View):
+class DestinationView(TutorialView):
     def __init__(self):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
 
     @discord.ui.button(label="Lumenie", style=discord.ButtonStyle.primary, emoji="🏰")
     async def choose_lumenie(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -514,9 +542,9 @@ async def _start_encounter(interaction: discord.Interaction, dest_key: str):
     )
 
 
-class EncounterView(discord.ui.View):
+class EncounterView(TutorialView):
     def __init__(self, dest_key: str, arion_roll: int):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key   = dest_key
         self.arion_roll = arion_roll
         self._rolled    = False
@@ -575,9 +603,9 @@ class EncounterView(discord.ui.View):
 # KROK 6 — Arion: Představení
 # ══════════════════════════════════════════════════════════════════════════════
 
-class ArionIntroView(discord.ui.View):
+class ArionIntroView(TutorialView):
     def __init__(self, dest_key: str, dodged: bool = True):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key = dest_key
         self.dodged   = dodged
 
@@ -613,9 +641,9 @@ class ArionIntroView(discord.ui.View):
         )
 
 
-class GuildEntranceView(discord.ui.View):
+class GuildEntranceView(TutorialView):
     def __init__(self, dest_key: str):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key = dest_key
 
     @discord.ui.button(label="Představit se", style=discord.ButtonStyle.primary, emoji="✍️")
@@ -675,9 +703,9 @@ class NameRegistrationModal(discord.ui.Modal, title="Jak se jmenuješ?"):
 # KROK 7b — Arion prozkoumává / check roll
 # ══════════════════════════════════════════════════════════════════════════════
 
-class ArionLeapView(discord.ui.View):
+class ArionLeapView(TutorialView):
     def __init__(self, dest_key: str, char_name: str):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key  = dest_key
         self.char_name = char_name
 
@@ -735,9 +763,9 @@ class ArionLeapView(discord.ui.View):
 # KROK 7c — Arion: Paměť?
 # ══════════════════════════════════════════════════════════════════════════════
 
-class ArionMemoryView(discord.ui.View):
+class ArionMemoryView(TutorialView):
     def __init__(self, dest_key: str):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key = dest_key
 
     async def _go_hm(self, interaction: discord.Interaction, title: str, description: str):
@@ -798,9 +826,9 @@ class ArionMemoryView(discord.ui.View):
         )
 
 
-class ArionHmView(discord.ui.View):
+class ArionHmView(TutorialView):
     def __init__(self, dest_key: str):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key = dest_key
 
     @discord.ui.button(label="Hm?", style=discord.ButtonStyle.secondary, emoji="❓")
@@ -887,9 +915,9 @@ async def _show_stats_intro(interaction: discord.Interaction, dest_key: str):
     )
 
 
-class EnterGuildInsideView(discord.ui.View):
+class EnterGuildInsideView(TutorialView):
     def __init__(self, dest_key: str):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key = dest_key
 
     @discord.ui.button(label="Jít dovnitř", style=discord.ButtonStyle.success, emoji="🚪")
@@ -921,9 +949,9 @@ class EnterGuildInsideView(discord.ui.View):
 # KROK 8c — Motivace (View + Modal)
 # ══════════════════════════════════════════════════════════════════════════════
 
-class MotivationView(discord.ui.View):
+class MotivationView(TutorialView):
     def __init__(self, dest_key: str, stats: dict | None = None, portrait_url: str | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key    = dest_key
         self.stats       = stats
         self.portrait_url = portrait_url
@@ -973,7 +1001,7 @@ STAT_FULL_NAMES = {
     "WIS": "Moudrost",
 }
 
-class TutorialSPView(discord.ui.View):
+class TutorialSPView(TutorialView):
     """Hráč rozděluje 3 AP přímo v tutorialu — každý klik = 1 AP do atributu."""
 
     def __init__(
@@ -983,7 +1011,7 @@ class TutorialSPView(discord.ui.View):
         portrait_url: str | None,
         sp_remaining: int,
     ):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key     = dest_key
         self.stats        = stats or {}
         self.portrait_url = portrait_url
@@ -1107,9 +1135,9 @@ class TutorialSPView(discord.ui.View):
 # KROK 8b — Portrét
 # ══════════════════════════════════════════════════════════════════════════════
 
-class PortraitView(discord.ui.View):
+class PortraitView(TutorialView):
     def __init__(self, dest_key: str, stats: dict | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key = dest_key
         self.stats    = stats
 
@@ -1270,9 +1298,9 @@ async def _show_card_handover(
 
 # ── Stats dialog — "Co to znamená?" ───────────────────────────────────────────
 
-class StatsDialogView(discord.ui.View):
+class StatsDialogView(TutorialView):
     def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key    = dest_key
         self.portrait_url = portrait_url
 
@@ -1302,9 +1330,9 @@ class StatsDialogView(discord.ui.View):
 # KROK 9 — Zlaté a rozloučení s Arion
 # ══════════════════════════════════════════════════════════════════════════════
 
-class GoldView(discord.ui.View):
+class GoldView(TutorialView):
     def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key     = dest_key
         self.portrait_url = portrait_url
 
@@ -1351,10 +1379,10 @@ class GoldView(discord.ui.View):
 # NOVÝ FLOW: LOADOUT → PERKY
 # ══════════════════════════════════════════════════════════════════════════════
 
-class LoadoutSelectView(discord.ui.View):
+class LoadoutSelectView(TutorialView):
     """Hráč si vybere loadout (vybavení + prvotní perk)."""
     def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key = dest_key
         self.portrait_url = portrait_url
         self._build_buttons()
@@ -1411,10 +1439,10 @@ async def _show_loadout_confirm(interaction, dest_key, portrait_url, loadout_id)
     )
 
 
-class LoadoutConfirmView(discord.ui.View):
+class LoadoutConfirmView(TutorialView):
     """Potvrzení loadoutu před výběrem perků."""
     def __init__(self, dest_key, portrait_url, loadout_id):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key = dest_key
         self.portrait_url = portrait_url
         self.loadout_id = loadout_id
@@ -1480,11 +1508,11 @@ async def _show_perk_selection(
     await interaction.response.edit_message(embed=embed, view=view)
 
 
-class PerkSelectionView(discord.ui.View):
+class PerkSelectionView(TutorialView):
     """Hráč si vybere 4 perky."""
     def __init__(self, dest_key: str, portrait_url: str | None, loadout_id: str,
                  selected_perks: list[str], max_perks: int):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key = dest_key
         self.portrait_url = portrait_url
         self.loadout_id = loadout_id
@@ -1732,10 +1760,10 @@ async def _finalize_tutorial(
 # KROK 10 — Nástěnka, vize, charisma hod
 # ══════════════════════════════════════════════════════════════════════════════
 
-class BulletinBoardView(discord.ui.View):
+class BulletinBoardView(TutorialView):
     """Hráč si všimne nástěnky a turnajového seznamu."""
     def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key     = dest_key
         self.portrait_url = portrait_url
 
@@ -1766,10 +1794,10 @@ class BulletinBoardView(discord.ui.View):
         )
 
 
-class VisionView(discord.ui.View):
+class VisionView(TutorialView):
     """Hráč se zamotá — krátká vize. Může se pokusit si vzpomenout přes /check."""
     def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key     = dest_key
         self.portrait_url = portrait_url
 
@@ -1800,10 +1828,10 @@ class VisionView(discord.ui.View):
         )
 
 
-class MemoryCheckView(discord.ui.View):
+class MemoryCheckView(TutorialView):
     """/check — hráč hází vlastní roll, Arion sleduje WIS/INT/INS."""
     def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key     = dest_key
         self.portrait_url = portrait_url
         self._checked     = False
@@ -1816,13 +1844,6 @@ class MemoryCheckView(discord.ui.View):
         self._checked   = True
         button.disabled = True
         await interaction.response.defer()
-
-        # Vždy nat20 WIS — hráč si v tutorialu vždy vzpomene
-        if interaction.guild:
-            record_roll(
-                interaction.guild.id, interaction.user.id,
-                nat20=True, nat1=False, hit24=False, is_check=True,
-            )
 
         arion_line = (
             "*Arion zvedne oči od knihy a chvíli tě ostražitě sleduje bez pohnutí.*\n"
@@ -1878,141 +1899,6 @@ class MemoryCheckView(discord.ui.View):
             logger.exception(f"[onboard] Nepodařilo se zapsat vzpomínku: {e}")
 
 
-class CollisionTransitionView(discord.ui.View):
-    """Přechod — vzpamatuješ se a narazíš do muže s rohy."""
-    def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
-        self.dest_key     = dest_key
-        self.portrait_url = portrait_url
-
-    @discord.ui.button(label="Vzpamatovat se", style=discord.ButtonStyle.secondary, emoji="👁️")
-    async def snap_back(self, interaction: discord.Interaction, button: discord.ui.Button):
-        desc = (
-            "Jsi stále v cechu a\n\n"
-            "*nikdo si toho nevšiml.*\n\n"
-            "Nebo.. skoro nikdo...\n\n"
-            "Ramenem narazíš do mohutného muže, "
-            "který právě míjí dveře. Ohlédne se. "
-            "Na hlavě má démonické rohy a na tebe se "
-            "valí pivo z právě vyleveného džbánu."
-        )
-        embed = discord.Embed(
-            title="💥  ..",
-            description=desc,
-            color=0x2c3e50,
-        )
-        if self.portrait_url:
-            embed.set_thumbnail(url=self.portrait_url)
-        embed.set_footer(text="⭐ Aurionis  ·  Charisma check.")
-
-        await interaction.response.edit_message(
-            embed=embed,
-            view=CharismaRollView(dest_key=self.dest_key, portrait_url=self.portrait_url),
-        )
-
-
-class CharismaRollView(discord.ui.View):
-    """Hráč hází na Charisma — skutečný náhodný roll."""
-    def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
-        self.dest_key     = dest_key
-        self.portrait_url = portrait_url
-        self._rolled      = False
-
-    @discord.ui.button(label="🎲 Hodit na Charisma  ·  1d20 + CHA", style=discord.ButtonStyle.primary)
-    async def roll_charisma(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self._rolled:
-            await interaction.response.defer()
-            return
-        self._rolled    = True
-        button.disabled = True
-        await interaction.response.defer()
-
-        die = random.randint(1, 20)
-        try:
-            _prof = load_json(DATA_FILE, default={}).get(pkey(interaction.user.id), {})
-            cha   = _prof.get("stats", {}).get("CHA", 0)
-        except Exception:
-            cha = 0
-        roll     = die + cha          # celkový výsledek (1d20 + CHA)
-        roll_str = f"**{die}**" + (f" + **{cha}** CHA = **{roll}**" if cha else "")
-        nat20    = die == 20
-        nat1     = die == 1
-
-        if interaction.guild:
-            record_roll(
-                interaction.guild.id, interaction.user.id,
-                nat20=nat20, nat1=nat1, hit24=(roll >= 24), is_check=True,
-            )
-
-        if nat20:
-            arion_note = (
-                "*Arion zvedne oči od knihy. Jen se podívá. Pak se vrátí ke čtení.*\n"
-                "*'..Hmm.'*"
-            )
-            outcome_title = "🌟  Přirozená 20!"
-            outcome_desc  = (
-                f"Hodil/a jsi **{die}** — přirozená dvacítka.\n\n"
-                "Zvládneš situaci s překvapivou elegancí. "
-                "Muž s rohy se zastaví, přeměří tě — pak se krátce zasměje.\n\n"
-                "***\"První den v práci, co? "
-                "Myslím si, že to vyhraje rank 1 Hao.\"***\n\n"
-                "*Odejde. Ani se neohlédne.*\n\n"
-                f"{arion_note}"
-            )
-        elif nat1:
-            arion_note = (
-                "*Arion se podívá přes okraj knihy. Zavře ji.*\n"
-                "*'..Hmm.'*"
-            )
-            outcome_title = "💀  Přirozená 1."
-            outcome_desc  = (
-                f"Hodil/a jsi **{die}** — přirozená jednička.\n\n"
-                "Snažíš se omluvit — a při tom omylem strčíš do korbelu. "
-                "Zbytek piva se vylije přímo na muže s rohy.\n\n"
-                "*Vedlejší stůl, který už sledoval celou situaci, umírá smíchy.*\n\n"
-                "Muž se na tebe dlouze podívá. Nic neřekne. Odejde.\n\n"
-                f"{arion_note}"
-            )
-        elif roll >= 10:
-            arion_note = (
-                "*Arion si tě přeměří pohledem a vrátí se ke knize.*\n"
-                "*'Ujde to.'*"
-            )
-            outcome_title = "✅  Úspěch."
-            outcome_desc  = (
-                f"Hodil/a jsi {roll_str} — úspěch.\n\n"
-                "Rychle se zorientuješ a omluvíš se dřív než situace stihne eskalovat.\n\n"
-                "***\"V pohodě, sakra.. dávej větší pozor.\"***\n\n"
-                "*Muž s rohy si prorazí cestu ke dveřím. Situace zažehnána.*\n\n"
-                f"{arion_note}"
-            )
-        else:
-            arion_note = "*Arion se ani nepodívá.*"
-            outcome_title = "❌  Neúspěch."
-            outcome_desc  = (
-                f"Hodil/a jsi {roll_str} — neúspěch.\n\n"
-                "Něco zakoktáš. Ani sám nevíš co.\n\n"
-                "*Muž s rohy zakroutí očima a odejde naštvaně pryč.*\n\n"
-                f"{arion_note}"
-            )
-
-        emoji = "🌟" if nat20 else ("💀" if nat1 else "🎲")
-        embed = discord.Embed(
-            title=f"{emoji}  {outcome_title}",
-            description=f"-# *Charisma check — 1d20 + CHA*\n\n{outcome_desc}",
-            color=0x27ae60 if roll >= 10 else 0xe74c3c,
-        )
-        if self.portrait_url:
-            embed.set_thumbnail(url=self.portrait_url)
-        embed.set_footer(text="⭐ Aurionis")
-
-        await interaction.edit_original_response(
-            embed=embed,
-            view=FinalEnterView(dest_key=self.dest_key, portrait_url=self.portrait_url),
-        )
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # KROK 10b — Síň cechu: NPC hub (promluv si s lidmi, nebo odejdi)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2063,10 +1949,10 @@ class _GuildNPCButton(discord.ui.Button):
         await handler(interaction, self.dest_key, self.portrait_url)
 
 
-class GuildHubView(discord.ui.View):
+class GuildHubView(TutorialView):
     """Hub v síni cechu — dynamická NPC tlačítka + odchod."""
     def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key = dest_key
         self.portrait_url = portrait_url
         for npc in GUILD_NPCS:
@@ -2089,10 +1975,10 @@ class GuildHubView(discord.ui.View):
         )
 
 
-class _GuildHubEntryView(discord.ui.View):
+class _GuildHubEntryView(TutorialView):
     """Přechod z vize zpět do reality → síň cechu (hub)."""
     def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key = dest_key
         self.portrait_url = portrait_url
 
@@ -2101,10 +1987,10 @@ class _GuildHubEntryView(discord.ui.View):
         await _show_guild_hub(interaction, self.dest_key, self.portrait_url)
 
 
-class _BackToHubView(discord.ui.View):
+class _BackToHubView(TutorialView):
     """Návrat do síně cechu po rozhovoru s NPC."""
     def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key = dest_key
         self.portrait_url = portrait_url
 
@@ -2115,9 +2001,8 @@ class _BackToHubView(discord.ui.View):
 
 # ── NPC: Runový mág ───────────────────────────────────────────────────────────
 async def _show_npc_runar(interaction: discord.Interaction, dest_key: str, portrait_url: str | None = None):
-    embed = discord.Embed(
-        title="🔮  Runový mág",
-        description=(
+    if _npc_first_visit(interaction.user.id, "runar"):
+        desc = (
             "*Podsaditý muž v bohatě zdobeném rouchu se opírá o sloup. "
             "V dlani mu líně víří chuchvalec fialové runové energie. "
             "Když si tě všimne, zazubí se od ucha k uchu.*\n\n"
@@ -2125,9 +2010,13 @@ async def _show_npc_runar(interaction: discord.Interaction, dest_key: str, portr
             "**„Vypadáš zmateně. Ty vůbec nevypadáš jako někdo, kdo ví, jak funguje magie… "
             "Já jo. Hehe.“**\n\n"
             "**„Ale neboj, já nejsem žádnej chamtivec… Chceš to slyšet?“**"
-        ),
-        color=0x8e44ad,
-    )
+        )
+    else:
+        desc = (
+            "*Mág tě zmerčí a protáhne obličej.*\n\n"
+            "**„Á, ty zvědavče. Zase runy? No dobrá — ptej se…“**"
+        )
+    embed = discord.Embed(title="🔮  Runový mág", description=desc, color=0x8e44ad)
     _f = _attach(embed, "npc_runar.png")
     embed.set_footer(text="⭐ Aurionis  ·  Co uděláš?")
     await interaction.response.edit_message(
@@ -2137,9 +2026,9 @@ async def _show_npc_runar(interaction: discord.Interaction, dest_key: str, portr
     )
 
 
-class NpcRunarView(discord.ui.View):
+class NpcRunarView(TutorialView):
     def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key = dest_key
         self.portrait_url = portrait_url
 
@@ -2199,10 +2088,10 @@ _RUNAR_MONO = [
 ]
 
 
-class RunarMonologueView(discord.ui.View):
+class RunarMonologueView(TutorialView):
     """Ukecanej monolog runového mága — stránkování + interjekce (přeruší tě)."""
     def __init__(self, dest_key: str, portrait_url: str | None = None, page: int = 0):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key = dest_key
         self.portrait_url = portrait_url
         self.page = page
@@ -2241,6 +2130,86 @@ class RunarMonologueView(discord.ui.View):
 
 
 # ── NPC: Trpaslíci z Kazad'horu (větvený dialog + CHA check o láhev) ───────────
+def _npc_first_visit(user_id: int, npc_id: str) -> bool:
+    """True při prvním rozhovoru s NPC (a poznamená si to). False = už s ním mluvil."""
+    data = load_json(DATA_FILE, default={})
+    prof = data.setdefault(pkey(user_id), {})
+    seen = prof.setdefault("tutorial_npc_seen", [])
+    if npc_id in seen:
+        return False
+    seen.append(npc_id)
+    save_json(DATA_FILE, data)
+    return True
+
+
+class NodeDialogueView(TutorialView):
+    """Sdílený základ uzlových NPC dialogů (větvení + speciální akce).
+    Podtřída dodá: TITLE, COLOR, IMAGE, NODES a metody _kind_<x> / _target_<x>."""
+    TITLE = ""
+    COLOR = 0x000000
+    IMAGE = None
+    NODES: dict = {}
+
+    def __init__(self, dest_key: str, portrait_url: str | None = None, node: str = "intro"):
+        super().__init__(timeout=1800)
+        self.dest_key = dest_key
+        self.portrait_url = portrait_url
+        self.node = node
+        self._build()
+
+    def _build(self):
+        self.clear_items()
+        n = self.NODES[self.node]
+        kind = n.get("kind")
+        if kind:
+            b = discord.ui.Button(label=n.get("button", "Pokračovat"),
+                                  style=n.get("button_style", discord.ButtonStyle.primary))
+            b.callback = self._make_kind(kind)
+            self.add_item(b)
+            return
+        for label, target in n["opts"]:
+            b = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary)
+            b.callback = self._make_nav(target)
+            self.add_item(b)
+
+    def _embed(self, text: str | None = None):
+        return discord.Embed(
+            title=self.TITLE,
+            description=text if text is not None else self.NODES[self.node]["text"],
+            color=self.COLOR,
+        )
+
+    async def _edit(self, interaction: discord.Interaction, text: str | None = None):
+        embed = self._embed(text)
+        _f = _attach(embed, self.IMAGE)
+        await interaction.response.edit_message(embed=embed, view=self, attachments=[_f] if _f else [])
+
+    async def _goto_node(self, interaction: discord.Interaction, node: str, text: str | None = None):
+        self.node = node
+        self._build()
+        await self._edit(interaction, text)
+
+    def _make_nav(self, target: str):
+        async def cb(interaction: discord.Interaction):
+            await self._goto(interaction, target)
+        return cb
+
+    def _make_kind(self, kind: str):
+        async def cb(interaction: discord.Interaction):
+            await getattr(self, f"_kind_{kind}")(interaction)
+        return cb
+
+    async def _goto(self, interaction: discord.Interaction, target: str):
+        if target == "__hub__":
+            await _show_guild_hub(interaction, self.dest_key, self.portrait_url)
+            return
+        handler = getattr(self, f"_target_{target}", None)
+        if handler is not None:
+            await handler(interaction)
+            return
+        await self._goto_node(interaction, target)
+
+
 _DWARF_TITLE = "🍺  Trpaslíci z Kazad'horu"
 _DWARF_NODES = {
     "intro": {
@@ -2249,6 +2218,10 @@ _DWARF_NODES = {
                 "„Helehme se! Ty seš tu novej, co? **Herdek fagot**, vypadáš jak "
                 "čerstvě vytaženej z kejdy!“",
         "opts": [("Já jsem…", "borin"), ("…mlčet", "borin")],
+    },
+    "reintro": {
+        "text": "„Á, zas ty! **Herdek fagot**, dáš si eště jednu?“",
+        "opts": [("Jo s chutí", "drink1"), ("Nepiju", "nodrink"), ("…", "nodrink")],
     },
     "borin": {
         "text": "„Já jsem **Borin**, tamhle **Thrain**, **Gundrik** a nejmenší z nás – "
@@ -2281,7 +2254,7 @@ _DWARF_NODES = {
         "opts": [("🧪 „Ta pálenka byla dobrá…“", "cha")],
     },
     "cha": {
-        "kind": "cha",
+        "kind": "cha", "button": "🧪 Zkusit to  ·  1d20 + CHA",
         "text": "*Pálenka ti ještě hřeje v krku. Možná kdybys trpaslíky správně upoval, "
                 "ukápla by ti láhev na cestu…*",
     },
@@ -2318,58 +2291,20 @@ _DWARF_NODES = {
 }
 
 
-class DwarfDialogueView(discord.ui.View):
-    """Větvený dialog s trpaslíky — pití/nepití, lore, CHA check o láhev, mini-hub."""
-    def __init__(self, dest_key: str, portrait_url: str | None = None, node: str = "intro"):
-        super().__init__(timeout=600)
-        self.dest_key = dest_key
-        self.portrait_url = portrait_url
-        self.node = node
-        self._build()
+class DwarfDialogueView(NodeDialogueView):
+    """Trpaslíci — pití/nepití, lore, CHA check o láhev, mini-hub."""
+    TITLE = _DWARF_TITLE
+    COLOR = 0xb9770e
+    IMAGE = "npc_trpaslici.png"
+    NODES = _DWARF_NODES
 
-    def _build(self):
-        self.clear_items()
-        n = _DWARF_NODES[self.node]
-        if n.get("kind") == "cha":
-            b = discord.ui.Button(label="🧪 Zkusit to  ·  1d20 + CHA", style=discord.ButtonStyle.primary)
-            b.callback = self._cha_roll
-            self.add_item(b)
-            return
-        for label, target in n["opts"]:
-            b = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary)
-            b.callback = self._make_nav(target)
-            self.add_item(b)
-
-    def _embed(self, text: str | None = None):
-        return discord.Embed(title=_DWARF_TITLE,
-                             description=text if text is not None else _DWARF_NODES[self.node]["text"],
-                             color=0xb9770e)
-
-    def _make_nav(self, target: str):
-        async def cb(interaction: discord.Interaction):
-            await self._goto(interaction, target)
-        return cb
-
-    async def _goto(self, interaction: discord.Interaction, target: str):
-        if target == "__hub__":
-            await _show_guild_hub(interaction, self.dest_key, self.portrait_url)
-            return
-        self.node = target
-        self._build()
-        embed = self._embed()
-        _f = _attach(embed, "npc_trpaslici.png")
-        await interaction.response.edit_message(embed=embed, view=self, attachments=[_f] if _f else [])
-
-    async def _cha_roll(self, interaction: discord.Interaction):
+    async def _kind_cha(self, interaction: discord.Interaction):
         uid  = pkey(interaction.user.id)
         data = load_json(DATA_FILE, default={})
         prof = data.setdefault(uid, {})
         cha  = prof.get("stats", {}).get("CHA", 0)
         die  = random.randint(1, 20)
         total = die + cha
-        if interaction.guild:
-            record_roll(interaction.guild.id, interaction.user.id,
-                        nat20=(die == 20), nat1=(die == 1), hit24=(total >= 24), is_check=True)
         cap = f"-# 🧪 Charisma — 1d20 + CHA → **{die}** + {cha} = **{total}**"
         already = prof.get("dwarf_bottle", False)
         if total >= 11 and not already:
@@ -2385,18 +2320,14 @@ class DwarfDialogueView(discord.ui.View):
         else:
             text = (f"{cap}  ❌\n\n„Taky že je to kvalita! Ale láhev si nech zajít chuť — "
                     "ta je jen pro nás, heh.“")
-        # výsledek + rovnou mini-hub tlačítka
-        self.node = "minihub"
-        self._build()
-        embed = self._embed(text)
-        _f = _attach(embed, "npc_trpaslici.png")
-        await interaction.response.edit_message(embed=embed, view=self, attachments=[_f] if _f else [])
+        await self._goto_node(interaction, "minihub", text)
 
 
 async def _show_npc_trpaslici(interaction: discord.Interaction, dest_key: str, portrait_url: str | None = None):
-    view  = DwarfDialogueView(dest_key, portrait_url, node="intro")
+    node  = "intro" if _npc_first_visit(interaction.user.id, "trpaslici") else "reintro"
+    view  = DwarfDialogueView(dest_key, portrait_url, node=node)
     embed = view._embed()
-    _f    = _attach(embed, "npc_trpaslici.png")
+    _f    = _attach(embed, view.IMAGE)
     await interaction.response.edit_message(embed=embed, view=view, attachments=[_f] if _f else [])
 
 
@@ -2407,6 +2338,12 @@ _HORNED_NODES = {
         "text": "*U stolu sedí muž s démonními rohy, korbel v ruce. Když k němu "
                 "přistoupíš, líně zvedne pohled.*\n\n**„Co chceš?“**",
         "opts": [("Jsem tu nový…", "r_new"), ("Čau.", "r_hi"), ("…mlčet.", "r_silent")],
+    },
+    "reintro": {
+        "text": "*Sotva k němu zamíříš, protočí panenky.*\n\n„Zase ty? Co zas chceš.“",
+        "opts": [("Jsi protivnej jak prdel.", "provoke"),
+                 ("Nebudu tě rušit.", "__hub__"),
+                 ("…mlčet.", "stare")],
     },
     "r_new":    {"text": "„To mě nezajímá. Odprejskni.“", "opts": [("(zůstat stát)", "escalate")]},
     "r_hi":     {"text": "„Tak vidíš, pozdravil jsi. Můžeš jít.“", "opts": [("(zůstat stát)", "escalate")]},
@@ -2430,7 +2367,8 @@ _HORNED_NODES = {
         "opts": [("Přijímám.", "duel"), ("Nechci.", "decline")],
     },
     "decline": {"text": "„A pak kdo je tu slaboch.“", "opts": [("Odejít", "__hub__")]},
-    "duel": {"kind": "str_duel",
+    "duel": {"kind": "str_duel", "button": "💪 Zapřít se  ·  1d20 + STR",
+             "button_style": discord.ButtonStyle.danger,
              "text": "*Opřete se lokty o stůl. Sevře ti dlaň jak svěrák a zakření se.*"},
     "reward": {"text": "…", "opts": [("A co odměna za výhru?", "reward_ask"), ("(Odejít)", "__hub__")]},
     "reward_ask": {"text": "„…Když ti dám odměnu, dáš mi pokoj?“",
@@ -2443,74 +2381,26 @@ _HORNED_NODES = {
 }
 
 
-class HornedDialogueView(discord.ui.View):
+class HornedDialogueView(NodeDialogueView):
     """Muž s rohy — provokační strom, páka na STR, jednorázová odměna."""
-    def __init__(self, dest_key: str, portrait_url: str | None = None, node: str = "intro"):
-        super().__init__(timeout=600)
-        self.dest_key = dest_key
-        self.portrait_url = portrait_url
-        self.node = node
-        self._build()
+    TITLE = _HORNED_TITLE
+    COLOR = 0x922b21
+    IMAGE = "npc_rohac.png"
+    NODES = _HORNED_NODES
 
-    def _build(self):
-        self.clear_items()
-        n = _HORNED_NODES[self.node]
-        if n.get("kind") == "str_duel":
-            b = discord.ui.Button(label="💪 Zapřít se  ·  1d20 + STR", style=discord.ButtonStyle.danger)
-            b.callback = self._str_duel
-            self.add_item(b)
-            return
-        for label, target in n["opts"]:
-            b = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary)
-            b.callback = self._make_nav(target)
-            self.add_item(b)
-
-    def _embed(self, text: str | None = None):
-        return discord.Embed(title=_HORNED_TITLE,
-                             description=text if text is not None else _HORNED_NODES[self.node]["text"],
-                             color=0x922b21)
-
-    def _make_nav(self, target: str):
-        async def cb(interaction: discord.Interaction):
-            await self._goto(interaction, target)
-        return cb
-
-    async def _edit(self, interaction, text=None):
-        embed = self._embed(text)
-        _f = _attach(embed, "npc_rohac.png")
-        await interaction.response.edit_message(embed=embed, view=self, attachments=[_f] if _f else [])
-
-    async def _goto(self, interaction: discord.Interaction, target: str):
-        if target == "__hub__":
-            await _show_guild_hub(interaction, self.dest_key, self.portrait_url)
-            return
-        if target == "reward_yes":
-            await self._reward(interaction)
-            return
-        self.node = target
-        self._build()
-        await self._edit(interaction)
-
-    async def _str_duel(self, interaction: discord.Interaction):
+    async def _kind_str_duel(self, interaction: discord.Interaction):
         prof   = load_json(DATA_FILE, default={}).get(pkey(interaction.user.id), {})
         my_str = prof.get("stats", {}).get("STR", 0)
         my_die = random.randint(1, 20)
         my     = my_die + my_str
         npc    = random.randint(1, 20) + 3          # NPC bonus +3
-        if interaction.guild:
-            record_roll(interaction.guild.id, interaction.user.id,
-                        nat20=(my_die == 20), nat1=(my_die == 1), hit24=(my >= 24), is_check=True)
         cap = f"-# 💪 Páka — ty **{my}** ({my_die}+{my_str} STR) vs. on **{npc}**"
         if my > npc:                                # remíza → NPC vyhrává
-            self.node = "reward"
-            text = f"{cap}  ✔️\n\n„…Ubohé. Odejdi pryč.“"
+            await self._goto_node(interaction, "reward", f"{cap}  ✔️\n\n„…Ubohé. Odejdi pryč.“")
         else:
-            self.node = "duel_lose"
-            text = f"{cap}  ❌\n\n„Máš ruce jako párátka… Pche.“"
-        self._build()
-        await self._edit(interaction, text)
+            await self._goto_node(interaction, "duel_lose", f"{cap}  ❌\n\n„Máš ruce jako párátka… Pche.“")
 
-    async def _reward(self, interaction: discord.Interaction):
+    async def _target_reward_yes(self, interaction: discord.Interaction):
         uid  = pkey(interaction.user.id)
         data = load_json(DATA_FILE, default={})
         prof = data.setdefault(uid, {})
@@ -2522,15 +2412,14 @@ class HornedDialogueView(discord.ui.View):
                     "*„Díky.“ Vezmeš zlato a otočíš se k odchodu.*")
         else:
             text = "„Už jsem ti dal dost. Zmiz.“"
-        self.node = "reward_done"
-        self._build()
-        await self._edit(interaction, text)
+        await self._goto_node(interaction, "reward_done", text)
 
 
 async def _show_npc_rohac(interaction: discord.Interaction, dest_key: str, portrait_url: str | None = None):
-    view  = HornedDialogueView(dest_key, portrait_url, node="intro")
+    node  = "intro" if _npc_first_visit(interaction.user.id, "rohac") else "reintro"
+    view  = HornedDialogueView(dest_key, portrait_url, node=node)
     embed = view._embed()
-    _f    = _attach(embed, "npc_rohac.png")
+    _f    = _attach(embed, view.IMAGE)
     await interaction.response.edit_message(embed=embed, view=view, attachments=[_f] if _f else [])
 
 
@@ -2580,9 +2469,9 @@ DEST_HUB_WELCOME = {
     "draci_skala": f'*„Dračí skála.“* řekneš si pro sebe. Všechno ti připadá zvláštní.{_HUB_FOOTER}',
 }
 
-class FinalEnterView(discord.ui.View):
+class FinalEnterView(TutorialView):
     def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key     = dest_key
         self.portrait_url = portrait_url
         dest = DESTINATIONS[dest_key]
@@ -2753,9 +2642,9 @@ class FinalEnterView(discord.ui.View):
 # KROK 12 — Příjezd: Ulice
 # ══════════════════════════════════════════════════════════════════════════════
 
-class ArrivalStreetView(discord.ui.View):
+class ArrivalStreetView(TutorialView):
     def __init__(self, dest_key: str, portrait_url: str | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
         self.dest_key    = dest_key
         self.portrait_url = portrait_url
 
@@ -2814,9 +2703,9 @@ class ArrivalStreetView(discord.ui.View):
         )
 
 
-class FirstStepView(discord.ui.View):
+class FirstStepView(TutorialView):
     def __init__(self):
-        super().__init__(timeout=600)
+        super().__init__(timeout=1800)
 
     @discord.ui.button(label="Vykročit", style=discord.ButtonStyle.secondary, emoji="🚶")
     async def first_step(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2837,7 +2726,7 @@ class FirstStepView(discord.ui.View):
 # VAROVÁNÍ — před spuštěním tutoriálu
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TutorialWarningView(discord.ui.View):
+class TutorialWarningView(TutorialView):
     """Statický embed v tutoriálovém kanálu — flow pokračuje jako ephemeral."""
 
     def __init__(self):
