@@ -7,7 +7,6 @@ import random
 from datetime import date
 
 from src.utils.paths import PERKS, PLAYER_PERKS, ODHALENI_POOL as ODHALENI_POOL_FILE
-from src.database.characters import pkey
 from src.utils.audit import log_action
 from src.utils.json_utils import load_json, save_json
 
@@ -687,7 +686,20 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     # ── Výzbroj (potřebné pro use itemů, learnable) ───────────────────────────
+    "crossbow_1": {
+        "unlocks_skill": {"id": "kuse", "name": "Kuše", "gives": None},
+        "name": "Boj s kuší I.",
+        "group": "Výzbroj",
+        "passive": True,
+        "unique": False,
+        "learnable": True,
+        "desc": "Potřebný perk pro použití kuší.",
+        "subdesc": None,
+        "cooldown_uses": 0,
+        "cooldown_type": None,
+    },
     "one_handed_1": {
+        "unlocks_skill": {"id": "jednorucni", "name": "Jednoruční zbraně", "gives": None},
         "name": "Boj s jednoručními zbraněmi I.",
         "group": "Výzbroj",
         "passive": True,
@@ -721,6 +733,7 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "two_handed_1": {
+        "unlocks_skill": {"id": "obourucni", "name": "Obouruční zbraně", "gives": None},
         "name": "Boj s obouručními zbraněmi I.",
         "group": "Výzbroj",
         "passive": True,
@@ -754,6 +767,7 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "light_armor_1": {
+        "unlocks_skill": {"id": "lehka_zbroj", "name": "Lehká zbroj", "gives": None},
         "name": "Lehké brnění I.",
         "group": "Výzbroj",
         "passive": True,
@@ -787,6 +801,7 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "heavy_armor_1": {
+        "unlocks_skill": {"id": "tezka_zbroj", "name": "Těžká zbroj", "gives": None},
         "name": "Těžké brnění I.",
         "group": "Výzbroj",
         "passive": True,
@@ -820,6 +835,7 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "dual_wielding_1": {
+        "unlocks_skill": {"id": "dve_zbrane", "name": "Boj se dvěma zbraněmi", "gives": None},
         "name": "Boj dvěma zbraněmi I.",
         "group": "Výzbroj",
         "passive": True,
@@ -853,6 +869,7 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "archery_1": {
+        "unlocks_skill": {"id": "lukostrelba", "name": "Lukostřelba", "gives": None},
         "name": "Lukostřelba I.",
         "group": "Výzbroj",
         "passive": True,
@@ -885,7 +902,20 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_uses": 0,
         "cooldown_type": None,
     },
+    "rune_basics_1": {
+        "unlocks_skill": {"id": "kruh_runy", "name": "Runové kruhy", "gives": "mana"},
+        "name": "Základy run I.",
+        "group": "Magie",
+        "passive": True,
+        "unique": False,
+        "learnable": True,
+        "desc": "Základní ovládání runové magie — hůlky a svitky.",
+        "subdesc": None,
+        "cooldown_uses": 0,
+        "cooldown_type": None,
+    },
     "fire_magic_1": {
+        "unlocks_skill": {"id": "kruh_ohen", "name": "Ohnivé kruhy", "gives": "mana"},
         "name": "Ohnivá magie I.",
         "group": "Magie",
         "passive": True,
@@ -897,6 +927,7 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "ice_magic_1": {
+        "unlocks_skill": {"id": "kruh_led", "name": "Ledové kruhy", "gives": "mana"},
         "name": "Ledová magie I.",
         "group": "Magie",
         "passive": True,
@@ -908,6 +939,7 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "healing_magic_1": {
+        "unlocks_skill": {"id": "kruh_leceni", "name": "Léčivé kruhy", "gives": "mana"},
         "name": "Uzdravovací magie I.",
         "group": "Magie",
         "passive": True,
@@ -1319,7 +1351,7 @@ class OdhaleniRollView(discord.ui.View):
 
     @discord.ui.button(label="🎲 Hodit 1d20", style=discord.ButtonStyle.primary, custom_id="odhaleni_roll")
     async def roll_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if pkey(interaction.user.id) != self.uid:
+        if str(interaction.user.id) != self.uid:
             await interaction.response.send_message("*Tohle není tvoje aktivace.*", ephemeral=True)
             return
         if self.done:
@@ -1413,7 +1445,7 @@ class OdhaleniView(discord.ui.View):
 
     def _make_callback(self, element: str, name: str, base_fury: int, size: str):
         async def callback(interaction: discord.Interaction):
-            if pkey(interaction.user.id) != self.uid:
+            if str(interaction.user.id) != self.uid:
                 await interaction.response.send_message("*Tohle není tvoje aktivace.*", ephemeral=True)
                 return
             if self.chosen:
@@ -1464,7 +1496,7 @@ class PerksCog(commands.Cog):
         target      = member or interaction.user
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(pkey(target.id), player_data)
+        player      = _get_player(str(target.id), player_data)
         owned       = player["perks"]
 
         if not owned:
@@ -1548,7 +1580,7 @@ class PerksCog(commands.Cog):
             await interaction.response.send_message(f"Perk `{perk_id}` neexistuje.", ephemeral=True)
             return
         player_data = load_player_perks()
-        player      = _get_player(pkey(member.id), player_data)
+        player      = _get_player(str(member.id), player_data)
         if perk_id in player["perks"]:
             await interaction.response.send_message(
                 f"{member.mention} už má **{all_perks[perk_id]['name']}**.", ephemeral=True
@@ -1634,7 +1666,7 @@ class PerksCog(commands.Cog):
     async def give_random_perk(self, interaction: discord.Interaction, member: discord.Member):
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(pkey(member.id), player_data)
+        player      = _get_player(str(member.id), player_data)
         owned       = set(player["perks"])
         available   = [pid for pid, p in all_perks.items() if pid not in owned and not p.get("unique") and not p.get("learnable")]
 
@@ -1687,7 +1719,7 @@ class PerksCog(commands.Cog):
             await interaction.response.send_message(f"Perk `{perk_id}` neexistuje.", ephemeral=True)
             return
         player_data = load_player_perks()
-        player      = _get_player(pkey(member.id), player_data)
+        player      = _get_player(str(member.id), player_data)
         if perk_id in player["perks"]:
             await interaction.response.send_message(
                 f"{member.mention} už má **{all_perks[perk_id]['name']}**.", ephemeral=True
@@ -1810,7 +1842,7 @@ class PerksCog(commands.Cog):
     @app_commands.describe(perk_id="ID perku", member="Hráč")
     async def perk_remove(self, interaction: discord.Interaction, perk_id: str, member: discord.Member):
         player_data = load_player_perks()
-        player      = _get_player(pkey(member.id), player_data)
+        player      = _get_player(str(member.id), player_data)
         if perk_id not in player["perks"]:
             all_perks = load_perks()
             name = all_perks.get(perk_id, {}).get("name", perk_id)
@@ -1832,7 +1864,7 @@ class PerksCog(commands.Cog):
     async def perk_reset(self, interaction: discord.Interaction, member: discord.Member | None = None):
         player_data = load_player_perks()
         if member:
-            player = _get_player(pkey(member.id), player_data)
+            player = _get_player(str(member.id), player_data)
             player["cooldowns"] = {}
             save_player_perks(player_data)
             await interaction.response.send_message(
@@ -1853,7 +1885,7 @@ class PerksCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(pkey(member.id), player_data)
+        player      = _get_player(str(member.id), player_data)
 
         if perk_id not in player["perks"]:
             await interaction.followup.send(f"{member.mention} nemá perk `{perk_id}`.", ephemeral=True)
@@ -2096,7 +2128,7 @@ class PerksCog(commands.Cog):
     async def perk_use(self, interaction: discord.Interaction, perk_id: str):
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(pkey(interaction.user.id), player_data)
+        player      = _get_player(str(interaction.user.id), player_data)
 
         if perk_id not in player["perks"]:
             await interaction.response.send_message("Tento perk nevlastníš.", ephemeral=True)
@@ -2155,7 +2187,7 @@ class PerksCog(commands.Cog):
                 color=0x7B68EE,
             )
             embed.set_footer(text=f"⏳ {_cooldown_bar(used, perk.get('cooldown_uses', 2))} dnes  ·  ⭐ {ARION_NAME}")
-            await interaction.response.send_message(embed=embed, view=OdhaleniView(uid=pkey(interaction.user.id), spirits=selections))
+            await interaction.response.send_message(embed=embed, view=OdhaleniView(uid=str(interaction.user.id), spirits=selections))
             return
 
         embed = _perk_announce_embed(interaction.user, perk_id, perk, used)
@@ -2262,7 +2294,7 @@ class PerksCog(commands.Cog):
     async def perk_owned_autocomplete(self, interaction: discord.Interaction, current: str):
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(pkey(interaction.user.id), player_data)
+        player      = _get_player(str(interaction.user.id), player_data)
         owned       = player["perks"]
         return [
             app_commands.Choice(

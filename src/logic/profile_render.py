@@ -6,11 +6,12 @@ import io, os, random, re
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 try:
-    from src.logic.stats import get_xp_cap, STAT_LABELS, SKILL_LABELS
+    from src.logic.stats import get_xp_cap, STAT_LABELS, _skill_registry, _roman
 except Exception:
     STAT_LABELS  = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
-    SKILL_LABELS = ['Síla', 'Obratnost', 'Magie', 'Výdrž']
     def get_xp_cap(level): return 15000
+    def _skill_registry(): return {}
+    def _roman(n): return str(n)
 
 # ── fonty ─────────────────────────────────────────────────────────────────────
 _FONT_DIRS = ["src/assets/fonts", "/usr/share/fonts/truetype/dejavu",
@@ -295,7 +296,10 @@ def render_stats_card(profile, char_name, portrait_bytes=None):
     d.text((48, y+30), "Atributy", font=_font(19, serif=True), fill=GREY)
     d.text((48, y+58), "    ".join(f"{k} {stats.get(k, 0)}" for k in STAT_LABELS), font=_font(22), fill=(222, 222, 232))
     d.text((48, y+96), "Skilly", font=_font(19, serif=True), fill=GREY)
-    d.text((48, y+124), "    ".join(f"{s} {skills.get(s, 0)}" for s in SKILL_LABELS), font=_font(22), fill=(222, 222, 232))
+    _reg = _skill_registry()
+    _learned = [(sid, lvl) for sid, lvl in skills.items() if lvl]
+    _sk_txt  = "    ".join(f"{_reg.get(sid, {}).get('name', sid)} {_roman(lvl)}" for sid, lvl in _learned) or "—"
+    d.text((48, y+124), _sk_txt[:120], font=_font(22), fill=(222, 222, 232))
     d.text((W-48, y+58), f"AP {profile.get('ap', 0)}", font=_font(24, serif=True), fill=GOLD, anchor="ra")
     d.text((W-48, y+96), f"SP {profile.get('sp', 0)}", font=_font(24, serif=True), fill=GOLD, anchor="ra")
 

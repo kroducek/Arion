@@ -86,13 +86,21 @@ VLIV_REQUIRES = {
     "ROVNOVAHA": "vliv_rovnovaha",
 }
 
-# Mapování skill require klíčů (ASCII) → klíče v profile["skills"]
-SKILL_REQUIRES = {
-    "SILA":      "Síla",
-    "OBRATNOST": "Obratnost",
-    "MAGIE":     "Magie",
-    "VYDRZ":     "Výdrž",
-}
+# Skilly jsou dynamické (odemykané perky) — registr bereme ze stats.
+_ATTR_KEYS = ["STR", "DEX", "INS", "INT", "CHA", "WIS"]
+_VLIV_KEYS = ["SVETLO", "TEMNOTA", "ROVNOVAHA"]
+
+def _skill_reg() -> dict:
+    """skill_id → název (z registru skillů přes stats)."""
+    try:
+        from src.logic.stats import _skill_registry
+        return {sid: meta.get("name", sid) for sid, meta in _skill_registry().items()}
+    except Exception:
+        return {}
+
+def _require_keys() -> list:
+    """Klíče pro requires/stat_bonus: atributy + skill_id + Vliv."""
+    return _ATTR_KEYS + list(_skill_reg().keys()) + _VLIV_KEYS
 
 
 def _req_have(profile: dict, key: str) -> int:
@@ -101,8 +109,8 @@ def _req_have(profile: dict, key: str) -> int:
         return 0
     if key in VLIV_REQUIRES:
         return profile.get(VLIV_REQUIRES[key], 0)
-    if key in SKILL_REQUIRES:
-        return profile.get("skills", {}).get(SKILL_REQUIRES[key], 0)
+    if key in _skill_reg():
+        return profile.get("skills", {}).get(key, 0)
     return profile.get("stats", {}).get(key, 0)
 
 # Kategorie dostupné v /use
@@ -397,20 +405,17 @@ def _sort_ammo_to_toulec(profile: dict, items_db: dict) -> bool:
 def _parse_requires(raw: str) -> dict[str, int]:
     """Parsuje string 'STR:2 INS:1 CHA:3' na dict {stat: hodnota}."""
     result = {}
+    skills = _skill_reg()
     for part in raw.replace(",", " ").split():
         if ":" in part:
             k, _, v = part.partition(":")
             try:
-                result[k.upper()] = int(v)
+                val = int(v)
             except ValueError:
-                pass
+                continue
+            result[k if k in skills else k.upper()] = val
     return result
 
-
-# Klíče pro requires / stat_bonus (staty + Vliv) — pro autocomplete.
-REQUIRE_KEYS = ["STR", "DEX", "CON", "INT", "WIS", "CHA", "INS",
-                "SILA", "OBRATNOST", "MAGIE", "VYDRZ",
-                "SVETLO", "TEMNOTA", "ROVNOVAHA"]
 
 _ATK_TOKEN_RE = re.compile(r"^\d+(d\d+)?$", re.IGNORECASE)
 
@@ -430,10 +435,10 @@ async def _ac_requires(interaction: discord.Interaction, current: str):
         prefix = " ".join(parts[:-1])
         frag   = parts[-1].upper()
         base   = (prefix + " ") if prefix else ""
-        keys   = [k for k in REQUIRE_KEYS if k.startswith(frag)] or REQUIRE_KEYS
+        keys   = [k for k in _require_keys() if k.upper().startswith(frag)] or _require_keys()
     else:
         base = (current + " ") if current.strip() else ""
-        keys = REQUIRE_KEYS
+        keys = _require_keys()
     out = []
     for k in keys:
         val = f"{base}{k}:"
@@ -543,8 +548,8 @@ def _format_bonus(bonus: dict) -> str:
             parts.append(f"{sign}{val} ❤️ max HP")
         elif key == "hunger_max":
             parts.append(f"{sign}{val} 🍖 max hlad")
-        elif key in SKILL_REQUIRES:
-            parts.append(f"{sign}{val} {SKILL_REQUIRES[key]}")
+        elif key in _skill_reg():
+            parts.append(f"{sign}{val} {_skill_reg()[key]}")
         else:
             parts.append(f"{sign}{val} {key}")
     return "  ·  ".join(parts)
@@ -574,9 +579,9 @@ def _apply_equip_bonus(profile: dict, bonus: dict) -> None:
             vliv_changed = True
         elif key in ("mana_max", "hp_max", "hunger_max"):
             profile[key] = profile.get(key, 0) + val
-        elif key in SKILL_REQUIRES:
+        elif key in _skill_reg():
             sk = profile.setdefault("skills", {})
-            sk[SKILL_REQUIRES[key]] = sk.get(SKILL_REQUIRES[key], 0) + val
+            sk[key] = sk.get(key, 0) + val
         else:
             stats[key] = stats.get(key, 0) + val
     if vliv_changed:
@@ -595,9 +600,9 @@ def _remove_equip_bonus(profile: dict, bonus: dict) -> None:
             vliv_changed = True
         elif key in ("mana_max", "hp_max", "hunger_max"):
             profile[key] = max(0, profile.get(key, 0) - val)
-        elif key in SKILL_REQUIRES:
+        elif key in _skill_reg():
             sk = profile.setdefault("skills", {})
-            sk[SKILL_REQUIRES[key]] = max(0, sk.get(SKILL_REQUIRES[key], 0) - val)
+            sk[key] = max(0, sk.get(key, 0) - val)
         else:
             stats[key] = max(0, stats.get(key, 0) - val)
     if vliv_changed:
@@ -881,7 +886,7 @@ def _build_inspect_embed(item_id: str, items_db: dict,
         req_lines = []
         for stat, needed in requires.items():
             have  = _req_have(profile, stat) if profile else 0
-            label = SKILL_REQUIRES.get(stat, stat)
+            label = _skill_reg().get(stat, stat)
             icon  = "✅" if have >= needed else "❌"
             line  = f"{icon} **{label}** {needed}"
             if profile:

@@ -6,7 +6,7 @@ from typing import Optional
 
 from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, ITEMS as ITEMS_FILE, PLAYER_PERKS, ACHIEVEMENTS, REPUTATION, DATA_DIR
 from src.utils.json_utils import load_json, save_json
-from src.logic.stats import get_xp_cap, level_label, add_xp, SKILL_LABELS, STAT_LABELS
+from src.logic.stats import get_xp_cap, level_label, add_xp, STAT_LABELS, _skill_registry, _roman
 from src.logic.profile_render import render_stats_card, render_prukaz_card
 from src.logic.economy import get_balance, set_balance, COIN_SILVER, COIN_STARDUST
 from src.database.characters import pkey
@@ -503,10 +503,15 @@ def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
     attr_line = "    ".join(_ap[:3]) + "\n" + "    ".join(_ap[3:])
     embed.add_field(name="\U0001f3af  Atributy  ·  hody", value=attr_line, inline=False)
 
-    # ── Skilly (vždy všechny 4 — požadavky na výzbroj) ──
-    skills = profile.get("skills", {})
-    _sk = [f"{_SKILL_EMOJI.get(s, '')} **{s}** `{skills.get(s, 0)}`" for s in SKILL_LABELS]
-    skill_line = "    ".join(_sk[:2]) + "\n" + "    ".join(_sk[2:])
+    # ── Skilly (naučené — leveluješ za SP; požadavky na výzbroj/kouzla) ──
+    skills   = profile.get("skills", {})
+    _reg     = _skill_registry()
+    _learned = [(sid, lvl) for sid, lvl in skills.items() if lvl]
+    if _learned:
+        _sk = [f"**{_reg.get(sid, {}).get('name', sid)}** `{_roman(lvl)}`" for sid, lvl in _learned]
+        skill_line = "\n".join("    ".join(_sk[i:i+2]) for i in range(0, len(_sk), 2))
+    else:
+        skill_line = "*Zatím žádné — odemykej je perky a leveluj za SP.*"
     embed.add_field(name="\u2694\ufe0f  Skilly  ·  výzbroj", value=skill_line, inline=False)
 
     # ── Vliv ──
