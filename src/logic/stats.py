@@ -147,8 +147,8 @@ def _skill_registry() -> dict:
     """Globální registr skillů (základní Výdrž + z perků): id → {id,name,gives}."""
     reg = {"vydrz": dict(_BASE_SKILL)}
     try:
-        from src.core.dnd.perks import PERKS
-        for perk in PERKS.values():
+        from src.core.dnd.perks import _SEED_PERKS
+        for perk in _SEED_PERKS.values():
             us = perk.get("unlocks_skill")
             if us and us.get("id"):
                 reg[us["id"]] = us
@@ -160,10 +160,11 @@ def available_skills(user_id: int) -> list:
     """Skilly dostupné hráči: základní Výdrž + skilly odemčené jeho perky."""
     out = {"vydrz": dict(_BASE_SKILL)}
     try:
-        from src.core.dnd.perks import load_player_perks, PERKS
-        owned = load_player_perks().get(pkey(user_id), {}).get("perks", [])
+        from src.core.dnd.perks import load_player_perks, _SEED_PERKS
+        pp    = load_player_perks()
+        owned = pp.get(pkey(user_id), {}).get("perks", []) or pp.get(str(user_id), {}).get("perks", [])
         for pid in owned:
-            us = PERKS.get(pid, {}).get("unlocks_skill")
+            us = _SEED_PERKS.get(pid, {}).get("unlocks_skill")
             if us and us.get("id"):
                 out[us["id"]] = us
     except Exception:

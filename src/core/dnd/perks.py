@@ -973,7 +973,7 @@ _SEED_PERKS: dict[str, dict] = {
     },
 }
 
-_SYNC_FIELDS = {"name", "group", "passive", "unique", "learnable", "desc", "subdesc", "cooldown_uses", "cooldown_type"}
+_SYNC_FIELDS = {"name", "group", "passive", "unique", "learnable", "desc", "subdesc", "cooldown_uses", "cooldown_type", "unlocks_skill"}
 _LEGACY_IDS  = {"terra", "ignis", "zaklady_bendingu", "vaha_svobody"}
 
 # roll_tags a bonus pro seed perky — aplikují se v migraci
