@@ -141,11 +141,15 @@ def _roman(n: int) -> str:
             out += s; n -= v
     return out
 
-_BASE_SKILL = {"id": "vydrz", "name": "Výdrž", "gives": "hp"}  # vždy dostupný
+_BASE_SKILLS = [
+    {"id": "vydrz",  "name": "Výdrž",  "gives": "hp"},    # HP +5/SP & hlad +1/SP
+    {"id": "magie",  "name": "Magie",  "gives": "mana"},  # mana +5/SP
+    {"id": "obrana", "name": "Obrana", "gives": "def"},   # DEF +1/SP
+]
 
 def _skill_registry() -> dict:
     """Globální registr skillů (základní Výdrž + z perků): id → {id,name,gives}."""
-    reg = {"vydrz": dict(_BASE_SKILL)}
+    reg = {s["id"]: dict(s) for s in _BASE_SKILLS}
     try:
         from src.core.dnd.perks import _SEED_PERKS
         for perk in _SEED_PERKS.values():
@@ -158,7 +162,7 @@ def _skill_registry() -> dict:
 
 def available_skills(user_id: int) -> list:
     """Skilly dostupné hráči: základní Výdrž + skilly odemčené jeho perky."""
-    out = {"vydrz": dict(_BASE_SKILL)}
+    out = {s["id"]: dict(s) for s in _BASE_SKILLS}
     try:
         from src.core.dnd.perks import load_player_perks, _SEED_PERKS
         pp    = load_player_perks()
@@ -178,20 +182,21 @@ def skill_meta(user_id: int, skill_id: str):
     return None
 
 def _migrate_skills(p: dict) -> None:
-    """Beta migrace: staré 4 skilly (Síla/Obratnost/Magie/Výdrž) → nový model."""
-    sk = p.setdefault("skills", {})
-    if not any(k in sk for k in ("Síla", "Obratnost", "Magie", "Výdrž")):
+    """Beta migrace na skill model v2 (triangulární škálování; base Výdrž/Magie/Obrana).
+    Zahodí staré skilly, resetuje deriváty a vrátí veškeré vydělané SP k rozdělení."""
+    if p.get("skills_v") == 2:
         return
-    old_sila  = sk.pop("Síla", 0)
-    old_obr   = sk.pop("Obratnost", 0)
-    old_magie = sk.pop("Magie", 0)
-    old_vydrz = sk.pop("Výdrž", 0)
-    if old_vydrz:
-        sk["vydrz"] = sk.get("vydrz", 0) + old_vydrz
-    if old_magie:
-        p["mana_max"] = max(BASE_MANA_MAX, p.get("mana_max", BASE_MANA_MAX) - 5 * old_magie)
-        p["mana_cur"] = min(p.get("mana_cur", 0), p["mana_max"])
-    p["sp"] = p.get("sp", 0) + old_sila + old_obr + old_magie
+    p["skills"]     = {}
+    p["hp_max"]     = BASE_HP_MAX
+    p["hp_cur"]     = min(p.get("hp_cur", BASE_HP_MAX), BASE_HP_MAX)
+    p["mana_max"]   = BASE_MANA_MAX
+    p["mana_cur"]   = min(p.get("mana_cur", 0), BASE_MANA_MAX)
+    p["def_bonus"]  = 0
+    p["hunger_max"] = 10
+    p["hunger_cur"] = min(p.get("hunger_cur", 10), 10)
+    lvl = p.get("level", 0)
+    p["sp"] = START_SP + sum(level_rewards(l)[0] for l in range(1, lvl + 1))
+    p["skills_v"] = 2
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS — profiles.json
@@ -470,28 +475,39 @@ def spend_ap(user_id: int, attr: str, amount: int = 1) -> bool:
     _save(data)
     return True
 
+def sp_cost(level: int) -> int:
+    """SP na povýšení z `level` na `level+1` (triangulární: 1,2,3,…)."""
+    return level + 1
+
 def spend_sp(user_id: int, skill_id: str, amount: int = 1) -> bool:
-    """Utratí SP na odemčený skill (cap SKILL_CAP). gives → derivace HP/many."""
+    """Zvýší skill o 1 level. Cena = (level+1) SP, cap SKILL_CAP.
+    gives (za každý utracený SP): hp→+5 HP & +1 hlad, mana→+5 MP, def→+1 DEF."""
     meta = skill_meta(user_id, skill_id)
     if meta is None:
-        return False  # skill není odemčený (chybí perk)
+        return False
     data = _load()
     uid  = pkey(user_id)
     p    = _profile(data, uid)
-    if p.get("sp", 0) < amount:
-        return False
     skills = p.setdefault("skills", {})
-    if skills.get(skill_id, 0) + amount > SKILL_CAP:
+    cur = skills.get(skill_id, 0)
+    if cur >= SKILL_CAP:
         return False
-    p["sp"] = p.get("sp", 0) - amount
-    skills[skill_id] = skills.get(skill_id, 0) + amount
+    cost = sp_cost(cur)
+    if p.get("sp", 0) < cost:
+        return False
+    p["sp"] = p.get("sp", 0) - cost
+    skills[skill_id] = cur + 1
     gives = meta.get("gives")
-    if gives == "mana":
-        p["mana_max"] = p.get("mana_max", BASE_MANA_MAX) + 5 * amount
-        p["mana_cur"] = p.get("mana_cur", 0) + 5 * amount
-    elif gives == "hp":
-        p["hp_max"] = p.get("hp_max", BASE_HP_MAX) + 5 * amount
-        p["hp_cur"] = p.get("hp_cur", BASE_HP_MAX) + 5 * amount
+    if gives == "hp":
+        p["hp_max"]     = p.get("hp_max", BASE_HP_MAX) + 5 * cost
+        p["hp_cur"]     = p.get("hp_cur", BASE_HP_MAX) + 5 * cost
+        p["hunger_max"] = p.get("hunger_max", 10) + cost
+        p["hunger_cur"] = p.get("hunger_cur", 10) + cost
+    elif gives == "mana":
+        p["mana_max"] = p.get("mana_max", BASE_MANA_MAX) + 5 * cost
+        p["mana_cur"] = p.get("mana_cur", 0) + 5 * cost
+    elif gives == "def":
+        p["def_bonus"] = p.get("def_bonus", 0) + cost
     _save(data)
     return True
 
@@ -851,7 +867,7 @@ class StatPointView(discord.ui.View):
             _names = ", ".join(sk["name"] for sk in available_skills(self.user_id)) or "—"
             body  = (
                 f"Máš **{sp}** volných ⚡ SP.\n\n"
-                f"Klikni na skill, který chceš zvýšit (max **{SKILL_CAP}** na skill).\n"
+                f"Klikni na skill (max **{SKILL_CAP}**). Cena levelu roste: **1, 2, 3…** SP.\n"
                 f"-# Odemčené: {_names}\n"
                 "-# Další skilly odemykáš perky."
             )
@@ -886,13 +902,14 @@ class StatPointView(discord.ui.View):
                         return
                 else:
                     if not spend_sp(self.user_id, tid, 1):
-                        p = _profile(_load(), pkey(self.user_id))
-                        if p.get("sp", 0) <= 0:
-                            msg = "❌ Nemáš žádné volné SP."
-                        elif p.get("skills", {}).get(tid, 0) >= SKILL_CAP:
-                            msg = f"❌ **{name}** je na stropu (max {SKILL_CAP})."
+                        p   = _profile(_load(), pkey(self.user_id))
+                        cur = p.get("skills", {}).get(tid, 0)
+                        if cur >= SKILL_CAP:
+                            msg = f"❌ **{name}** je na maximu (level {SKILL_CAP})."
                         else:
-                            msg = "❌ Tenhle skill teď nejde zvýšit."
+                            cost = sp_cost(cur)
+                            msg = (f"❌ Na **{name} {_roman(cur + 1)}** potřebuješ **{cost} SP** "
+                                   f"(máš {p.get('sp', 0)}).")
                         await interaction.response.send_message(msg, ephemeral=True)
                         return
                 p = _profile(_load(), pkey(self.user_id))
@@ -1008,17 +1025,13 @@ class Stats(commands.Cog):
                     s, a = level_rewards(L)
                     tot_sp += s; tot_ap += a
                 # odeber skill-derived HP/manu (5/bod) než vynulujeme skilly
-                _reg = _skill_registry()
-                for _sid, _lvl in list(p.get("skills", {}).items()):
-                    if not _lvl:
-                        continue
-                    _g = _reg.get(_sid, {}).get("gives")
-                    if _g == "mana":
-                        p["mana_max"] = max(BASE_MANA_MAX, p.get("mana_max", BASE_MANA_MAX) - 5 * _lvl)
-                        p["mana_cur"] = min(p.get("mana_cur", 0), p["mana_max"])
-                    elif _g == "hp":
-                        p["hp_max"] = max(BASE_HP_MAX, p.get("hp_max", BASE_HP_MAX) - 5 * _lvl)
-                        p["hp_cur"] = min(p.get("hp_cur", BASE_HP_MAX), p["hp_max"])
+                p["hp_max"]     = BASE_HP_MAX
+                p["hp_cur"]     = BASE_HP_MAX
+                p["mana_max"]   = BASE_MANA_MAX
+                p["mana_cur"]   = 0
+                p["def_bonus"]  = 0
+                p["hunger_max"] = 10
+                p["hunger_cur"] = 10
                 p["stats"]  = {s: 0 for s in STAT_LABELS}
                 p["skills"] = {}
                 p["ap"] = tot_ap

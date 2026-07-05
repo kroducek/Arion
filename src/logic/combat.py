@@ -83,7 +83,7 @@ def _sync_player_from_profile(mention: str, user_id: int) -> dict | None:
     hp_max  = profile.get("hp_max",  50)
     fur_cur = profile.get("fury_cur", 0)
     fur_max = profile.get("fury_max", 0)
-    def_val = _compute_def_from_equipment(profile, items_db)
+    def_val = _compute_def_from_equipment(profile, items_db) + profile.get("def_bonus", 0)
     return {
         "hp":     hp_cur,
         "max_hp": hp_max,

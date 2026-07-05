@@ -687,7 +687,7 @@ _SEED_PERKS: dict[str, dict] = {
     },
     # ── Výzbroj (potřebné pro use itemů, learnable) ───────────────────────────
     "crossbow_1": {
-        "unlocks_skill": {"id": "kuse", "name": "Kuše", "gives": None},
+        "unlocks_skill": {"id": "strelba", "name": "Střelba", "gives": None},
         "name": "Boj s kuší I.",
         "group": "Výzbroj",
         "passive": True,
@@ -699,7 +699,7 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "one_handed_1": {
-        "unlocks_skill": {"id": "jednorucni", "name": "Jednoruční zbraně", "gives": None},
+        "unlocks_skill": {"id": "lehke_zbrane", "name": "Lehké zbraně", "gives": None},
         "name": "Boj s jednoručními zbraněmi I.",
         "group": "Výzbroj",
         "passive": True,
@@ -733,7 +733,7 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "two_handed_1": {
-        "unlocks_skill": {"id": "obourucni", "name": "Obouruční zbraně", "gives": None},
+        "unlocks_skill": {"id": "tezke_zbrane", "name": "Těžké zbraně", "gives": None},
         "name": "Boj s obouručními zbraněmi I.",
         "group": "Výzbroj",
         "passive": True,
@@ -835,7 +835,6 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "dual_wielding_1": {
-        "unlocks_skill": {"id": "dve_zbrane", "name": "Boj se dvěma zbraněmi", "gives": None},
         "name": "Boj dvěma zbraněmi I.",
         "group": "Výzbroj",
         "passive": True,
@@ -869,7 +868,7 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "archery_1": {
-        "unlocks_skill": {"id": "lukostrelba", "name": "Lukostřelba", "gives": None},
+        "unlocks_skill": {"id": "strelba", "name": "Střelba", "gives": None},
         "name": "Lukostřelba I.",
         "group": "Výzbroj",
         "passive": True,
@@ -903,7 +902,6 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "rune_basics_1": {
-        "unlocks_skill": {"id": "kruh_runy", "name": "Runové kruhy", "gives": "mana"},
         "name": "Základy run I.",
         "group": "Magie",
         "passive": True,
@@ -915,7 +913,6 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "fire_magic_1": {
-        "unlocks_skill": {"id": "kruh_ohen", "name": "Ohnivé kruhy", "gives": "mana"},
         "name": "Ohnivá magie I.",
         "group": "Magie",
         "passive": True,
@@ -927,7 +924,6 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "ice_magic_1": {
-        "unlocks_skill": {"id": "kruh_led", "name": "Ledové kruhy", "gives": "mana"},
         "name": "Ledová magie I.",
         "group": "Magie",
         "passive": True,
@@ -939,7 +935,6 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     "healing_magic_1": {
-        "unlocks_skill": {"id": "kruh_leceni", "name": "Léčivé kruhy", "gives": "mana"},
         "name": "Uzdravovací magie I.",
         "group": "Magie",
         "passive": True,
