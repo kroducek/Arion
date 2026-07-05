@@ -142,9 +142,8 @@ def _roman(n: int) -> str:
     return out
 
 _BASE_SKILLS = [
-    {"id": "vydrz",  "name": "Výdrž",  "gives": "hp"},    # HP +5/SP & hlad +1/SP
-    {"id": "magie",  "name": "Magie",  "gives": "mana"},  # mana +5/SP
-    {"id": "obrana", "name": "Obrana", "gives": "def"},   # DEF +1/SP
+    {"id": "vydrz", "name": "Výdrž", "gives": "hp"},    # HP +5/SP & hlad +1/SP
+    {"id": "magie", "name": "Magie", "gives": "mana"},  # mana +5/SP
 ]
 
 def _skill_registry() -> dict:
