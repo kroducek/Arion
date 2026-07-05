@@ -75,6 +75,7 @@ CATEGORY_GROUPS = [
 # Rychlá mapa: jemná kategorie → index skupiny (pro řazení).
 _CAT_TO_GROUP = {cat: gi for gi, (_e, _l, cats) in enumerate(CATEGORY_GROUPS) for cat in cats}
 _OSTATNI_GROUP = len(CATEGORY_GROUPS) - 1  # fallback skupina pro neznámé/volné itemy
+_CATEGORY_EMOJI = {cat: emoji for emoji, _lbl, cats in CATEGORY_GROUPS for cat in cats}
 
 # Sloty které zabírá full_set item
 FULL_SET_SLOTS = ["helmet", "armor", "boots", "cloak", "belt"]
@@ -857,43 +858,63 @@ def _build_inspect_embed(item_id: str, items_db: dict,
     if not item:
         return None
 
-    hand_label = {"one": "Jednoruční", "two": "Obouruční"}.get(item.get("hand_type", ""), "")
+    cat        = item.get("category", "")
+    cat_emoji  = _CATEGORY_EMOJI.get(cat, "📦")
+    name       = item.get("name", item_id)
+    hand_label = {"one": "jednoruční", "two": "obouruční"}.get(item.get("hand_type", ""), "")
     slot_label = SLOT_LABELS.get(item.get("slot", ""), item.get("slot", ""))
 
-    tags = []
-    if hand_label:
-        tags.append(hand_label)
-    if item.get("atk"):             tags.append(f"⚔️ ATK {item['atk']}")
-    if item.get("def"):             tags.append(f"🛡️ DEF {item['def']}")
-    if item.get("hunger_restore"):  tags.append(f"🍖 +{item['hunger_restore']} hlad")
-    if item.get("hp_restore"):      tags.append(f"❤️ +{item['hp_restore']} HP")
-    if item.get("mana_restore"):    tags.append(f"🔷 +{item['mana_restore']} mana")
-    if item.get("mana_cost"):       tags.append(f"🔷 -{item['mana_cost']} mana (cena)")
-    if item.get("consumable"):      tags.append("consumable")
-    if item.get("stackable"):       tags.append("stackable")
+    embed = discord.Embed(title=f"{cat_emoji}  {name}", color=EMBED_COLOR)
 
-    desc_parts = []
-    if item.get("category"):
-        desc_parts.append(f"-# {item['category']}")
-    if tags:
-        desc_parts.append(f"-# {' · '.join(tags)}")
+    # ── Podtitulek + popis ────────────────────────────────────────────────────
+    sub = []
+    if cat:        sub.append(cat)
+    if hand_label: sub.append(hand_label)
+    if slot_label: sub.append(f"slot: {slot_label}")
+    head = []
+    if sub:
+        head.append("-# " + "  ·  ".join(sub))
     if item.get("desc"):
-        desc_parts.append(f"\n{item['desc']}")
+        head.append(f"\n*{item['desc']}*")
+    embed.description = "\n".join(head) if head else None
+
+    # ── Boj (ATK/DEF) ─────────────────────────────────────────────────────────
+    combat = []
+    if item.get("atk"): combat.append(f"⚔️ Útok **{item['atk']}**")
+    if item.get("def"): combat.append(f"🛡️ Obrana **{item['def']}**")
+    if combat:
+        embed.add_field(name="Boj", value="  ·  ".join(combat), inline=True)
+
+    # ── Při použití (spotřební efekty) ────────────────────────────────────────
+    use = []
+    if item.get("hp_restore"):     use.append(f"❤️ +{item['hp_restore']} HP")
+    if item.get("mana_restore"):   use.append(f"🔷 +{item['mana_restore']} many")
+    if item.get("hunger_restore"): use.append(f"🍖 +{item['hunger_restore']} hladu")
+    if item.get("mana_cost"):      use.append(f"🔷 −{item['mana_cost']} many *(cena)*")
+    if use:
+        embed.add_field(name="Při použití", value="\n".join(use), inline=True)
+
+    # ── Bonusy při equipu ─────────────────────────────────────────────────────
+    bonus = []
+    if item.get("hp_bonus"):   bonus.append(f"❤️ +{item['hp_bonus']} max HP")
+    if item.get("mana_bonus"): bonus.append(f"🔷 +{item['mana_bonus']} max many")
+    for stat, val in (item.get("stat_bonus") or {}).items():
+        lbl  = _skill_reg().get(stat, stat)
+        sign = "＋" if val >= 0 else "−"
+        bonus.append(f"{sign}{abs(val)} {lbl}")
+    if bonus:
+        embed.add_field(name="Bonusy (při equipu)", value="\n".join(bonus), inline=True)
 
     # ── Požadavky ─────────────────────────────────────────────────────────────
-    requires = item.get("requires", {})
-    if requires:
-        req_lines = []
-        for stat, needed in requires.items():
-            have  = _req_have(profile, stat) if profile else 0
-            label = _skill_reg().get(stat, stat)
-            icon  = "✅" if have >= needed else "❌"
-            line  = f"{icon} **{label}** {needed}"
-            if profile:
-                line += f"  *(máš {have})*"
-            req_lines.append(line)
-        desc_parts.append("\n**Požadavky:**\n" + "\n".join(req_lines))
-
+    req_lines = []
+    for stat, needed in (item.get("requires") or {}).items():
+        label = _skill_reg().get(stat, stat)
+        if profile is not None:
+            have = _req_have(profile, stat)
+            icon = "✅" if have >= needed else "❌"
+            req_lines.append(f"{icon} **{label}** {needed}  *(máš {have})*")
+        else:
+            req_lines.append(f"• **{label}** {needed}")
     req_perk = item.get("required_perk")
     if req_perk:
         try:
@@ -901,16 +922,22 @@ def _build_inspect_embed(item_id: str, items_db: dict,
             perk_name = load_perks().get(req_perk, {}).get("name", req_perk)
         except Exception:
             perk_name = req_perk
-        desc_parts.append(f"\n**Potřebný perk:** ⚔️ **{perk_name}**\n-# `{req_perk}`")
+        req_lines.append(f"⭐ perk **{perk_name}**  `{req_perk}`")
+    if req_lines:
+        embed.add_field(name="📋 Požadavky", value="\n".join(req_lines), inline=False)
 
-    embed = discord.Embed(
-        title=item["name"],
-        description="\n".join(desc_parts) if desc_parts else "—",
-        color=EMBED_COLOR,
-    )
+    # ── Vlastnosti ────────────────────────────────────────────────────────────
+    props = []
+    if item.get("consumable"): props.append("🔥 spotřebuje se")
+    if item.get("stackable"):  props.append("📚 stackuje se")
+    _cap = item.get("storage_capacity", 0)
+    if _cap:
+        props.append(f"🎒 úložiště ({'∞' if _cap < 0 else _cap} slotů)")
+    if props:
+        embed.add_field(name="Vlastnosti", value="  ·  ".join(props), inline=False)
+
     embed.set_footer(text=f"ID: {item_id}  ·  slot: {slot_label or '—'}")
     return embed
-
 
 def _entry_line(entry: dict, items_db: dict) -> tuple[int, str]:
     """Vrátí (index_skupiny, vykreslený_řádek) pro jeden předmět."""
