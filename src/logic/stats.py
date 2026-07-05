@@ -166,7 +166,8 @@ def available_skills(user_id: int) -> list:
     try:
         from src.core.dnd.perks import load_player_perks, load_perks, _SEED_PERKS
         pp    = load_player_perks()
-        owned = pp.get(pkey(user_id), {}).get("perks", []) or pp.get(str(user_id), {}).get("perks", [])
+        # perky můžou být rozdělené mezi pkey (uid:slot) i holé uid (migrace/konflikt) → sloučit
+        owned = list(pp.get(pkey(user_id), {}).get("perks", [])) + list(pp.get(str(user_id), {}).get("perks", []))
         db    = load_perks()
         for pid in owned:
             us = db.get(pid, {}).get("unlocks_skill") or _SEED_PERKS.get(pid, {}).get("unlocks_skill")
