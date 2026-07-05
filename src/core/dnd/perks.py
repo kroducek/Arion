@@ -1075,6 +1075,27 @@ def save_perks(data: dict):
     """Thread-safe save perks database."""
     save_json(PERKS, data)
 
+def _deleted_perks_path():
+    try:
+        return os.path.join(os.path.dirname(PERKS), "deleted_perks.json")
+    except Exception:
+        return None
+
+def load_deleted_perks() -> set:
+    p = _deleted_perks_path()
+    if not p:
+        return set()
+    try:
+        return set(load_json(p, default=[]))
+    except Exception:
+        return set()
+
+def save_deleted_perks(ids) -> None:
+    p = _deleted_perks_path()
+    if p:
+        save_json(p, sorted(ids))
+
+
 def load_player_perks() -> dict:
     """Thread-safe load player perks."""
     return load_json(PLAYER_PERKS, default={})
@@ -1129,8 +1150,9 @@ def _migrate_perks():
     for pid in list(perks.keys()):
         if pid == "_connections":
             continue  # přeskoč interní klíč
+    _deleted = load_deleted_perks()
     for pid, seed in _SEED_PERKS.items():
-        if pid not in perks:
+        if pid not in perks and pid not in _deleted:
             perks[pid] = seed
             changed = True
         else:
@@ -1224,42 +1246,6 @@ async def _dm_perk(member: discord.Member, perk: dict, perk_id: str):
         pass
 
 # ── Modaly ────────────────────────────────────────────────────────────────────
-
-class PerkEditModal(discord.ui.Modal, title="Upravit perk"):
-    perk_name  = discord.ui.TextInput(label="Název", max_length=80)
-    perk_group = discord.ui.TextInput(label="Skupina", max_length=40)
-    perk_desc  = discord.ui.TextInput(label="Popis", style=discord.TextStyle.paragraph, max_length=500)
-    perk_subd  = discord.ui.TextInput(label="Subdesc (prázdné = žádný)", style=discord.TextStyle.paragraph, max_length=300, required=False)
-    perk_cd    = discord.ui.TextInput(label="Cooldown (počet/den, 0=žádný)", max_length=3)
-
-    def __init__(self, perk_id: str, perk: dict):
-        super().__init__()
-        self._perk_id       = perk_id
-        self.perk_name.default  = perk.get("name", "")
-        self.perk_group.default = perk.get("group", "")
-        self.perk_desc.default  = perk.get("desc", "")
-        self.perk_subd.default  = perk.get("subdesc") or ""
-        self.perk_cd.default    = str(perk.get("cooldown_uses", 0))
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            cd_uses = int(self.perk_cd.value.strip())
-        except ValueError:
-            cd_uses = 0
-        perks = load_perks()
-        if self._perk_id not in perks:
-            await interaction.response.send_message("Perk mezitím zmizel z databáze.", ephemeral=True)
-            return
-        p = perks[self._perk_id]
-        p["name"]          = self.perk_name.value.strip()
-        p["group"]         = self.perk_group.value.strip()
-        p["desc"]          = self.perk_desc.value.strip()
-        p["subdesc"]       = self.perk_subd.value.strip() or None
-        p["cooldown_uses"] = cd_uses
-        p["cooldown_type"] = "daily" if cd_uses > 0 else None
-        save_perks(perks)
-        await interaction.response.send_message(f"✅ Perk **{p['name']}** upraven.", ephemeral=True)
-
 
 # ── Views ─────────────────────────────────────────────────────────────────────
 
@@ -2013,13 +1999,88 @@ class PerksCog(commands.Cog):
 
     @perk_group.command(name="edit", description="Uprav existující perk v databázi (admin)")
     @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(perk_id="ID perku k úpravě")
-    async def perk_edit(self, interaction: discord.Interaction, perk_id: str):
+    @app_commands.describe(
+        perk_id="ID perku k úpravě",
+        name="Nový název (prázdné = beze změny)",
+        description="Nový popis (prázdné = beze změny)",
+        group="Nová skupina (prázdné = beze změny)",
+        subdesc="Subdesc (prázdné = beze změny, '-' = smazat)",
+        cooldown_uses="Počet použití/den (-1 = beze změny)",
+        passive="Pasivní? true/false (prázdné = beze změny)",
+        unique="Unikátní? true/false (prázdné = beze změny)",
+        learnable="Learnable? true/false (prázdné = beze změny)",
+        unlock_skill_id="ID odemykaného skillu (prázdné = beze změny, 'none' = odebrat)",
+        unlock_skill_name="Název skillu (jen když měníš unlock_skill_id)",
+        unlock_skill_gives="Co skill dává: none / mana / hp",
+    )
+    async def perk_edit(
+        self,
+        interaction: discord.Interaction,
+        perk_id: str,
+        name: str = "",
+        description: str = "",
+        group: str = "",
+        subdesc: str = "",
+        cooldown_uses: int = -1,
+        passive: str = "",
+        unique: str = "",
+        learnable: str = "",
+        unlock_skill_id: str = "",
+        unlock_skill_name: str = "",
+        unlock_skill_gives: str = "none",
+    ):
         perks = load_perks()
         if perk_id not in perks:
-            await interaction.response.send_message(f"Perk `{perk_id}` neexistuje.", ephemeral=True)
+            await interaction.response.send_message(f"❌ Perk `{perk_id}` neexistuje.", ephemeral=True)
             return
-        await interaction.response.send_modal(PerkEditModal(perk_id, perks[perk_id]))
+        p = perks[perk_id]
+        changed = []
+
+        def _b(v):
+            return v.strip().lower() in ("true", "yes", "1")
+
+        if name.strip():
+            p["name"] = name.strip(); changed.append("název")
+        if description.strip():
+            p["desc"] = description.strip(); changed.append("popis")
+        if group.strip():
+            if group.strip() not in GROUP_ORDER:
+                await interaction.response.send_message(
+                    f"❌ Neznámá skupina. Platné: {', '.join(GROUP_ORDER)}", ephemeral=True)
+                return
+            p["group"] = group.strip(); changed.append("skupina")
+        if subdesc.strip():
+            p["subdesc"] = None if subdesc.strip() == "-" else subdesc.strip(); changed.append("subdesc")
+        if cooldown_uses >= 0:
+            p["cooldown_uses"] = cooldown_uses
+            p["cooldown_type"] = "daily" if cooldown_uses > 0 else None
+            changed.append("cooldown")
+        if passive.strip():
+            p["passive"] = _b(passive); changed.append("passive")
+        if unique.strip():
+            p["unique"] = _b(unique); changed.append("unique")
+        if learnable.strip():
+            p["learnable"] = _b(learnable); changed.append("learnable")
+
+        usid = unlock_skill_id.strip().lower().replace(" ", "_")
+        if usid:
+            if usid in ("none", "-", "smazat"):
+                p.pop("unlocks_skill", None); changed.append("skill odebrán")
+            else:
+                _g = unlock_skill_gives.strip().lower()
+                p["unlocks_skill"] = {
+                    "id":    usid,
+                    "name":  unlock_skill_name.strip() or p.get("name", usid),
+                    "gives": _g if _g in ("mana", "hp") else None,
+                }
+                changed.append("odemyká skill")
+
+        if not changed:
+            await interaction.response.send_message("Nic ke změně (všechna pole prázdná).", ephemeral=True)
+            return
+        save_perks(perks)
+        await interaction.response.send_message(
+            f"✅ Perk **{p['name']}** (`{perk_id}`) upraven: {', '.join(changed)}.", ephemeral=True)
 
     @perk_group.command(name="tags", description="Nastav roll_tags pro perk — staty kde se zobrazí pod /roll check (admin)")
     @app_commands.checks.has_permissions(administrator=True)
@@ -2065,7 +2126,10 @@ class PerksCog(commands.Cog):
         name = perks[perk_id].get("name", perk_id)
         del perks[perk_id]
         save_perks(perks)
-        await interaction.response.send_message(f"✅ Perk **{name}** smazán z databáze.", ephemeral=True)
+        if perk_id in _SEED_PERKS:        # ať se seed perk nevrátí startovním re-syncem
+            d = load_deleted_perks(); d.add(perk_id); save_deleted_perks(d)
+        await interaction.response.send_message(
+            f"✅ Perk **{name}** (`{perk_id}`) smazán z databáze.", ephemeral=True)
 
     @perk_group.command(name="detail", description="Zobraz detailní info o perku")
     @app_commands.describe(perk_id="Perk k zobrazení")
