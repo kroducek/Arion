@@ -1152,7 +1152,9 @@ def _migrate_perks():
             continue  # přeskoč interní klíč
     _deleted = load_deleted_perks()
     for pid, seed in _SEED_PERKS.items():
-        if pid not in perks and pid not in _deleted:
+        if pid not in perks:
+            if pid in _deleted:
+                continue          # smazaný seed perk — neobnovuj
             perks[pid] = seed
             changed = True
         else:

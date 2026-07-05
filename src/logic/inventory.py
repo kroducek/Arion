@@ -874,8 +874,9 @@ def _build_inspect_embed(item_id: str, items_db: dict,
     head = []
     if sub:
         head.append("-# " + "  ·  ".join(sub))
-    if item.get("desc"):
-        head.append(f"\n*{item['desc']}*")
+    _flavor = item.get("desc") or item.get("lore_drop")
+    if _flavor:
+        head.append(f"\n*{_flavor}*")
     embed.description = "\n".join(head) if head else None
 
     # ── Boj (ATK/DEF) ─────────────────────────────────────────────────────────
@@ -930,8 +931,12 @@ def _build_inspect_embed(item_id: str, items_db: dict,
     props = []
     if item.get("consumable"): props.append("🔥 spotřebuje se")
     if item.get("stackable"):  props.append("📚 stackuje se")
-    _cap = item.get("storage_capacity", 0)
-    if _cap:
+    _storage = item.get("storage")
+    _cap     = item.get("storage_capacity", 0)
+    if isinstance(_storage, dict):
+        _sc = _storage.get("capacity")
+        props.append(f"{_storage.get('emoji', '🎒')} úložiště ({'∞' if _sc is None else _sc} slotů)")
+    elif _cap:
         props.append(f"🎒 úložiště ({'∞' if _cap < 0 else _cap} slotů)")
     if props:
         embed.add_field(name="Vlastnosti", value="  ·  ".join(props), inline=False)
@@ -1067,67 +1072,23 @@ def _build_storage_embed(profile: dict, member: discord.Member, items_db: dict,
 
 
 def _build_item_detail_embed(entry: dict, items_db: dict) -> discord.Embed:
-    """Plný detail jednoho předmětu (pro select v inventáři)."""
+    """Plný detail jednoho předmětu (pro select v inventáři) — sdílí fancy layout."""
     if entry["type"] != "registered":
-        # Free / custom item — jen jméno
         return discord.Embed(
             title=entry.get("name", "?"),
             description="*Volný předmět bez databázového záznamu.*",
             color=EMBED_COLOR,
         )
 
-    iid     = entry["id"]
-    db_item = items_db.get(iid, {})
-    name    = db_item.get("name", f"[{iid}]")
-    qty     = entry.get("qty", 1)
+    iid   = entry["id"]
+    embed = _build_inspect_embed(iid, items_db) or discord.Embed(
+        title=items_db.get(iid, {}).get("name", f"[{iid}]"), color=EMBED_COLOR)
 
-    embed = discord.Embed(title=name, color=EMBED_COLOR)
-
-    # Lore / popis
-    lore = db_item.get("lore_drop")
-    desc = db_item.get("desc")
-    if desc:
-        embed.description = desc
-    elif lore:
-        embed.description = f"*{lore}*"
-
-    # Statistiky
-    stat_lines = []
-    cat = db_item.get("category")
-    if cat:
-        stat_lines.append(f"📦 Kategorie: **{cat}**")
+    # množství (jen v inventáři)
+    qty = entry.get("qty", 1)
     if qty > 1:
-        stat_lines.append(f"🔢 Množství: **{qty}**")
-    slot = db_item.get("slot")
-    if slot:
-        slot_label = SLOT_LABELS.get(slot, slot)
-        ht = db_item.get("hand_type")
-        ht_str = "  *(obouruční)*" if ht == "two" else ("  *(jednoruční)*" if ht == "one" else "")
-        stat_lines.append(f"📍 Slot: **{slot_label}**{ht_str}")
-    if db_item.get("atk"):
-        stat_lines.append(f"⚔️ Útok: **{db_item['atk']}**")
-    if db_item.get("def"):
-        stat_lines.append(f"🛡️ Obrana: **{db_item['def']}**")
-    mods = _parse_modifiers(db_item)
-    if mods:
-        stat_lines.append(f"✨ Efekty: {mods}")
-    for key, label in [("hp_restore", "❤️ Obnova HP"), ("mana_restore", "🔷 Obnova many"),
-                       ("hunger_restore", "🍖 Obnova hladu"), ("mana_cost", "🔷 Cena many")]:
-        if db_item.get(key):
-            stat_lines.append(f"{label}: **{db_item[key]}**")
-    if db_item.get("stackable"):
-        stat_lines.append("📚 Stackovatelné")
-    if db_item.get("consumable"):
-        stat_lines.append("🍽️ Spotřebuje se při použití")
-
-    storage = db_item.get("storage")
-    if isinstance(storage, dict):
-        scap = storage.get("capacity")
-        scap_str = "∞ neomezené" if scap is None else f"{scap} slotů"
-        stat_lines.append(f"{storage.get('emoji', '📦')} Úložiště: **{scap_str}**")
-
-    if stat_lines:
-        embed.add_field(name="Vlastnosti", value="\n".join(stat_lines), inline=False)
+        _foot = embed.footer.text if embed.footer else ""
+        embed.set_footer(text=(_foot + "  ·  " if _foot else "") + f"×{qty}")
 
     # Runy vyryté na TÉTO instanci itemu (mimo databázi — viz blacksmith.py)
     runes = entry.get("runes")
@@ -1146,29 +1107,8 @@ def _build_item_detail_embed(entry: dict, items_db: dict) -> discord.Embed:
             rune_lines.append(f"{emoji} **{nm}**{dmg} — {r.get('desc', '—')}")
         embed.add_field(name="🔮 Runy", value="\n".join(rune_lines), inline=False)
 
-    # Požadavky
-    req = db_item.get("requires")
-    if req:
-        req_str = "  ·  ".join(f"{k} {v}" for k, v in req.items())
-        embed.add_field(name="📋 Požadavky", value=req_str, inline=False)
-
-    eb = db_item.get("equip_bonus")
-    if eb:
-        bonus_str = _format_bonus(eb)
-        if bonus_str:
-            embed.add_field(name="🌟 Bonus při equipu", value=bonus_str, inline=False)
-
-    rp = db_item.get("required_perk")
-    if rp:
-        embed.add_field(name="🔒 Vyžaduje perk", value=rp, inline=False)
-
-    embed.set_footer(text=f"ID: {iid}")
     return embed
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PERMISSION HELPERS
-# ══════════════════════════════════════════════════════════════════════════════
 
 def _is_dm(interaction: discord.Interaction) -> bool:
     if not interaction.guild:
