@@ -1225,37 +1225,6 @@ async def _dm_perk(member: discord.Member, perk: dict, perk_id: str):
 
 # ── Modaly ────────────────────────────────────────────────────────────────────
 
-class PerkNewModal(discord.ui.Modal, title="Nový perk"):
-    perk_id    = discord.ui.TextInput(label="ID perku (snake_case)", placeholder="napr_novy_perk", max_length=60)
-    perk_name  = discord.ui.TextInput(label="Název", max_length=80)
-    perk_group = discord.ui.TextInput(label="Skupina", placeholder="Furioku / Magie / Světlo / Unikátní / ...", max_length=40)
-    perk_desc  = discord.ui.TextInput(label="Popis", style=discord.TextStyle.paragraph, max_length=500)
-    perk_cd    = discord.ui.TextInput(label="Cooldown (počet/den, 0=žádný)", placeholder="0", max_length=3, default="0")
-
-    async def on_submit(self, interaction: discord.Interaction):
-        pid = self.perk_id.value.strip().lower().replace(" ", "_")
-        try:
-            cd_uses = int(self.perk_cd.value.strip())
-        except ValueError:
-            cd_uses = 0
-        perks = load_perks()
-        perks[pid] = {
-            "name":          self.perk_name.value.strip(),
-            "group":         self.perk_group.value.strip(),
-            "passive":       False,
-            "unique":        False,
-            "desc":          self.perk_desc.value.strip(),
-            "subdesc":       None,
-            "cooldown_uses": cd_uses,
-            "cooldown_type": "daily" if cd_uses > 0 else None,
-            "roll_tags":     [],
-        }
-        save_perks(perks)
-        await interaction.response.send_message(
-            f"✅ Perk **{perks[pid]['name']}** (`{pid}`) přidán do databáze.", ephemeral=True
-        )
-
-
 class PerkEditModal(discord.ui.Modal, title="Upravit perk"):
     perk_name  = discord.ui.TextInput(label="Název", max_length=80)
     perk_group = discord.ui.TextInput(label="Skupina", max_length=40)
@@ -1754,6 +1723,9 @@ class PerksCog(commands.Cog):
         learnable="Lze učit (tier up)? (true/false, default false)",
         cooldown_uses="Počet použití (default 0 pro pasivky)",
         cooldown_type="Typ cooldownu: daily, weekly, combat, turn (default none)",
+        unlock_skill_id="ID skillu, který perk odemyká (snake_case, prázdné = žádný)",
+        unlock_skill_name="Název skillu (prázdné = použije jméno perku)",
+        unlock_skill_gives="Co skill dává: none / mana / hp (default none)",
     )
     async def perk_add(
         self,
@@ -1768,6 +1740,9 @@ class PerksCog(commands.Cog):
         learnable: str = "false",
         cooldown_uses: int = 0,
         cooldown_type: str = "none",
+        unlock_skill_id: str = "",
+        unlock_skill_name: str = "",
+        unlock_skill_gives: str = "none",
     ):
         try:
             # Zvaliduj group
@@ -1807,6 +1782,15 @@ class PerksCog(commands.Cog):
             if learnable_bool:
                 perks[perk_id]["learnable"] = True
 
+            usid = unlock_skill_id.strip().lower().replace(" ", "_")
+            if usid:
+                _gives = unlock_skill_gives.strip().lower()
+                perks[perk_id]["unlocks_skill"] = {
+                    "id":    usid,
+                    "name":  unlock_skill_name.strip() or name,
+                    "gives": _gives if _gives in ("mana", "hp") else None,
+                }
+
             save_perks(perks)
             log_action("perk_add", interaction.user.display_name, "-", perk_id)
 
@@ -1821,6 +1805,10 @@ class PerksCog(commands.Cog):
                 embed.add_field(name="Lze vybavit?", value="Ano", inline=True)
             if learnable_bool:
                 embed.add_field(name="Learnable?", value="Ano", inline=True)
+            if usid:
+                _gtxt = {"mana": " · +mana", "hp": " · +HP"}.get(perks[perk_id]["unlocks_skill"]["gives"], "")
+                embed.add_field(name="Odemyká skill",
+                                value=f"{perks[perk_id]['unlocks_skill']['name']} `{usid}`{_gtxt}", inline=True)
             if cooldown_uses and cooldown_type_final:
                 embed.add_field(name="Cooldown", value=f"{cooldown_uses}x {cooldown_type_final}", inline=True)
             embed.set_footer(text=f"⭐ {ARION_NAME}  ·  Nový perk: {perk_id}")
@@ -2022,11 +2010,6 @@ class PerksCog(commands.Cog):
             if pid != "_connections"
             and (current.lower() in pid.lower() or current.lower() in p.get("name", "").lower())
         ][:25]
-
-    @perk_group.command(name="new", description="Vytvoř nový perk v databázi (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def perk_new(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(PerkNewModal())
 
     @perk_group.command(name="edit", description="Uprav existující perk v databázi (admin)")
     @app_commands.checks.has_permissions(administrator=True)

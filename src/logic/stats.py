@@ -831,7 +831,9 @@ class _CureView(discord.ui.View):
 class StatPointView(discord.ui.View):
     """Rozdávání bodů s přepínačem: Atributy (AP) ↔ Skilly (SP)."""
 
-    def __init__(self, user_id: int, mode: str = "ap"):
+    SKILLS_PER_PAGE = 20  # 4 řady × 5 (5. řada = navigace + přepínač)
+
+    def __init__(self, user_id: int, mode: str = "ap", page: int = 0):
         super().__init__(timeout=300)
         self.user_id = user_id
         self.mode    = mode if mode in ("ap", "sp") else "ap"
@@ -839,20 +841,43 @@ class StatPointView(discord.ui.View):
             targets = [(s, s, _SP_EMOJI.get(s, "")) for s in STAT_LABELS]
         else:
             targets = [(sk["id"], sk["name"], "⚡") for sk in available_skills(self.user_id)]
-        for idx, (tid, name, emo) in enumerate(targets):
+
+        total_pages = max(1, (len(targets) + self.SKILLS_PER_PAGE - 1) // self.SKILLS_PER_PAGE)
+        self.page   = max(0, min(page, total_pages - 1))
+        page_targets = targets[self.page * self.SKILLS_PER_PAGE:(self.page + 1) * self.SKILLS_PER_PAGE]
+
+        for idx, (tid, name, emo) in enumerate(page_targets):
             row = min(idx // 5, 3)
-            btn = discord.ui.Button(
-                label=f"{emo} {name}"[:80],
-                style=discord.ButtonStyle.blurple,
-                row=row,
-            )
+            btn = discord.ui.Button(label=f"{emo} {name}"[:80], style=discord.ButtonStyle.blurple, row=row)
             btn.callback = self._make_cb(tid, name)
             self.add_item(btn)
+
+        # navigace stránek (jen když je stránek víc)
+        if total_pages > 1:
+            prev = discord.ui.Button(label="◀", style=discord.ButtonStyle.secondary, row=4, disabled=self.page == 0)
+            prev.callback = self._make_page(self.page - 1)
+            self.add_item(prev)
+            ind = discord.ui.Button(label=f"{self.page + 1}/{total_pages}", style=discord.ButtonStyle.secondary, row=4, disabled=True)
+            self.add_item(ind)
+            nxt = discord.ui.Button(label="▶", style=discord.ButtonStyle.secondary, row=4, disabled=self.page >= total_pages - 1)
+            nxt.callback = self._make_page(self.page + 1)
+            self.add_item(nxt)
+
         # přepínač režimu
         other = "Skilly (SP)" if self.mode == "ap" else "Atributy (AP)"
         tbtn = discord.ui.Button(label=f"🔁 {other}", style=discord.ButtonStyle.secondary, row=4)
         tbtn.callback = self._toggle
         self.add_item(tbtn)
+
+    def _make_page(self, page: int):
+        async def cb(interaction: discord.Interaction):
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("❌ Toto není tvůj výběr.", ephemeral=True)
+                return
+            view = StatPointView(self.user_id, mode=self.mode, page=page)
+            p    = _profile(_load(), pkey(self.user_id))
+            await interaction.response.edit_message(embed=view._header(p), view=view)
+        return cb
 
     def _header(self, p: dict) -> discord.Embed:
         ap = p.get("ap", 0); sp = p.get("sp", 0); lvl = p.get("level", 0)
@@ -918,7 +943,7 @@ class StatPointView(discord.ui.View):
                     new_val = p.get("stats", {}).get(tid, 1)
                 else:
                     new_val = _roman(p.get("skills", {}).get(tid, 0))
-                view  = StatPointView(self.user_id, mode=self.mode)
+                view  = StatPointView(self.user_id, mode=self.mode, page=getattr(self, "page", 0))
                 embed = view._header(p)
                 embed.description = f"✅ **{name}** → **{new_val}**\n\n" + embed.description
                 await interaction.response.edit_message(embed=embed, view=view)
