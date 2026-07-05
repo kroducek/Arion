@@ -150,11 +150,12 @@ def _skill_registry() -> dict:
     """Globální registr skillů (základní Výdrž + z perků): id → {id,name,gives}."""
     reg = {s["id"]: dict(s) for s in _BASE_SKILLS}
     try:
-        from src.core.dnd.perks import _SEED_PERKS
-        for perk in _SEED_PERKS.values():
-            us = perk.get("unlocks_skill")
-            if us and us.get("id"):
-                reg[us["id"]] = us
+        from src.core.dnd.perks import _SEED_PERKS, load_perks
+        for src in (_SEED_PERKS, load_perks()):     # seed + živá DB (DB vyhrává)
+            for perk in src.values():
+                us = perk.get("unlocks_skill")
+                if us and us.get("id"):
+                    reg[us["id"]] = us
     except Exception:
         logger.exception("[stats] _skill_registry")
     return reg
@@ -163,11 +164,12 @@ def available_skills(user_id: int) -> list:
     """Skilly dostupné hráči: základní Výdrž + skilly odemčené jeho perky."""
     out = {s["id"]: dict(s) for s in _BASE_SKILLS}
     try:
-        from src.core.dnd.perks import load_player_perks, _SEED_PERKS
+        from src.core.dnd.perks import load_player_perks, load_perks, _SEED_PERKS
         pp    = load_player_perks()
         owned = pp.get(pkey(user_id), {}).get("perks", []) or pp.get(str(user_id), {}).get("perks", [])
+        db    = load_perks()
         for pid in owned:
-            us = _SEED_PERKS.get(pid, {}).get("unlocks_skill")
+            us = db.get(pid, {}).get("unlocks_skill") or _SEED_PERKS.get(pid, {}).get("unlocks_skill")
             if us and us.get("id"):
                 out[us["id"]] = us
     except Exception:
