@@ -686,6 +686,18 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_type": None,
     },
     # ── Výzbroj (potřebné pro use itemů, learnable) ───────────────────────────
+    "strelba_1": {
+        "unlocks_skill": {"id": "strelba", "name": "Střelba", "gives": None},
+        "name": "Boj se střelnými zbraněmi I.",
+        "group": "Výzbroj",
+        "passive": True,
+        "unique": False,
+        "learnable": True,
+        "desc": "Potřebný perk pro použití střelných zbraní (luky, kuše, pušky).",
+        "subdesc": None,
+        "cooldown_uses": 0,
+        "cooldown_type": None,
+    },
     "crossbow_1": {
         "unlocks_skill": {"id": "strelba", "name": "Střelba", "gives": None},
         "name": "Boj s kuší I.",

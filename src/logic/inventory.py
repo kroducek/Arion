@@ -76,6 +76,19 @@ CATEGORY_GROUPS = [
 _CAT_TO_GROUP = {cat: gi for gi, (_e, _l, cats) in enumerate(CATEGORY_GROUPS) for cat in cats}
 _OSTATNI_GROUP = len(CATEGORY_GROUPS) - 1  # fallback skupina pro neznámé/volné itemy
 _CATEGORY_EMOJI = {cat: emoji for emoji, _lbl, cats in CATEGORY_GROUPS for cat in cats}
+_VLIV_LABELS = {"TEMNOTA": "Temnota", "SVETLO": "Světlo", "ROVNOVAHA": "Rovnováha"}
+
+def _stat_label(key: str) -> str:
+    """Hezký název klíče: skill → název, Vliv → Temnota/Světlo…, jinak raw."""
+    return _skill_reg().get(key) or _VLIV_LABELS.get(key) or key
+
+_KNOWN_ITEM_FIELDS = {
+    "name", "category", "slot", "hand_type", "atk", "def", "desc", "lore_drop",
+    "hp_restore", "mana_restore", "hunger_restore", "mana_cost",
+    "hp_bonus", "mana_bonus", "stat_bonus", "requires", "required_perk",
+    "consumable", "stackable", "storage", "storage_capacity", "storage_emoji",
+    "roll_tags", "id",
+}
 
 # Sloty které zabírá full_set item
 FULL_SET_SLOTS = ["helmet", "armor", "boots", "cloak", "belt"]
@@ -900,7 +913,7 @@ def _build_inspect_embed(item_id: str, items_db: dict,
     if item.get("hp_bonus"):   bonus.append(f"❤️ +{item['hp_bonus']} max HP")
     if item.get("mana_bonus"): bonus.append(f"🔷 +{item['mana_bonus']} max many")
     for stat, val in (item.get("stat_bonus") or {}).items():
-        lbl  = _skill_reg().get(stat, stat)
+        lbl  = _stat_label(stat)
         sign = "＋" if val >= 0 else "−"
         bonus.append(f"{sign}{abs(val)} {lbl}")
     if bonus:
@@ -909,7 +922,7 @@ def _build_inspect_embed(item_id: str, items_db: dict,
     # ── Požadavky ─────────────────────────────────────────────────────────────
     req_lines = []
     for stat, needed in (item.get("requires") or {}).items():
-        label = _skill_reg().get(stat, stat)
+        label = _stat_label(stat)
         if profile is not None:
             have = _req_have(profile, stat)
             icon = "✅" if have >= needed else "❌"
@@ -940,6 +953,15 @@ def _build_inspect_embed(item_id: str, items_db: dict,
         props.append(f"🎒 úložiště ({'∞' if _cap < 0 else _cap} slotů)")
     if props:
         embed.add_field(name="Vlastnosti", value="  ·  ".join(props), inline=False)
+
+    # ── Catch-all: cokoliv nerozpoznaného (ať se nic neschová) ────────────────
+    extra = []
+    for _k, _v in item.items():
+        if _k in _KNOWN_ITEM_FIELDS or _v in (None, "", [], {}, 0, False):
+            continue
+        extra.append(f"`{_k}`: {_v}")
+    if extra:
+        embed.add_field(name="🔧 Další pole", value="\n".join(extra)[:1024], inline=False)
 
     embed.set_footer(text=f"ID: {item_id}  ·  slot: {slot_label or '—'}")
     return embed
@@ -2346,6 +2368,19 @@ class Inventory(commands.Cog):
             await interaction.followup.send(f"❌ Item `{query}` není v databázi.")
             return
         await interaction.followup.send(embed=embed)
+
+    @inv_db.command(name="raw", description="[DM] Vypíše syrová data itemu (debug).")
+    @app_commands.describe(item_id="ID itemu")
+    @app_commands.autocomplete(item_id=_ac_database_item)
+    async def inv_db_raw(self, interaction: discord.Interaction, item_id: str):
+        items = _load_items()
+        item  = items.get(item_id)
+        if not item:
+            await interaction.response.send_message(f"❌ Item `{item_id}` neexistuje.", ephemeral=True)
+            return
+        import json
+        dump = json.dumps(item, ensure_ascii=False, indent=2)
+        await interaction.response.send_message(f"```json\n{dump[:1900]}\n```", ephemeral=True)
 
     @inv_db.command(name="list", description="Vypíše všechny itemy v databázi.")
     @app_commands.describe(category="Filtr dle kategorie (volitelné).")
