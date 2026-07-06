@@ -153,8 +153,10 @@ def _skill_registry() -> dict:
         from src.core.dnd.perks import _SEED_PERKS, load_perks
         for src in (_SEED_PERKS, load_perks()):     # seed + živá DB (DB vyhrává)
             for perk in src.values():
+                if not isinstance(perk, dict):
+                    continue                        # přeskoč ne-perk klíče (_connections, _deleted…)
                 us = perk.get("unlocks_skill")
-                if us and us.get("id"):
+                if isinstance(us, dict) and us.get("id"):
                     reg[us["id"]] = us
     except Exception:
         logger.exception("[stats] _skill_registry")
@@ -170,8 +172,10 @@ def available_skills(user_id: int) -> list:
         owned = list(pp.get(pkey(user_id), {}).get("perks", [])) + list(pp.get(str(user_id), {}).get("perks", []))
         db    = load_perks()
         for pid in owned:
-            us = db.get(pid, {}).get("unlocks_skill") or _SEED_PERKS.get(pid, {}).get("unlocks_skill")
-            if us and us.get("id"):
+            _dbp = db.get(pid)
+            us   = (_dbp.get("unlocks_skill") if isinstance(_dbp, dict) else None) \
+                   or _SEED_PERKS.get(pid, {}).get("unlocks_skill")
+            if isinstance(us, dict) and us.get("id"):
                 out[us["id"]] = us
     except Exception:
         logger.exception("[stats] available_skills")

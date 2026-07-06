@@ -76,7 +76,9 @@ CATEGORY_GROUPS = [
 _CAT_TO_GROUP = {cat: gi for gi, (_e, _l, cats) in enumerate(CATEGORY_GROUPS) for cat in cats}
 _OSTATNI_GROUP = len(CATEGORY_GROUPS) - 1  # fallback skupina pro neznámé/volné itemy
 _CATEGORY_EMOJI = {cat: emoji for emoji, _lbl, cats in CATEGORY_GROUPS for cat in cats}
-_VLIV_LABELS = {"TEMNOTA": "Temnota", "SVETLO": "Světlo", "ROVNOVAHA": "Rovnováha"}
+_VLIV_LABELS = {"TEMNOTA": "Temnota", "SVETLO": "Světlo", "ROVNOVAHA": "Rovnováha",
+                "vliv_temnota": "Temnota", "vliv_svetlo": "Světlo", "vliv_rovnovaha": "Rovnováha",
+                "hp_max": "max HP", "mana_max": "max many"}
 
 def _stat_label(key: str) -> str:
     """Hezký název klíče: skill → název, Vliv → Temnota/Světlo…, jinak raw."""
@@ -85,7 +87,7 @@ def _stat_label(key: str) -> str:
 _KNOWN_ITEM_FIELDS = {
     "name", "category", "slot", "hand_type", "atk", "def", "desc", "lore_drop",
     "hp_restore", "mana_restore", "hunger_restore", "mana_cost",
-    "hp_bonus", "mana_bonus", "stat_bonus", "requires", "required_perk",
+    "hp_bonus", "mana_bonus", "stat_bonus", "equip_bonus", "requires", "required_perk",
     "consumable", "stackable", "storage", "storage_capacity", "storage_emoji",
     "roll_tags", "id",
 }
@@ -912,10 +914,14 @@ def _build_inspect_embed(item_id: str, items_db: dict,
     bonus = []
     if item.get("hp_bonus"):   bonus.append(f"❤️ +{item['hp_bonus']} max HP")
     if item.get("mana_bonus"): bonus.append(f"🔷 +{item['mana_bonus']} max many")
-    for stat, val in (item.get("stat_bonus") or {}).items():
+    for stat, val in {**(item.get("equip_bonus") or {}), **(item.get("stat_bonus") or {})}.items():
+        try:
+            _v = int(val)
+        except (ValueError, TypeError):
+            continue
         lbl  = _stat_label(stat)
-        sign = "＋" if val >= 0 else "−"
-        bonus.append(f"{sign}{abs(val)} {lbl}")
+        sign = "＋" if _v >= 0 else "−"
+        bonus.append(f"{sign}{abs(_v)} {lbl}")
     if bonus:
         embed.add_field(name="Bonusy (při equipu)", value="\n".join(bonus), inline=True)
 
