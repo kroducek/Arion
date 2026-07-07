@@ -166,20 +166,22 @@ class Dice(commands.Cog):
             )
             return
 
-        roll_stats = record_roll(
-            interaction.guild.id,
-            interaction.user.id,
-            nat20=is_nat_20,
-            nat1=is_nat_1,
-            hit24=(total_sum == 24),
-            is_check=(check is not None),
-            is_d20=is_d20,
-        )
-        try:
-            from src.core.dnd.achievements import check_roll_achievements
-            await check_roll_achievements(interaction.guild.id, interaction.user, interaction.channel, roll_stats)
-        except Exception as _e:
-            print(f"[roll] achievement check chyba: {_e}")
+        # Guild statistiky + achievementy jen na serveru (v DM guild není)
+        if interaction.guild is not None:
+            roll_stats = record_roll(
+                interaction.guild.id,
+                interaction.user.id,
+                nat20=is_nat_20,
+                nat1=is_nat_1,
+                hit24=(total_sum == 24),
+                is_check=(check is not None),
+                is_d20=is_d20,
+            )
+            try:
+                from src.core.dnd.achievements import check_roll_achievements
+                await check_roll_achievements(interaction.guild.id, interaction.user, interaction.channel, roll_stats)
+            except Exception as _e:
+                print(f"[roll] achievement check chyba: {_e}")
 
         details = "\n".join(all_rolls_detail)
         if len(details) > 1024:

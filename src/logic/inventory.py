@@ -425,11 +425,16 @@ def _parse_requires(raw: str) -> dict[str, int]:
     for part in raw.replace(",", " ").split():
         if ":" in part:
             k, _, v = part.partition(":")
-            try:
-                val = int(v)
-            except ValueError:
-                continue
-            result[k if k in skills else k.upper()] = val
+        else:
+            k, v = part, "1"           # bare klíč → level 1
+        k = k.strip()
+        if not k:
+            continue
+        try:
+            val = int(v)
+        except ValueError:
+            val = 1                     # prázdné/nevalidní číslo → 1 (radši než zahodit)
+        result[k if k in skills else k.upper()] = val
     return result
 
 
@@ -444,21 +449,30 @@ def _valid_attack(expr: str) -> bool:
 
 
 async def _ac_requires(interaction: discord.Interaction, current: str):
-    """Autocomplete pro requires/stat_bonus — postupně nabízí klíče (staty + Vliv)."""
-    parts = current.split()
-    # Pokud poslední token je rozepsaný klíč (bez ':'), doplň ho; jinak nabídni další.
-    if parts and ":" not in parts[-1]:
-        prefix = " ".join(parts[:-1])
-        frag   = parts[-1].upper()
-        base   = (prefix + " ") if prefix else ""
-        keys   = [k for k in _require_keys() if k.upper().startswith(frag)] or _require_keys()
+    """Autocomplete pro requires/stat_bonus — nabízí kompletní 'klíč:N' (číslo se neztratí)."""
+    parts  = current.split()
+    last   = parts[-1] if parts else ""
+    prefix = " ".join(parts[:-1])
+    base   = (prefix + " ") if prefix else ""
+    out, seen = [], set()
+
+    def _add(v):
+        v = v[:100]
+        if v not in seen:
+            seen.add(v)
+            out.append(app_commands.Choice(name=v, value=v))
+
+    if ":" in last:
+        key, _, valpart = last.partition(":")
+        if valpart.isdigit():          # zachovej už rozepsané číslo jako první volbu
+            _add(f"{base}{key}:{valpart}")
+        for n in (1, 2, 3, 5, 10):
+            _add(f"{base}{key}:{n}")
     else:
-        base = (current + " ") if current.strip() else ""
-        keys = _require_keys()
-    out = []
-    for k in keys:
-        val = f"{base}{k}:"
-        out.append(app_commands.Choice(name=val[:100], value=val[:100]))
+        frag = last.upper()
+        keys = [k for k in _require_keys() if k.upper().startswith(frag)] or _require_keys()
+        for k in keys:
+            _add(f"{base}{k}:1")
     return out[:25]
 
 def _find_inv_entry(inventory: list, item_key: str) -> dict | None:
