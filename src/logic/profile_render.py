@@ -266,9 +266,45 @@ def render_prukaz_card(profile, char_name, gold, silver, stardust, rank="F3",
     return _save(img)
 
 # ── KARTA: STATY (portrét jako akcent) ────────────────────────────────────────
+def _skill_chip(d, x, y, w, h, name, rom, font, accent):
+    """Epická skill pilulka: zaoblený rámeček, accent okraj, zlatá římská číslice."""
+    d.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=(30, 30, 46, 255),
+                        outline=accent + (215,), width=2)
+    d.rounded_rectangle([x + 2, y + 2, x + w - 2, y + h - 2], radius=(h - 4) // 2,
+                        outline=(255, 255, 255, 22), width=1)
+    tx = x + 16
+    d.text((tx, y + h // 2 - 1), name, font=font, fill=(228, 228, 238), anchor="lm")
+    if rom:
+        nw = d.textlength(name + " ", font=font)
+        d.text((tx + nw, y + h // 2 - 1), rom, font=font, fill=GOLD_HARD, anchor="lm")
+
+
 def render_stats_card(profile, char_name, portrait_bytes=None):
-    W, H = 1000, 760
+    W = 1000
     accent = _accent_rgb(profile, (184, 137, 58))
+    stats  = profile.get("stats", {})
+    skills = profile.get("skills", {})
+    _reg   = _skill_registry()
+    learned = [(_reg.get(sid, {}).get("name", sid), _roman(lvl))
+               for sid, lvl in skills.items() if lvl]
+
+    chip_font = _font(21)
+    _meas = ImageDraw.Draw(Image.new("RGBA", (W, 8)))
+    x0, max_x, chip_h, gap = 48, W - 48, 42, 12
+    chips = [(nm, rom, int(_meas.textlength(f"{nm} {rom}".strip(), font=chip_font)) + 34)
+             for nm, rom in learned]
+    rows_layout, row, cx = [], [], x0
+    for nm, rom, w in chips:
+        if row and cx + w > max_x:
+            rows_layout.append(row); row, cx = [], x0
+        row.append((nm, rom, w)); cx += w + gap
+    if row:
+        rows_layout.append(row)
+    n_rows = max(1, len(rows_layout))
+
+    skills_top = 542
+    H = skills_top + n_rows * (chip_h + 12) + 180
+
     img, d = _base(W, H, accent=accent, tint=(40, 30, 10))
     portrait = _open_portrait(portrait_bytes)
     _portrait(img, portrait, 44, 44, 130, 130, circle=True, frame=accent)
@@ -286,22 +322,29 @@ def render_stats_card(profile, char_name, portrait_bytes=None):
             ("Furioka", f"{fu} / {fu_max}" if fu_max else f"{fu}", fu/fu_max if fu_max else 0, (30, 132, 73), (46, 204, 113))]
     y = 210
     for name, val, pct, c1, c2 in rows:
-        d.text((48, y-2), name, font=_font(22), fill=(228, 228, 238))
+        d.text((48, y - 2), name, font=_font(22), fill=(228, 228, 238))
         _grad_bar(img, d, 230, y, 600, 30, pct, c1, c2)
-        d.text((838, y+3), val, font=_font(20), fill=GOLD, anchor="la")
+        d.text((838, y + 3), val, font=_font(20), fill=GOLD, anchor="la")
         y += 52
 
-    _divider(d, 48, W-48, y+10, accent=accent)
-    stats  = profile.get("stats", {}); skills = profile.get("skills", {})
-    d.text((48, y+30), "Atributy", font=_font(19, serif=True), fill=GREY)
-    d.text((48, y+58), "    ".join(f"{k} {stats.get(k, 0)}" for k in STAT_LABELS), font=_font(22), fill=(222, 222, 232))
-    d.text((48, y+96), "Skilly", font=_font(19, serif=True), fill=GREY)
-    _reg = _skill_registry()
-    _learned = [(sid, lvl) for sid, lvl in skills.items() if lvl]
-    _sk_txt  = "    ".join(f"{_reg.get(sid, {}).get('name', sid)} {_roman(lvl)}" for sid, lvl in _learned) or "—"
-    d.text((48, y+124), _sk_txt[:120], font=_font(22), fill=(222, 222, 232))
-    d.text((W-48, y+58), f"AP {profile.get('ap', 0)}", font=_font(24, serif=True), fill=GOLD, anchor="ra")
-    d.text((W-48, y+96), f"SP {profile.get('sp', 0)}", font=_font(24, serif=True), fill=GOLD, anchor="ra")
+    _divider(d, 48, W - 48, y + 10, accent=accent)
+    d.text((48, y + 30), "Atributy", font=_font(19, serif=True), fill=GREY)
+    d.text((48, y + 58), "    ".join(f"{k} {stats.get(k, 0)}" for k in STAT_LABELS),
+           font=_font(22), fill=(222, 222, 232))
+    d.text((W - 48, y + 30), f"AP {profile.get('ap', 0)}", font=_font(24, serif=True), fill=GOLD, anchor="ra")
+    d.text((W - 48, y + 58), f"SP {profile.get('sp', 0)}", font=_font(24, serif=True), fill=GOLD, anchor="ra")
 
-    _xp_bar(img, d, profile.get("level", 0), profile.get("xp", 0), get_xp_cap(profile.get("level", 0)), 40, H-150, W-80)
+    d.text((48, y + 96), "Skilly", font=_font(19, serif=True), fill=GREY)
+    sy = skills_top
+    if not rows_layout:
+        d.text((48, sy + 8), "—", font=chip_font, fill=(150, 150, 165))
+    for r in rows_layout:
+        sx = x0
+        for nm, rom, w in r:
+            _skill_chip(d, sx, sy, w, chip_h, nm, rom, chip_font, accent)
+            sx += w + gap
+        sy += chip_h + 12
+
+    _xp_bar(img, d, profile.get("level", 0), profile.get("xp", 0),
+            get_xp_cap(profile.get("level", 0)), 40, H - 150, W - 80)
     return _save(img)
