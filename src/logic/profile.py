@@ -649,7 +649,44 @@ async def _fetch_portrait_bytes(target, profile):
 async def _test_stats_payload(target, profile):
     char_name = profile.get("name", target.display_name)
     pbytes = await _fetch_portrait_bytes(target, profile)
-    buf   = await asyncio.to_thread(render_stats_card, profile, char_name, portrait_bytes=pbytes)
+
+    # ── extra data pro kartu (DEF, statusy, furioka-duch, sbírka) ──
+    try:
+        items_db  = _load_items()
+        total_def = _compute_total_def(profile, items_db)
+    except Exception:
+        total_def = 0
+    try:
+        _fc, _fm, spirit_bonus = fury_display(profile)
+        _sp = get_equipped_spirit(profile)
+        spirit_name = _sp["name"] if (_sp and spirit_bonus) else None
+    except Exception:
+        spirit_bonus, spirit_name = 0, None
+    status_names = []
+    try:
+        from src.core.dnd.blacksmith import load_statuses
+        _sreg = load_statuses()
+        for st in (profile.get("statuses") or []):
+            sid = st.get("status") if isinstance(st, dict) else st
+            status_names.append(_sreg.get(sid, {}).get("name", str(sid)))
+    except Exception:
+        pass
+    try:
+        _pp = load_json(PLAYER_PERKS, {}); _ach = load_json(ACHIEVEMENTS, {})
+        perk_cnt = len(_pp.get(pkey(target.id), {}).get("perks", []))
+        ach_cnt  = len(_ach.get(str(target.id), []))
+    except Exception:
+        perk_cnt = ach_cnt = 0
+    extras = {
+        "def":              total_def,
+        "fury_spirit":      spirit_bonus,
+        "fury_spirit_name": spirit_name,
+        "statuses":         status_names,
+        "perks":            perk_cnt,
+        "achievements":     ach_cnt,
+    }
+
+    buf   = await asyncio.to_thread(render_stats_card, profile, char_name, portrait_bytes=pbytes, extras=extras)
     file  = discord.File(buf, filename="card.png")
     embed = discord.Embed(color=profile.get("accent_color") or 0x2ecc71)
     embed.set_image(url="attachment://card.png")

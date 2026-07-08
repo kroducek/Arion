@@ -6,12 +6,13 @@ import io, os, random, re
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 try:
-    from src.logic.stats import get_xp_cap, STAT_LABELS, _skill_registry, _roman
+    from src.logic.stats import get_xp_cap, STAT_LABELS, _skill_registry, _roman, level_label
 except Exception:
     STAT_LABELS  = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
     def get_xp_cap(level): return 15000
     def _skill_registry(): return {}
     def _roman(n): return str(n)
+    def level_label(level): return f"Lvl {level}"
 
 # ── fonty ─────────────────────────────────────────────────────────────────────
 _FONT_DIRS = ["src/assets/fonts", "/usr/share/fonts/truetype/dejavu",
@@ -163,13 +164,14 @@ def _open_portrait(portrait_bytes):
 
 def _xp_bar(img, d, level, xp, cap, x, y, w):
     d.rounded_rectangle([x, y, x+w, y+118], radius=18, fill=(16, 16, 24, 255), outline=(150, 120, 55, 200), width=2)
-    d.text((x+w//2, y+22), f"Lvl {level}  \u00b7  Postup", font=_font(28, serif=True), fill=GOLD, anchor="ma")
+    d.text((x+w//2, y+22), f"{level_label(level)}  \u00b7  Postup", font=_font(28, serif=True), fill=GOLD, anchor="ma")
     bx, by, bw, bh = x+36, y+58, w-72, 32
     _grad_bar(img, d, bx, by, bw, bh, (xp/cap) if cap else 1.0, (160, 110, 20), (245, 200, 60), r=14)
     for s in range(1, 10):
         sxp = bx+int(bw*s/10); d.line([(sxp, by+3), (sxp, by+bh-3)], fill=(0, 0, 0, 90), width=2)
     txt = (f"{xp:,} / {cap:,}".replace(",", " ")) if cap else (f"{xp:,}  (MAX)".replace(",", " "))
-    d.text((bx+bw//2, by+bh//2), txt, font=_font(19), fill=(20, 20, 20), anchor="mm")
+    d.text((bx + bw // 2, by + bh // 2), txt, font=_font(22, serif=True), fill=(255, 255, 255),
+           anchor="mm", stroke_width=3, stroke_fill=(35, 22, 0))
 
 def _truncate(d, text, font, maxw):
     if d.textlength(text, font=font) <= maxw:
@@ -279,8 +281,9 @@ def _skill_chip(d, x, y, w, h, name, rom, font, accent):
         d.text((tx + nw, y + h // 2 - 1), rom, font=font, fill=GOLD_HARD, anchor="lm")
 
 
-def render_stats_card(profile, char_name, portrait_bytes=None):
+def render_stats_card(profile, char_name, portrait_bytes=None, extras=None):
     W = 1000
+    _ex    = extras or {}
     accent = _accent_rgb(profile, (184, 137, 58))
     stats  = profile.get("stats", {})
     skills = profile.get("skills", {})
@@ -302,8 +305,9 @@ def render_stats_card(profile, char_name, portrait_bytes=None):
         rows_layout.append(row)
     n_rows = max(1, len(rows_layout))
 
-    skills_top = 542
-    H = skills_top + n_rows * (chip_h + 12) + 180
+    skills_top = 586  # posunuto o Vliv řádek pod Furiokou
+    _statuses = _ex.get("statuses") or []
+    H = skills_top + n_rows * (chip_h + 12) + 40 + (50 if _statuses else 0) + 160
 
     img, d = _base(W, H, accent=accent, tint=(40, 30, 10))
     portrait = _open_portrait(portrait_bytes)
@@ -316,16 +320,29 @@ def render_stats_card(profile, char_name, portrait_bytes=None):
     mn_max = profile.get("mana_max", 5); mn = profile.get("mana_cur", 0)
     hu_max = profile.get("hunger_max", 10); hu = profile.get("hunger_cur", hu_max)
     fu_max = profile.get("fury_max", 0); fu = profile.get("fury_cur", 0)
-    rows = [("Zdraví", f"{hp} / {hp_max}", hp/hp_max if hp_max else 0, (192, 57, 43), (231, 76, 60)),
+    _hpval = f"{hp} / {hp_max}" + (f"  ·  {_ex['def']} DEF" if _ex.get("def") else "")
+    _fuval = (f"{fu} / {fu_max}" if fu_max else f"{fu}") + (f"  +{_ex['fury_spirit']}" if _ex.get("fury_spirit") else "")
+    rows = [("Zdraví", _hpval, hp/hp_max if hp_max else 0, (192, 57, 43), (231, 76, 60)),
             ("Mana", f"{mn} / {mn_max}", mn/mn_max if mn_max else 0, (37, 99, 235), (59, 130, 246)),
             ("Hlad", f"{hu} / {hu_max}", hu/hu_max if hu_max else 0, (214, 137, 16), (241, 196, 15)),
-            ("Furioka", f"{fu} / {fu_max}" if fu_max else f"{fu}", fu/fu_max if fu_max else 0, (30, 132, 73), (46, 204, 113))]
+            ("Furioka", _fuval, fu/fu_max if fu_max else 0, (30, 132, 73), (46, 204, 113))]
     y = 210
     for name, val, pct, c1, c2 in rows:
         d.text((48, y - 2), name, font=_font(22), fill=(228, 228, 238))
         _grad_bar(img, d, 230, y, 600, 30, pct, c1, c2)
         d.text((838, y + 3), val, font=_font(20), fill=GOLD, anchor="la")
         y += 52
+
+    # ── Vliv (pod Furioka barem — souvisí: 1 Vliv = 5 furiok) ──
+    v_s = profile.get("vliv_svetlo", 0)
+    v_t = profile.get("vliv_temnota", 0)
+    v_r = profile.get("vliv_rovnovaha", 0)
+    d.text((48, y + 4), "Vliv", font=_font(19, serif=True), fill=GREY)
+    _viv = f"Světlo {v_s}     Temnota {v_t}     Rovnováha {v_r}"
+    if _ex.get("fury_spirit_name"):
+        _viv += f"       ·  Duch: {_ex['fury_spirit_name']}"
+    d.text((150, y + 2), _viv, font=_font(22), fill=(222, 222, 232))
+    y += 44
 
     _divider(d, 48, W - 48, y + 10, accent=accent)
     d.text((48, y + 30), "Atributy", font=_font(19, serif=True), fill=GREY)
@@ -344,6 +361,23 @@ def render_stats_card(profile, char_name, portrait_bytes=None):
             _skill_chip(d, sx, sy, w, chip_h, nm, rom, chip_font, accent)
             sx += w + gap
         sy += chip_h + 12
+
+    # ── Sbírka ──
+    d.text((48, sy + 6), "Sbírka", font=_font(19, serif=True), fill=GREY)
+    d.text((150, sy + 4), f"Perky {_ex.get('perks', 0)}     Achievementy {_ex.get('achievements', 0)}",
+           font=_font(22), fill=(222, 222, 232))
+
+    # ── Statusy (pilulky) ──
+    if _statuses:
+        sy += 42
+        d.text((48, sy + 6), "Statusy", font=_font(19, serif=True), fill=GREY)
+        sx = 150
+        for nm in _statuses[:6]:
+            w = int(_meas.textlength(nm, font=chip_font)) + 30
+            if sx + w > W - 48:
+                break
+            _skill_chip(d, sx, sy, w, chip_h, nm, "", chip_font, (200, 70, 70))
+            sx += w + gap
 
     _xp_bar(img, d, profile.get("level", 0), profile.get("xp", 0),
             get_xp_cap(profile.get("level", 0)), 40, H - 150, W - 80)
