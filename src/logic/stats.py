@@ -188,21 +188,40 @@ def skill_meta(user_id: int, skill_id: str):
     return None
 
 def _migrate_skills(p: dict) -> None:
-    """Beta migrace na skill model v2 (triangulární škálování; base Výdrž/Magie/Obrana).
-    Zahodí staré skilly, resetuje deriváty a vrátí veškeré vydělané SP k rozdělení."""
-    if p.get("skills_v") == 2:
-        return
-    p["skills"]     = {}
-    p["hp_max"]     = BASE_HP_MAX
-    p["hp_cur"]     = min(p.get("hp_cur", BASE_HP_MAX), BASE_HP_MAX)
-    p["mana_max"]   = BASE_MANA_MAX
-    p["mana_cur"]   = min(p.get("mana_cur", 0), BASE_MANA_MAX)
-    p["def_bonus"]  = 0
-    p["hunger_max"] = 10
-    p["hunger_cur"] = min(p.get("hunger_cur", 10), 10)
-    lvl = p.get("level", 0)
-    p["sp"] = START_SP + sum(level_rewards(l)[0] for l in range(1, lvl + 1))
-    p["skills_v"] = 2
+    """Beta migrace skill modelu.
+    v2: přechod na triangulární škálování (wipe skillů + refund všech SP).
+    v3: úklid osiřelých skillů (přejmenované/smazané perky) + refund jejich SP."""
+    # ── v2: úplný reset na nový model ──
+    if p.get("skills_v", 0) < 2:
+        p["skills"]     = {}
+        p["hp_max"]     = BASE_HP_MAX
+        p["hp_cur"]     = min(p.get("hp_cur", BASE_HP_MAX), BASE_HP_MAX)
+        p["mana_max"]   = BASE_MANA_MAX
+        p["mana_cur"]   = min(p.get("mana_cur", 0), BASE_MANA_MAX)
+        p["def_bonus"]  = 0
+        p["hunger_max"] = 10
+        p["hunger_cur"] = min(p.get("hunger_cur", 10), 10)
+        lvl = p.get("level", 0)
+        p["sp"] = START_SP + sum(level_rewards(l)[0] for l in range(1, lvl + 1))
+        p["skills_v"] = 2
+
+    # ── v3: odeber skilly, které už žádný perk neodemyká (přejmenované/smazané) ──
+    # Base skilly (vydrz, magie) jsou vždy v registru → nikdy se nesmažou.
+    if p.get("skills_v", 0) < 3:
+        reg = _skill_registry()
+        # Pojistka: když registr obsahuje jen base skilly, perky se nenačetly →
+        # úklid přeskoč (ať omylem nesmažeme legit zbraňové/magické skilly).
+        # skills_v zůstane 2, takže se to zkusí znovu, až budou perky načtené.
+        if len(reg) > len(_BASE_SKILLS):
+            sk     = p.setdefault("skills", {})
+            refund = 0
+            for sid in list(sk.keys()):
+                if sid not in reg:
+                    lvl_s = sk.pop(sid) or 0
+                    refund += lvl_s * (lvl_s + 1) // 2   # zpět triangulární cena SP
+            if refund:
+                p["sp"] = p.get("sp", 0) + refund
+            p["skills_v"] = 3
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS — profiles.json
