@@ -212,7 +212,7 @@ def _currency_row(d, x, y, items):
 
 # ── KARTA: PRŮKAZ (velký portrét + rozmazané pozadí) ──────────────────────────
 def render_prukaz_card(profile, char_name, gold, silver, stardust, rank="F3",
-                       spirit_name=None, portrait_bytes=None):
+                       spirit_name=None, portrait_bytes=None, reputation=None):
     W, H = 1000, 760
     portrait = _open_portrait(portrait_bytes)
     accent = _accent_rgb(profile, (70, 110, 180))
@@ -258,6 +258,11 @@ def render_prukaz_card(profile, char_name, gold, silver, stardust, rank="F3",
     y += 40
     if spirit_name:
         d.text((rx, y), f"Strážný duch: {spirit_name}", font=_font(19, serif=True), fill=GREY); y += 34
+    if reputation:
+        d.text((rx, y), "◆ Reputace", font=_font(19, serif=True), fill=(212, 175, 55)); y += 26
+        for ln in _wrap(d, reputation, _font(20, serif=True), maxw, max_lines=2):
+            d.text((rx, y), ln, font=_font(20, serif=True), fill=(205, 205, 218)); y += 28
+        y += 4
     _divider(d, rx, W - 50, y, accent=accent); y += 18
 
     d.text((rx, y), "Poslední vzpomínka", font=_font(21, serif=True), fill=(210, 100, 100)); y += 32
@@ -329,8 +334,8 @@ def render_stats_card(profile, char_name, portrait_bytes=None, extras=None):
     y = 210
     for name, val, pct, c1, c2 in rows:
         d.text((48, y - 2), name, font=_font(22), fill=(228, 228, 238))
-        _grad_bar(img, d, 230, y, 600, 30, pct, c1, c2)
-        d.text((838, y + 3), val, font=_font(20), fill=GOLD, anchor="la")
+        _grad_bar(img, d, 230, y, 470, 30, pct, c1, c2)
+        d.text((712, y + 3), val, font=_font(20), fill=GOLD, anchor="la")
         y += 52
 
     # ── Vliv (pod Furioka barem — souvisí: 1 Vliv = 5 furiok) ──
@@ -364,7 +369,7 @@ def render_stats_card(profile, char_name, portrait_bytes=None, extras=None):
 
     # ── Sbírka ──
     d.text((48, sy + 6), "Sbírka", font=_font(19, serif=True), fill=GREY)
-    d.text((150, sy + 4), f"Perky {_ex.get('perks', 0)}     Achievementy {_ex.get('achievements', 0)}",
+    d.text((150, sy + 4), f"Perky {_ex.get('perks', 0)}     Achievementy {_ex.get('achievements', 0)}     Karty {_ex.get('cards', 0)}",
            font=_font(22), fill=(222, 222, 232))
 
     # ── Statusy (pilulky) ──

@@ -677,6 +677,13 @@ async def _test_stats_payload(target, profile):
         ach_cnt  = len(_ach.get(str(target.id), []))
     except Exception:
         perk_cnt = ach_cnt = 0
+    try:
+        from src.utils.paths import CARDS_INVENTORY
+        _cinv = load_json(CARDS_INVENTORY, {})
+        card_cnt = sum(1 for c in _cinv.values()
+                       if isinstance(c, dict) and c.get("owner_id") == str(target.id))
+    except Exception:
+        card_cnt = 0
     extras = {
         "def":              total_def,
         "fury_spirit":      spirit_bonus,
@@ -684,6 +691,7 @@ async def _test_stats_payload(target, profile):
         "statuses":         status_names,
         "perks":            perk_cnt,
         "achievements":     ach_cnt,
+        "cards":            card_cnt,
     }
 
     buf   = await asyncio.to_thread(render_stats_card, profile, char_name, portrait_bytes=pbytes, extras=extras)
@@ -694,7 +702,7 @@ async def _test_stats_payload(target, profile):
     return embed, file
 
 
-async def _test_prukaz_payload(target, profile):
+async def _test_prukaz_payload(target, profile, guild_id=None):
     char_name = profile.get("name", target.display_name)
     economy   = load_economy()
     gold      = economy.get(pkey(target.id), 0)
@@ -702,10 +710,18 @@ async def _test_prukaz_payload(target, profile):
     stardust  = get_balance(target.id, "stardust")
     spirit    = get_equipped_spirit(profile)
     pbytes    = await _fetch_portrait_bytes(target, profile)
+    rep_line  = None
+    if guild_id is not None:
+        try:
+            _players = load_json(REPUTATION, {}).get(str(guild_id), {}).get("players", {})
+            _reps    = _players.get(pkey(target.id), {}) or _players.get(str(target.id), {})
+            rep_line = "   ".join(f"{f} {v:+d}" for f, v in _reps.items() if v) or None
+        except Exception:
+            pass
     buf   = await asyncio.to_thread(
         render_prukaz_card, profile, char_name, gold, silver, stardust,
         profile.get("rank", "F3"), spirit["name"] if spirit else None,
-        portrait_bytes=pbytes)
+        portrait_bytes=pbytes, reputation=rep_line)
     file  = discord.File(buf, filename="card.png")
     embed = discord.Embed(color=profile.get("accent_color") or 0x3498db)
     embed.set_image(url="attachment://card.png")
@@ -735,7 +751,7 @@ class TestProfileView(discord.ui.View):
         if not profile:
             await interaction.response.send_message("Průkaz už neexistuje.", ephemeral=True)
             return
-        embed, file = await _test_prukaz_payload(self.target, profile)
+        embed, file = await _test_prukaz_payload(self.target, profile, self.guild_id)
         await interaction.response.edit_message(embed=embed, attachments=[file], view=self)
 
     @discord.ui.button(label="Staty", style=discord.ButtonStyle.success, emoji="📊")
@@ -804,9 +820,9 @@ class Profile(commands.Cog):
             return
         profile = data[user_id]
         _ensure_player_fields(profile)
-        embed, file = await _test_prukaz_payload(target, profile)
         can_edit = (target.id == interaction.user.id)
         guild_id = interaction.guild.id if interaction.guild else None
+        embed, file = await _test_prukaz_payload(target, profile, guild_id)
         view = TestProfileView(target, guild_id, can_edit)
         await interaction.response.send_message(embed=embed, file=file, view=view)
 
