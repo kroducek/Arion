@@ -1681,6 +1681,45 @@ class PerksCog(commands.Cog):
             f"✅ Perk **{chosen['name']}** (`{chosen_id}`) přiřazen {member.mention}.", ephemeral=True
         )
 
+    # ── /reset-perky ──────────────────────────────────────────────────────────
+
+    @app_commands.command(name="reset-perky", description="[Admin] Smaže perky hráči (aktivní postavě) nebo všem.")
+    @app_commands.describe(member="Hráč (prázdné = všichni)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def reset_perky_cmd(self, interaction: discord.Interaction, member: discord.Member | None = None):
+        player_data = load_player_perks()
+        if member:
+            # smaž per-character (pkey) klíč i starý účtový (holé uid) — ať po překlíčování
+            # nezůstane duch, který by se protáhl přes bare-uid fallback v available_skills
+            removed = []
+            for key in (pkey(member.id), str(member.id)):
+                if key in player_data:
+                    del player_data[key]
+                    removed.append(key)
+            save_player_perks(player_data)
+            log_action("reset_perky", interaction.user.display_name, member.display_name, ",".join(removed))
+            if removed:
+                keys = ", ".join(f"`{k}`" for k in removed)
+                await interaction.response.send_message(
+                    f"✅ Perky {member.mention} smazány ({keys}).\n"
+                    "-# Skilly z nich zmizí až po `/reset-stats`.",
+                    ephemeral=True,
+                )
+            else:
+                await interaction.response.send_message(
+                    f"ℹ️ {member.mention} nemá žádné perky k smazání.", ephemeral=True
+                )
+        else:
+            n = len(player_data)
+            player_data.clear()
+            save_player_perks(player_data)
+            log_action("reset_perky", interaction.user.display_name, "ALL", str(n))
+            await interaction.response.send_message(
+                f"♻️ Perky smazány **všem** ({n} záznamů).\n"
+                "-# Přegrantuj a nech hráče projít `/reset-stats`.",
+                ephemeral=True,
+            )
+
     # ── /perk skupina ─────────────────────────────────────────────────────────
 
     perk_group = app_commands.Group(name="perk", description="Správa a použití perků")
