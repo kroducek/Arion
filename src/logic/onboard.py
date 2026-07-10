@@ -113,42 +113,49 @@ LOADOUTS = {
         "name": "Kuše",
         "desc": "Střelec s kuší",
         "items": [("mala_kuse", 1), ("obycejna_sipka", 10), ("stredni_lektvar_zivota", 1), ("brasna", 1)],
-        "perk": "crossbow_1",
+        "perk": "aim",
+    },
+    "daggers": {
+        "emoji": "🔪",
+        "name": "Dýky",
+        "desc": "Hbitý zabiják s dýkami a uměním plížení",
+        "items": [("nuz", 1), ("mala_dyka", 1), ("brasna", 1), ("stredni_lektvar_zivota", 1)],
+        "perk": "stealth_1",
     },
     "one_handed": {
         "emoji": "🗡️",
         "name": "Meč",
         "desc": "Klasický bojovník s jednoruční zbraní",
         "items": [("stary_mec", 1), ("brasna", 1), ("stredni_lektvar_zivota", 1)],
-        "perk": "one_handed_1",
+        "perk": "light_weapons",
     },
     "wand": {
         "emoji": "🪄",
         "name": "Magická hůlka",
         "desc": "Čaroděj ovládající runovou magii hůlkou",
-        "items": [("zakladni_hulka", 1), ("brasna", 1), ("stredni_lektvar_mana", 1)],
-        "perk": "rune_basics_1",
+        "items": [("zakladni_hulka", 1), ("brasna", 1), ("stredni_lektvar_many", 1)],
+        "perk": "runes",
     },
     "scrolls": {
         "emoji": "📜",
         "name": "Magické svitky",
         "desc": "Sesilatel kouzel ze svitků",
-        "items": [("svitek_ohnivy_sip", 2), ("svitek_ledovy_blok", 2), ("svitek_slabeho_uzdraveni", 2), ("svitek_jedovy_osten", 2), ("brasna", 1), ("stredni_lektvar_mana", 1)],
-        "perk": "rune_basics_1",
+        "items": [("svitek_ohnivy_sip", 2), ("svitek_ledovy_blok", 2), ("svitek_slabeho_uzdraveni", 2), ("svitek_jedovy_osten", 2), ("brasna", 1), ("stredni_lektvar_many", 1)],
+        "perk": "runes",
     },
     "two_handed": {
         "emoji": "⚔️",
         "name": "Obouruční meč",
         "desc": "Silný bojovník s obouruční zbraní",
         "items": [("stary_obourucni_mec", 1), ("brasna", 1), ("stredni_lektvar_zivota", 1)],
-        "perk": "two_handed_1",
+        "perk": "heavy_weapons",
     },
     "bow": {
         "emoji": "🏹",
         "name": "Luk",
         "desc": "Lukostřelec s lukem a šípy",
         "items": [("maly_luk", 1), ("obycejny_sip", 10), ("brasna", 1), ("stredni_lektvar_zivota", 1)],
-        "perk": "archery_1",
+        "perk": "aim",
     },
 }
 
@@ -1488,7 +1495,7 @@ async def _show_perk_selection(
         title="🎯  Zvol si 4 perky",
         description=(
             f"Vybral/a sis loadout **{loadout['name']}**.\n\n"
-            f"Dostaneš prvotní perk: **{loadout['perk']}** a startovní položky.\n\n"
+            f"Dostaneš prvotní perk: **{_perk_name(loadout['perk'])}** a startovní položky.\n\n"
             "Teď si vyber 4 dodatečné perky dle svého uvážení.\n\n"
             "-# Tip: Perky se ti později hodí v boji. Zvol si moudře!"
         ),
