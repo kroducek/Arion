@@ -134,14 +134,14 @@ LOADOUTS = {
         "name": "Magická hůlka",
         "desc": "Čaroděj ovládající runovou magii hůlkou",
         "items": [("zakladni_hulka", 1), ("brasna", 1), ("stredni_lektvar_many", 1)],
-        "perk": "runes",
+        "perk": "rune_basics_1",
     },
     "scrolls": {
         "emoji": "📜",
         "name": "Magické svitky",
         "desc": "Sesilatel kouzel ze svitků",
         "items": [("svitek_ohnivy_sip", 2), ("svitek_ledovy_blok", 2), ("svitek_slabeho_uzdraveni", 2), ("svitek_jedovy_osten", 2), ("brasna", 1), ("stredni_lektvar_many", 1)],
-        "perk": "runes",
+        "perk": "rune_basics_1",
     },
     "two_handed": {
         "emoji": "⚔️",
@@ -1547,8 +1547,12 @@ class PerkSelectionView(TutorialView):
         for perk_id, perk in perks.items():
             if perk_id in blocked:
                 continue
+            # Startovní pool = jen ZÁKLADNÍ dovednosti (smlouvání, plížení, vaření…).
+            # Magie ani výzbrojové skilly sem nepatří — ty si hráč bere přes loadout.
+            if perk.get("group") != "Základní":
+                continue
             is_tier_one = perk_id.endswith("_1") or perk_id == "magicke_citeni"
-            if is_tier_one and (perk.get("learnable") or perk_id in ["fire_magic_1", "ice_magic_1", "healing_magic_1"]):
+            if is_tier_one:
                 perk_list.append((perk_id, perk.get("name", perk_id)))
 
         return perk_list
