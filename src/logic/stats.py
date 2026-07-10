@@ -335,9 +335,9 @@ def get_xp_cap(level: int) -> int | None:
 
 def level_rewards(level: int) -> tuple[int, int]:
     """Body získané za DOSAŽENÍ daného levelu → (sp, ap).
-    SP (hojnější — skilly+perky) = (lichý level) + 3×(násobek 5)
+    SP (hojnější — skilly+perky) = (lichý level) + škálující bonus (level//5+2) na násobcích 5
     AP (vzácnější — 6 atributů)  = (sudý level) + (násobek 10)."""
-    sp = (1 if level % 2 == 1 else 0) + (3 if level % 5 == 0 else 0)
+    sp = (1 if level % 2 == 1 else 0) + ((level // 5 + 2) if level % 5 == 0 else 0)
     ap = (1 if level % 2 == 0 else 0) + (1 if level % 10 == 0 else 0)
     return sp, ap
 
