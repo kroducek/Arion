@@ -4,11 +4,15 @@ from discord import app_commands
 import json
 import os
 import random
+import logging
 from datetime import date
 
 from src.utils.paths import PERKS, PLAYER_PERKS, ODHALENI_POOL as ODHALENI_POOL_FILE
+from src.database.characters import pkey
 from src.utils.audit import log_action
 from src.utils.json_utils import load_json, save_json
+
+logger = logging.getLogger("Perks")
 
 ARION_NAME = "Aurionis"
 
@@ -1336,7 +1340,14 @@ class OdhaleniRollView(discord.ui.View):
         from src.utils.paths import PROFILES as _PF
         import datetime
         data    = load_json(_PF, default={})
-        profile = data.setdefault(self.uid, {})
+        # duch patří AKTIVNÍ postavě (pkey), ne celému účtu (holé uid).
+        # self.uid zůstává holé uid jen pro kontrolu identity výše.
+        try:
+            _pk = pkey(int(self.uid))
+        except Exception:
+            logger.exception(f"[perks] Odhalení: pkey({self.uid}) selhal — fallback na holé uid")
+            _pk = self.uid
+        profile = data.setdefault(_pk, {})
         spirits = profile.setdefault("spirits", [])
         try:
             from src.logic.spirits import rank_xp_threshold as _rxt
@@ -1460,7 +1471,7 @@ class PerksCog(commands.Cog):
         target      = member or interaction.user
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(str(target.id), player_data)
+        player      = _get_player(pkey(target.id), player_data)
         owned       = player["perks"]
 
         if not owned:
@@ -1544,7 +1555,7 @@ class PerksCog(commands.Cog):
             await interaction.response.send_message(f"Perk `{perk_id}` neexistuje.", ephemeral=True)
             return
         player_data = load_player_perks()
-        player      = _get_player(str(member.id), player_data)
+        player      = _get_player(pkey(member.id), player_data)
         if perk_id in player["perks"]:
             await interaction.response.send_message(
                 f"{member.mention} už má **{all_perks[perk_id]['name']}**.", ephemeral=True
@@ -1630,7 +1641,7 @@ class PerksCog(commands.Cog):
     async def give_random_perk(self, interaction: discord.Interaction, member: discord.Member):
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(str(member.id), player_data)
+        player      = _get_player(pkey(member.id), player_data)
         owned       = set(player["perks"])
         available   = [pid for pid, p in all_perks.items() if pid not in owned and not p.get("unique") and not p.get("learnable")]
 
@@ -1683,7 +1694,7 @@ class PerksCog(commands.Cog):
             await interaction.response.send_message(f"Perk `{perk_id}` neexistuje.", ephemeral=True)
             return
         player_data = load_player_perks()
-        player      = _get_player(str(member.id), player_data)
+        player      = _get_player(pkey(member.id), player_data)
         if perk_id in player["perks"]:
             await interaction.response.send_message(
                 f"{member.mention} už má **{all_perks[perk_id]['name']}**.", ephemeral=True
@@ -1825,7 +1836,7 @@ class PerksCog(commands.Cog):
     @app_commands.describe(perk_id="ID perku", member="Hráč")
     async def perk_remove(self, interaction: discord.Interaction, perk_id: str, member: discord.Member):
         player_data = load_player_perks()
-        player      = _get_player(str(member.id), player_data)
+        player      = _get_player(pkey(member.id), player_data)
         if perk_id not in player["perks"]:
             all_perks = load_perks()
             name = all_perks.get(perk_id, {}).get("name", perk_id)
@@ -1847,7 +1858,7 @@ class PerksCog(commands.Cog):
     async def perk_reset(self, interaction: discord.Interaction, member: discord.Member | None = None):
         player_data = load_player_perks()
         if member:
-            player = _get_player(str(member.id), player_data)
+            player = _get_player(pkey(member.id), player_data)
             player["cooldowns"] = {}
             save_player_perks(player_data)
             await interaction.response.send_message(
@@ -1868,7 +1879,7 @@ class PerksCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(str(member.id), player_data)
+        player      = _get_player(pkey(member.id), player_data)
 
         if perk_id not in player["perks"]:
             await interaction.followup.send(f"{member.mention} nemá perk `{perk_id}`.", ephemeral=True)
@@ -2184,7 +2195,7 @@ class PerksCog(commands.Cog):
     async def perk_use(self, interaction: discord.Interaction, perk_id: str):
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(str(interaction.user.id), player_data)
+        player      = _get_player(pkey(interaction.user.id), player_data)
 
         if perk_id not in player["perks"]:
             await interaction.response.send_message("Tento perk nevlastníš.", ephemeral=True)
@@ -2350,7 +2361,7 @@ class PerksCog(commands.Cog):
     async def perk_owned_autocomplete(self, interaction: discord.Interaction, current: str):
         all_perks   = load_perks()
         player_data = load_player_perks()
-        player      = _get_player(str(interaction.user.id), player_data)
+        player      = _get_player(pkey(interaction.user.id), player_data)
         owned       = player["perks"]
         return [
             app_commands.Choice(

@@ -163,22 +163,49 @@ def _skill_registry() -> dict:
     return reg
 
 def available_skills(user_id: int) -> list:
-    """Skilly dostupné hráči: základní Výdrž + skilly odemčené jeho perky."""
+    """Skilly dostupné hráči: základní Výdrž + skilly odemčené jeho perky.
+    Odolné: rozbitý pkey ani jeden vadný perk nesmí shodit celý seznam —
+    jinak se hráči skrejí VŠECHNY perkem odemčené skilly (fallback = jen base)."""
     out = {s["id"]: dict(s) for s in _BASE_SKILLS}
     try:
         from src.core.dnd.perks import load_player_perks, load_perks, _SEED_PERKS
-        pp    = load_player_perks()
-        # perky můžou být rozdělené mezi pkey (uid:slot) i holé uid (migrace/konflikt) → sloučit
-        owned = list(pp.get(pkey(user_id), {}).get("perks", [])) + list(pp.get(str(user_id), {}).get("perks", []))
-        db    = load_perks()
-        for pid in owned:
+    except Exception:
+        logger.exception("[stats] available_skills: import perks selhal")
+        return list(out.values())
+
+    try:
+        pp = load_player_perks()
+    except Exception:
+        logger.exception("[stats] available_skills: load_player_perks selhal")
+        pp = {}
+
+    # perky můžou být pod pkey (uid:slot) i pod holým uid (staré/nepřeklíčované) → sloučit.
+    # pkey() může u rozbité postavy hodit výjimku — zachytit ZVLÁŠŤ, ať nespadne fallback.
+    owned: list = []
+    try:
+        owned += list(pp.get(pkey(user_id), {}).get("perks", []))
+    except Exception:
+        logger.exception(f"[stats] available_skills: pkey({user_id}) selhal — jedu jen na holé uid")
+    try:
+        owned += list(pp.get(str(user_id), {}).get("perks", []))
+    except Exception:
+        logger.exception("[stats] available_skills: fallback na holé uid selhal")
+
+    try:
+        db = load_perks()
+    except Exception:
+        logger.exception("[stats] available_skills: load_perks selhal")
+        db = {}
+
+    for pid in owned:
+        try:
             _dbp = db.get(pid)
             us   = (_dbp.get("unlocks_skill") if isinstance(_dbp, dict) else None) \
                    or _SEED_PERKS.get(pid, {}).get("unlocks_skill")
             if isinstance(us, dict) and us.get("id"):
                 out[us["id"]] = us
-    except Exception:
-        logger.exception("[stats] available_skills")
+        except Exception:
+            logger.exception(f"[stats] available_skills: perk {pid!r} přeskočen")
     return list(out.values())
 
 def skill_meta(user_id: int, skill_id: str):
