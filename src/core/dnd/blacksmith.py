@@ -65,8 +65,10 @@ DEFAULT_STATUSES: dict[str, dict] = {
 }
 
 DEFAULT_RUNES: dict[str, dict] = {
-    "led_1": {"name": "Led I.", "emoji": "❄️", "status": "mraz", "proc_roll": "1d20"},
-    "jed_1": {"name": "Jed I.", "emoji": "🧪", "status": "jed",  "proc_roll": ""},
+    "led_1": {"name": "Led I.", "emoji": "❄️", "status": "mraz", "proc_roll": "1d20",
+              "desc": "Zmrazí čepel — zásah udělí led a může protivníka omráčit."},
+    "jed_1": {"name": "Jed I.", "emoji": "🧪", "status": "jed",  "proc_roll": "",
+              "desc": "Otráví čepel — zásah nechá v ráně jed."},
 }
 
 
@@ -339,9 +341,10 @@ def _rune_embed(runes_reg: dict, status_reg: dict) -> discord.Embed:
         s = status_reg.get(r.get("status"), {})
         dmg = f"{s.get('dmg','?')} dmg" if s.get("dmg") else "—"
         proc = f" · proc {r['proc_roll']}" if r.get("proc_roll") else ""
+        desc = f"{r['desc']}\n" if r.get("desc") else ""
         embed.add_field(
             name=f"{r.get('emoji','🔹')} {r['name']}  ·  `{rid}`",
-            value=(f"Status: **{s.get('name', r.get('status','?'))}** "
+            value=(f"{desc}Status: **{s.get('name', r.get('status','?'))}** "
                    f"({s.get('kind','?')})\n-# {dmg}{proc}"),
             inline=False)
     embed.set_footer(text="⚒️ runa = trvalé doručení statusu · zapisuje se na konkrétní zbraň")
@@ -461,11 +464,13 @@ class BlacksmithCog(commands.Cog):
     @blacksmith.command(name="rune-create", description="[DM] Vytvoř runu (doručí status).")
     @app_commands.describe(rune_id="ID runy (např. led_2).", name="Název.",
                            status="Který status runa doručí.",
-                           proc_roll="Hod na proc (prázdné = dle statusu).", emoji="Emoji.")
+                           proc_roll="Hod na proc (prázdné = dle statusu).", emoji="Emoji.",
+                           desc="Popis runy (ukáže se u zbraně).")
     @app_commands.autocomplete(status=_ac_status)
     async def rune_create(self, interaction: discord.Interaction,
                           rune_id: str, name: str, status: str,
-                          proc_roll: Optional[str] = None, emoji: Optional[str] = None):
+                          proc_roll: Optional[str] = None, emoji: Optional[str] = None,
+                          desc: Optional[str] = None):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
             await interaction.followup.send("❌ Jen DM."); return
@@ -474,9 +479,41 @@ class BlacksmithCog(commands.Cog):
         rid = rune_id.strip().lower().replace(" ", "_")
         reg = load_runes(); existed = rid in reg
         reg[rid] = {"name": name.strip(), "emoji": (emoji or "🔹").strip(),
-                    "status": status, "proc_roll": (proc_roll or "").strip()}
+                    "status": status, "proc_roll": (proc_roll or "").strip(),
+                    "desc": (desc or "").strip()}
         save_runes(reg)
         await interaction.followup.send(f"⚒️ Runa **{name}** `{rid}` {'upravena' if existed else 'vytvořena'}.")
+
+    @blacksmith.command(name="rune-edit", description="[DM] Uprav existující runu (jen zadaná pole).")
+    @app_commands.describe(rune="Runa k úpravě.", name="Nový název.",
+                           status="Nový status.", proc_roll="Nový proc roll ('-' = smazat).",
+                           emoji="Nové emoji.", desc="Nový popis ('-' = smazat).")
+    @app_commands.autocomplete(rune=_ac_rune, status=_ac_status)
+    async def rune_edit(self, interaction: discord.Interaction, rune: str,
+                        name: Optional[str] = None, status: Optional[str] = None,
+                        proc_roll: Optional[str] = None, emoji: Optional[str] = None,
+                        desc: Optional[str] = None):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM."); return
+        reg = load_runes()
+        if rune not in reg:
+            await interaction.followup.send(f"❌ Runa `{rune}` neexistuje."); return
+        r = reg[rune]
+        if status is not None:
+            if status not in load_statuses():
+                await interaction.followup.send(f"❌ Status `{status}` neexistuje."); return
+            r["status"] = status
+        if name is not None:
+            r["name"] = name.strip()
+        if emoji is not None:
+            r["emoji"] = emoji.strip() or "🔹"
+        if proc_roll is not None:
+            r["proc_roll"] = "" if proc_roll.strip() == "-" else proc_roll.strip()
+        if desc is not None:
+            r["desc"] = "" if desc.strip() == "-" else desc.strip()
+        save_runes(reg)
+        await interaction.followup.send(f"✏️ Runa **{r['name']}** `{rune}` upravena.")
 
     @blacksmith.command(name="rune-delete", description="[DM] Smaž runu.")
     @app_commands.describe(rune="Runa ke smazání.")
