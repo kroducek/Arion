@@ -1128,6 +1128,14 @@ def _get_player(uid_str: str, data: dict) -> dict:
     p.setdefault("progress", {})
     return p
 
+async def _check_perk_collector(member, channel, perks_list) -> None:
+    """Po přidání perku ověří achievement 'Sběratel schopností' (100+ perků)."""
+    try:
+        from src.core.dnd.achievements import check_perk_collector_achievement
+        await check_perk_collector_achievement(member, channel, len(perks_list))
+    except Exception:
+        logger.exception("[perks] check achievementu Sběratel schopností selhal")
+
 # ── Level-up helpers ──────────────────────────────────────────────────────────
 
 _NEXT_TIER: dict[str, str] = {"magicke_citeni": "mana_sensing_2", "mana_sensing_2": "mana_sensing_3"}
@@ -1563,6 +1571,7 @@ class PerksCog(commands.Cog):
             return
         player["perks"].append(perk_id)
         save_player_perks(player_data)
+        await _check_perk_collector(member, interaction.channel, player["perks"])
         log_action("perk_give", interaction.user.display_name, member.display_name, perk_id)
 
         perk   = all_perks[perk_id]
@@ -1655,6 +1664,7 @@ class PerksCog(commands.Cog):
         chosen    = all_perks[chosen_id]
         player["perks"].append(chosen_id)
         save_player_perks(player_data)
+        await _check_perk_collector(member, interaction.channel, player["perks"])
         log_action("perk_random", interaction.user.display_name, member.display_name, chosen_id)
 
         await _dm_perk(member, chosen, chosen_id)
@@ -1741,6 +1751,7 @@ class PerksCog(commands.Cog):
             return
         player["perks"].append(perk_id)
         save_player_perks(player_data)
+        await _check_perk_collector(member, interaction.channel, player["perks"])
         log_action("perk_give", interaction.user.display_name, member.display_name, perk_id)
 
         perk   = all_perks[perk_id]

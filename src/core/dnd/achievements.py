@@ -72,6 +72,12 @@ ACHIEVEMENTS_DEF: dict[str, dict] = {
         "auto":        True,
         "rarity":      "Epic",
     },
+    "Sběratel schopností": {
+        "emoji":       "🧠",
+        "description": "Nasbíral jsi 100 perků. Skutečný polyhistor.",
+        "auto":        True,
+        "rarity":      "Legendary",
+    },
 }
 
 RARITY_COLOR = {
@@ -171,6 +177,13 @@ async def check_full_equip_achievement(member: discord.Member, channel,
     """Voláno po equipnutí. Udělí 'Naplno vyzbrojený!' když má hráč plnou výbavu."""
     name = "Naplno vyzbrojený!"
     if is_fully_equipped(equipment, active_slots) and not has_achievement(member.id, name):
+        if grant_achievement(member.id, name):
+            await announce_achievement(member, channel, name)
+
+async def check_perk_collector_achievement(member: discord.Member, channel, perk_count: int) -> None:
+    """Voláno po udělení perku. Udělí 'Sběratel schopností' při 100+ vlastněných percích."""
+    name = "Sběratel schopností"
+    if perk_count >= 100 and not has_achievement(member.id, name):
         if grant_achievement(member.id, name):
             await announce_achievement(member, channel, name)
 

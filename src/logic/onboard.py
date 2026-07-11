@@ -134,14 +134,14 @@ LOADOUTS = {
         "name": "Magická hůlka",
         "desc": "Čaroděj ovládající runovou magii hůlkou",
         "items": [("zakladni_hulka", 1), ("brasna", 1), ("stredni_lektvar_many", 1)],
-        "perk": "rune_basics_1",
+        "perk": "runes",
     },
     "scrolls": {
         "emoji": "📜",
         "name": "Magické svitky",
         "desc": "Sesilatel kouzel ze svitků",
         "items": [("svitek_ohnivy_sip", 2), ("svitek_ledovy_blok", 2), ("svitek_slabeho_uzdraveni", 2), ("svitek_jedovy_osten", 2), ("brasna", 1), ("stredni_lektvar_many", 1)],
-        "perk": "rune_basics_1",
+        "perk": "runes",
     },
     "two_handed": {
         "emoji": "⚔️",
