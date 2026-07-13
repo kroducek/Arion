@@ -1291,6 +1291,9 @@ class PerkListView(discord.ui.View):
 
     def build_embed(self) -> discord.Embed:
         group, content, color = self.pages[self.idx]
+        # tvrdá pojistka: Discord popis usekne nad 4096 znaků TIŠE — radši ořízneme viditelně
+        if len(content) > 4096:
+            content = content[:4085].rsplit("\n", 1)[0] + "\n-# …"
         embed = discord.Embed(title=f"📋 Databáze perků — {group}", description=content, color=color)
         embed.set_footer(text=f"Strana {self.idx + 1}/{len(self.pages)}  ·  ⭐ {ARION_NAME}")
         return embed
@@ -1610,28 +1613,55 @@ class PerksCog(commands.Cog):
             else:
                 ungrouped.append((pid, p))
 
+        # Discord description má limit 4096 znaků — delší se TIŠE usekne (chybějící perky
+        # + uříznutý poslední řádek). Skupinu proto stránkujeme jako batoh.
+        PAGE_CHAR_BUDGET = 3800   # rezerva pod 4096
+        PAGE_MAX_PERKS   = 15
+
+        def _paginate(title: str, entries: list[tuple[str, dict]], color: int,
+                      fmt) -> list[tuple[str, str, int]]:
+            """Rozseká skupinu na tolik stran, kolik je potřeba."""
+            out: list[tuple[str, str, int]] = []
+            buf: list[str] = []
+            used = 0
+            count = 0
+            for pid, p in entries:
+                block = fmt(pid, p)                 # list řádků jednoho perku
+                blen  = sum(len(l) + 1 for l in block)
+                if buf and (used + blen > PAGE_CHAR_BUDGET or count >= PAGE_MAX_PERKS):
+                    out.append((title, "\n".join(buf), color))
+                    buf, used, count = [], 0, 0
+                buf.extend(block)
+                used  += blen
+                count += 1
+            if buf:
+                out.append((title, "\n".join(buf), color))
+            # když je stran víc, očísluj je v nadpisu (Základní (2/3))
+            if len(out) > 1:
+                out = [(f"{t} ({i + 1}/{len(out)})", c, col)
+                       for i, (t, c, col) in enumerate(out)]
+            return out
+
+        def _fmt_full(pid: str, p: dict) -> list[str]:
+            passive_tag = " *(pasivní)*" if p.get("passive") else ""
+            unique_tag  = " ⭐" if p.get("unique") else ""
+            max_        = p.get("cooldown_uses", 0)
+            cd_tag      = f" · ⏳ {max_}×/den" if max_ > 0 else ""
+            return [f"▸ **{p['name']}**{passive_tag}{unique_tag}{cd_tag}", f"-# `{pid}`"]
+
+        def _fmt_plain(pid: str, p: dict) -> list[str]:
+            return [f"▸ **{p['name']}**", f"-# `{pid}`"]
+
         pages: list[tuple[str, str, int]] = []
         for g in GROUP_ORDER:
             if g not in groups:
                 continue
             gemoji = GROUP_EMOJI.get(g, "▸")
             color  = GROUP_COLOR.get(g, 0x7B68EE)
-            lines: list[str] = []
-            for pid, p in groups[g]:
-                passive_tag = " *(pasivní)*" if p.get("passive") else ""
-                unique_tag  = " ⭐" if p.get("unique") else ""
-                max_        = p.get("cooldown_uses", 0)
-                cd_tag      = f" · ⏳ {max_}×/den" if max_ > 0 else ""
-                lines.append(f"▸ **{p['name']}**{passive_tag}{unique_tag}{cd_tag}")
-                lines.append(f"-# `{pid}`")
-            pages.append((f"{gemoji} {g}", "\n".join(lines), color))
+            pages += _paginate(f"{gemoji} {g}", groups[g], color, _fmt_full)
 
         if ungrouped:
-            lines = []
-            for pid, p in ungrouped:
-                lines.append(f"▸ **{p['name']}**")
-                lines.append(f"-# `{pid}`")
-            pages.append(("✨ Ostatní", "\n".join(lines), 0x7B68EE))
+            pages += _paginate("✨ Ostatní", ungrouped, 0x7B68EE, _fmt_plain)
 
         if not pages:
             await interaction.response.send_message("Databáze perků je prázdná.", ephemeral=True)
