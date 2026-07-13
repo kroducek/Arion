@@ -6,6 +6,7 @@ import os
 import random
 import logging
 from datetime import date
+from typing import Optional
 
 from src.utils.paths import PERKS, PLAYER_PERKS, ODHALENI_POOL as ODHALENI_POOL_FILE
 from src.database.characters import pkey
@@ -714,6 +715,46 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_uses": 0,
         "cooldown_type": None,
     },
+    "dual_wielding": {
+        "name": "Boj se dvěma zbraněmi I.",
+        "group": "Výzbroj",
+        "passive": True,
+        "unique": False,
+        "learnable": False,
+        "sp_cost": 1,
+        "desc": "Otevření slotu druhá pomocná ruka.",
+        "subdesc": ("Jednoruční zbraň nyní nemusíš držet v obouch rukách. Ve své druhé ruce "
+                    "můžeš držet — dýku, štít, louč, lampu atd."),
+        "cooldown_uses": 0,
+        "cooldown_type": None,
+    },
+    "dual_wielding_2": {
+        "name": "Boj se dvěma zbraněmi II.",
+        "group": "Výzbroj",
+        "passive": True,
+        "unique": False,
+        "learnable": False,
+        "sp_cost": 5,
+        "desc": "Otevření slotu druhá vedlejší ruka.",
+        "subdesc": ("Nyní můžeš v obou rukách držet cokoliv, co není obouruční zbraň nebo předmět, "
+                    "který bys musel držet obouma rukama. Můžeš mít v rukou například dva meče, "
+                    "meč a katanu, dvě jednoruční kuše atd."),
+        "cooldown_uses": 0,
+        "cooldown_type": None,
+    },
+    "dual_wielding_3": {
+        "name": "Boj se dvěma zbraněmi III.",
+        "group": "Výzbroj",
+        "passive": True,
+        "unique": False,
+        "learnable": False,
+        "sp_cost": 20,
+        "desc": "Otevření slotu druhá hlavní ruka.",
+        "subdesc": ("Dosáhl jsi téměř vrcholu boje se dvěma zbraněmi. Dokážeš držet dvě obouruční "
+                    "zbraně. (Výjimka — luky)"),
+        "cooldown_uses": 0,
+        "cooldown_type": None,
+    },
     "one_handed_1": {
         "unlocks_skill": {"id": "lehke_zbrane", "name": "Lehké zbraně", "gives": None},
         "name": "Boj s jednoručními zbraněmi I.",
@@ -1138,7 +1179,56 @@ async def _check_perk_collector(member, channel, perks_list) -> None:
 
 # ── Level-up helpers ──────────────────────────────────────────────────────────
 
-_NEXT_TIER: dict[str, str] = {"magicke_citeni": "mana_sensing_2", "mana_sensing_2": "mana_sensing_3"}
+_NEXT_TIER: dict[str, str] = {
+    "magicke_citeni": "mana_sensing_2", "mana_sensing_2": "mana_sensing_3",
+    # dual_wielding nemá suffix _1, takže řetěz musí být explicitní
+    "dual_wielding": "dual_wielding_2", "dual_wielding_2": "dual_wielding_3",
+}
+
+# ── SP upgrady perků (⭐ ve /staty) ────────────────────────────────────────────
+
+# Řetězce perků kupovatelných za SP. Vždy tři tiery: (I, II, III).
+SP_PERK_CHAINS: list[tuple[str, str, str]] = [
+    ("dual_wielding", "dual_wielding_2", "dual_wielding_3"),
+]
+
+def owned_perks(user_id: int) -> list[str]:
+    """Perky AKTIVNÍ postavy (pkey), s fallbackem na starý účtový klíč."""
+    pp = load_player_perks()
+    out: list[str] = []
+    try:
+        out += list(pp.get(pkey(user_id), {}).get("perks", []))
+    except Exception:
+        logger.exception(f"[perks] owned_perks: pkey({user_id}) selhal")
+    out += list(pp.get(str(user_id), {}).get("perks", []))
+    return out
+
+def hand_tier(user_id: int) -> int:
+    """Kolikátý tier boje se dvěma zbraněmi hráč má (0 = žádný, 3 = max)."""
+    owned = owned_perks(user_id)
+    if "dual_wielding_3" in owned:
+        return 3
+    if "dual_wielding_2" in owned:
+        return 2
+    if "dual_wielding" in owned:
+        return 1
+    return 0
+
+def sp_perk_cost(perk_id: str, perks_db: Optional[dict] = None) -> int:
+    """SP cena perku (0 = nekupovatelný za SP)."""
+    db = perks_db if perks_db is not None else load_perks()
+    p  = db.get(perk_id) or _SEED_PERKS.get(perk_id, {})
+    try:
+        return int(p.get("sp_cost", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+def next_sp_upgrade(chain: tuple[str, str, str], owned: list[str]) -> Optional[str]:
+    """Další tier v řetězci, který si hráč může koupit. None = má už max."""
+    for pid in chain:
+        if pid not in owned:
+            return pid
+    return None
 
 def _next_tier_id(perk_id: str) -> str | None:
     if perk_id in _NEXT_TIER:
@@ -2452,6 +2542,117 @@ class PerksCog(commands.Cog):
             if current.lower() in pid.lower()
             or (pid in all_perks and current.lower() in all_perks[pid].get("name", "").lower())
         ][:25]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SP UPGRADY PERKŮ — ⭐ embed otevřený ze /staty
+# ══════════════════════════════════════════════════════════════════════════════
+
+class PerkUpgradeView(discord.ui.View):
+    """Nákup perkových tierů za SP. Vždy tři tiery na řetězec."""
+
+    def __init__(self, user_id: int):
+        super().__init__(timeout=300)
+        self.user_id = user_id
+        self._build()
+
+    def _build(self) -> None:
+        self.clear_items()
+        db    = load_perks()
+        owned = owned_perks(self.user_id)
+        for chain in SP_PERK_CHAINS:
+            nxt = next_sp_upgrade(chain, owned)
+            if not nxt:
+                continue   # má už tier III
+            perk = db.get(nxt) or _SEED_PERKS.get(nxt, {})
+            cost = sp_perk_cost(nxt, db)
+            btn  = discord.ui.Button(
+                label=f"⭐ {perk.get('name', nxt)} — {cost} SP"[:80],
+                style=discord.ButtonStyle.blurple,
+            )
+            btn.callback = self._make_buy(nxt)
+            self.add_item(btn)
+
+    def build_embed(self) -> discord.Embed:
+        from src.core.dnd.stats import _load, _profile
+        sp    = _profile(_load(), pkey(self.user_id)).get("sp", 0)
+        db    = load_perks()
+        owned = owned_perks(self.user_id)
+
+        lines: list[str] = []
+        for chain in SP_PERK_CHAINS:
+            for pid in chain:
+                perk = db.get(pid) or _SEED_PERKS.get(pid, {})
+                cost = sp_perk_cost(pid, db)
+                name = perk.get("name", pid)
+                sub  = perk.get("subdesc") or perk.get("desc") or ""
+                if pid in owned:
+                    lines.append(f"✅ **{name}**")
+                elif pid == next_sp_upgrade(chain, owned):
+                    lines.append(f"⭐ **{name}** — **{cost} SP**")
+                else:
+                    lines.append(f"🔒 ~~{name}~~ — {cost} SP")
+                if sub:
+                    lines.append(f"-# {sub}")
+            lines.append("")
+
+        desc = (f"Máš **{sp}** volných ⚡ SP.\n\n" + "\n".join(lines)).strip()
+        if len(desc) > 4096:
+            desc = desc[:4085].rsplit("\n", 1)[0] + "\n-# …"
+        embed = discord.Embed(title="⭐ Upgrady perků", description=desc, color=0xFFD700)
+        embed.set_footer(text=f"⚡ {sp} SP  ·  ⭐ {ARION_NAME}")
+        return embed
+
+    def _make_buy(self, perk_id: str):
+        async def cb(interaction: discord.Interaction):
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("❌ Toto není tvůj výběr.", ephemeral=True)
+                return
+            try:
+                from src.core.dnd.stats import spend_sp_amount, _load, _profile
+                db   = load_perks()
+                perk = db.get(perk_id) or _SEED_PERKS.get(perk_id, {})
+                name = perk.get("name", perk_id)
+                cost = sp_perk_cost(perk_id, db)
+
+                player_data = load_player_perks()
+                player      = _get_player(pkey(self.user_id), player_data)
+                if perk_id in player["perks"]:
+                    await interaction.response.send_message(f"ℹ️ **{name}** už máš.", ephemeral=True)
+                    return
+
+                have = _profile(_load(), pkey(self.user_id)).get("sp", 0)
+                if not spend_sp_amount(self.user_id, cost):
+                    await interaction.response.send_message(
+                        f"❌ Na **{name}** potřebuješ **{cost} SP** (máš {have}).", ephemeral=True)
+                    return
+
+                # nižší tier nahradíme vyšším (drží se jen aktuální tier)
+                for chain in SP_PERK_CHAINS:
+                    if perk_id in chain:
+                        for lower in chain[:chain.index(perk_id)]:
+                            if lower in player["perks"]:
+                                player["perks"].remove(lower)
+                        break
+                player["perks"].append(perk_id)
+                save_player_perks(player_data)
+                log_action("perk_buy_sp", interaction.user.display_name,
+                           interaction.user.display_name, f"{perk_id} ({cost} SP)")
+                await _check_perk_collector(interaction.user, interaction.channel, player["perks"])
+
+                view  = PerkUpgradeView(self.user_id)
+                embed = view.build_embed()
+                embed.description = f"✅ Koupeno: **{name}** (−{cost} SP)\n\n" + embed.description
+                await interaction.response.edit_message(embed=embed, view=view)
+            except discord.errors.NotFound:
+                logger.warning(f"[PerkUpgradeView] zpráva pryč (user {self.user_id})")
+            except Exception:
+                logger.exception(f"[PerkUpgradeView] nákup {perk_id} selhal")
+                try:
+                    await interaction.response.send_message("❌ Nákup selhal.", ephemeral=True)
+                except Exception:
+                    pass
+        return cb
 
 
 async def setup(bot):

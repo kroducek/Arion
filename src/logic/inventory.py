@@ -89,7 +89,7 @@ _KNOWN_ITEM_FIELDS = {
     "hp_restore", "mana_restore", "hunger_restore", "mana_cost",
     "hp_bonus", "mana_bonus", "stat_bonus", "equip_bonus", "requires", "required_perk",
     "consumable", "stackable", "storage", "storage_capacity", "storage_emoji",
-    "roll_tags", "id",
+    "roll_tags", "id", "offhand",
 }
 
 # Sloty které zabírá full_set item
@@ -639,6 +639,33 @@ def _remove_equip_bonus(profile: dict, bonus: dict) -> None:
         _recalc_fury_from_vliv(profile)
 
 
+# ── Dual wielding (perky Boj se dvěma zbraněmi I.–III.) ───────────────────────
+
+# Obouruční střelné zbraně, které i na tieru III potřebují obě ruce (výjimka: luky).
+BOW_CATEGORIES = {"luky_kuše", "střelné"}
+
+def _hand_tier(user_id: str | None) -> int:
+    """Tier boje se dvěma zbraněmi (0 = žádný perk, 3 = max)."""
+    if not user_id:
+        return 0
+    try:
+        from src.core.dnd.perks import hand_tier
+        return hand_tier(int(user_id))
+    except Exception:
+        logger.exception("[inv] zjištění dual-wield tieru selhalo")
+        return 0
+
+def _hand_slots_needed(db_item: dict, tier: int) -> int:
+    """Kolik rukou item zabere (1 nebo 2) při daném tieru."""
+    if db_item.get("hand_type") == "two":
+        # tier III unese dvě obouruční zbraně — kromě luků
+        if tier >= 3 and db_item.get("category") not in BOW_CATEGORIES:
+            return 1
+        return 2
+    # jednoruční: bez perku zabere obě ruce
+    return 1 if tier >= 1 else 2
+
+
 def _equip_item(profile: dict, item_id: str, preferred_slot: str | None,
                 items_db: dict, user_id: str | None = None) -> tuple[bool, str]:
     _ensure_inv_fields(profile)
@@ -674,13 +701,13 @@ def _equip_item(profile: dict, item_id: str, preferred_slot: str | None,
     req_perk = db_item.get("required_perk")
     if req_perk and user_id:
         try:
-            from src.core.dnd.perks import load_player_perks, load_perks
-            owned_perks = load_player_perks().get(user_id, {}).get("perks", [])
-            if req_perk not in owned_perks:
+            from src.core.dnd.perks import owned_perks, load_perks
+            owned = owned_perks(int(user_id))
+            if req_perk not in owned:
                 perk_name = load_perks().get(req_perk, {}).get("name", req_perk)
                 return False, f"**{db_item['name']}** vyžaduje perk **{perk_name}**."
         except Exception:
-            pass
+            logger.exception("[inv] kontrola required_perk selhala")
 
     hand_type   = db_item.get("hand_type")
     equip_bonus = db_item.get("equip_bonus", {})
@@ -708,23 +735,64 @@ def _equip_item(profile: dict, item_id: str, preferred_slot: str | None,
             msg += f"\n✨ Bonus: {bonus_str}"
         return True, msg
 
-    # ── Obouruční zbraň ───────────────────────────────────────────────────────
-    if slot_target == "hand_l" and hand_type == "two":
-        freed = []
-        seen  = set()
-        for s in ("hand_l", "hand_r"):
-            old = equipment.get(s)
-            if old and old not in seen:
-                _remove_equip_bonus(profile, items_db.get(old, {}).get("equip_bonus", {}))
-                _add_to_inventory(inventory, old, 1)
-                freed.append(old)
-                seen.add(old)
-            equipment[s] = None
-        equipment["hand_l"] = item_id
-        equipment["hand_r"] = item_id  # marker — oba ukazují na stejný item
+    # ── Ruce (dual wielding: tier 0–3) ────────────────────────────────────────
+    if slot_target == "hand_l" and hand_type in ("one", "two"):
+        tier = _hand_tier(user_id)
+        need = _hand_slots_needed(db_item, tier)
+
+        def _free_hand(slot: str) -> list[str]:
+            """Uvolní ruku (i obouruční marker) → vrátí seznam vrácených itemů."""
+            freed_ids = []
+            old = equipment.get(slot)
+            if not old:
+                return freed_ids
+            twin = "hand_r" if slot == "hand_l" else "hand_l"
+            both = equipment.get(twin) == old          # obouruční marker
+            _remove_equip_bonus(profile, items_db.get(old, {}).get("equip_bonus", {}))
+            _add_to_inventory(inventory, old, 1)
+            freed_ids.append(old)
+            equipment[slot] = None
+            if both:
+                equipment[twin] = None
+            return freed_ids
+
+        freed: list[str] = []
+
+        # ── item zabírá OBĚ ruce ───────────────────────────────────────────────
+        if need == 2:
+            for s in ("hand_l", "hand_r"):
+                for fid in _free_hand(s):
+                    if fid not in freed:
+                        freed.append(fid)
+            equipment["hand_l"] = item_id
+            equipment["hand_r"] = item_id          # marker — obě ruce = tentýž item
+            note = "obouruční" if hand_type == "two" else "zabírá obě ruce"
+        # ── item zabírá JEDNU ruku ─────────────────────────────────────────────
+        else:
+            is_offhand_item = bool(db_item.get("offhand"))
+            # tier 1: vedlejší ruka jen pro pomocné itemy (štít, louč, dýka…)
+            if tier == 1 and not is_offhand_item:
+                target_slot = "hand_l"
+            elif preferred_slot in ("hand_l", "hand_r"):
+                target_slot = preferred_slot
+                if tier == 1 and target_slot == "hand_r" and not is_offhand_item:
+                    return False, (f"**{db_item['name']}** nelze držet ve vedlejší ruce — "
+                                   f"na tomto tieru tam patří jen pomocné předměty "
+                                   f"(štít, louč, dýka…). Potřebuješ **Boj se dvěma zbraněmi II.**")
+            else:
+                target_slot = next(
+                    (s for s in ("hand_l", "hand_r") if not equipment.get(s)),
+                    "hand_l",
+                )
+            for fid in _free_hand(target_slot):
+                if fid not in freed:
+                    freed.append(fid)
+            equipment[target_slot] = item_id
+            note = SLOT_LABELS.get(target_slot, target_slot)
+
         _remove_from_inventory(inventory, item_id, 1)
         _apply_equip_bonus(profile, equip_bonus)
-        msg = f"Equipoval jsi **{db_item['name']}** (obouruční)."
+        msg = f"Equipoval jsi **{db_item['name']}** ({note})."
         if freed:
             freed_names = [items_db[i]["name"] if i in items_db else i for i in freed]
             msg += f"\nUvolněno: {', '.join(freed_names)} → vráceno do inventáře."
@@ -733,32 +801,6 @@ def _equip_item(profile: dict, item_id: str, preferred_slot: str | None,
             msg += f"\n✨ Bonus: {bonus_str}"
         return True, msg
 
-    # ── Jednoruční zbraň ──────────────────────────────────────────────────────
-    if slot_target == "hand_l" and hand_type == "one":
-        if preferred_slot in ("hand_l", "hand_r"):
-            target_slot = preferred_slot
-        else:
-            target_slot = next(
-                (s for s in ("hand_l", "hand_r") if not equipment.get(s)),
-                "hand_l"
-            )
-        old = equipment.get(target_slot)
-        freed_msg = ""
-        if old:
-            if equipment.get("hand_l") == equipment.get("hand_r") == old:
-                equipment["hand_l"] = None
-                equipment["hand_r"] = None
-            _remove_equip_bonus(profile, items_db.get(old, {}).get("equip_bonus", {}))
-            _add_to_inventory(inventory, old, 1)
-            old_name  = items_db[old]["name"] if old in items_db else old
-            freed_msg = f"\nUvolněno: {old_name} → vráceno do inventáře."
-        equipment[target_slot] = item_id
-        _remove_from_inventory(inventory, item_id, 1)
-        _apply_equip_bonus(profile, equip_bonus)
-        slot_label = SLOT_LABELS.get(target_slot, target_slot)
-        bonus_str  = _format_bonus(equip_bonus)
-        bonus_line = f"\n✨ Bonus: {bonus_str}" if bonus_str else ""
-        return True, f"Equipoval jsi **{db_item['name']}** do slotu **{slot_label}**.{freed_msg}{bonus_line}"
 
     # ── Prsteny / amulety ─────────────────────────────────────────────────────
     if slot_target in ("ring", "amulet"):
@@ -2097,6 +2139,7 @@ class Inventory(commands.Cog):
         desc="Popis, lore, perky — volný text.",
         lore_drop="Narativní hláška zobrazená při použití itemu (místo desc).",
         required_perk="Perk nutný pro equipnutí (autocomplete: Výzbroj perky).",
+        offhand="Lze držet v pomocné ruce (štít, louč, lampa, dýka).",
         storage_capacity="Pokud je item úložiště: počet slotů (0 = neúložiště, -1 = neomezeno jako BoH).",
         storage_emoji="Emoji úložiště zobrazené na tlačítku /inv (např. 🎒).",
     )
@@ -2136,6 +2179,7 @@ class Inventory(commands.Cog):
         desc: Optional[str] = None,
         lore_drop: Optional[str] = None,
         required_perk: Optional[str] = None,
+        offhand: bool = False,
         storage_capacity: int = 0,
         storage_emoji: Optional[str] = None,
     ):
@@ -2187,6 +2231,7 @@ class Inventory(commands.Cog):
                     equip_bonus[VLIV_REQUIRES.get(k, k)] = v
         if equip_bonus:    item["equip_bonus"]    = equip_bonus
         if required_perk:  item["required_perk"]  = required_perk
+        if offhand:        item["offhand"]        = True
         # Storage item — capacity 0 = běžný item, -1 = unlimited (BoH styl)
         if storage_capacity != 0:
             storage_def: dict = {"capacity": None if storage_capacity < 0 else storage_capacity}
@@ -2224,6 +2269,7 @@ class Inventory(commands.Cog):
         stat_bonus="Bonusy ke statům při equipu, např. STR:3 DEX:1 (stat:0 = odebrat).",
         lore_drop="Narativní hláška při použití (prázdné = beze změny · 'clear' = odebrat).",
         required_perk="Perk nutný pro equipnutí ('clear' = odebrat).",
+        offhand="Lze držet v pomocné ruce (štít, louč, lampa, dýka).",
         storage_capacity="Úložiště: počet slotů (0 = beze změny, -1 = ∞, 'clear' přes storage_clear).",
         storage_emoji="Emoji úložiště na tlačítku /inv.",
         storage_clear="Odebere storage vlastnost (item přestane být úložiště).",
@@ -2273,6 +2319,7 @@ class Inventory(commands.Cog):
         mana_bonus: Optional[int] = None,
         stat_bonus: Optional[str] = None,
         required_perk: Optional[str] = None,
+        offhand: Optional[bool] = None,
         storage_capacity: Optional[int] = None,
         storage_emoji: Optional[str] = None,
         storage_clear: bool = False,
@@ -2299,6 +2346,7 @@ class Inventory(commands.Cog):
             if lore_drop.lower() == "clear": item.pop("lore_drop", None)
             else:                            item["lore_drop"] = lore_drop
         if consumable is not None: item["consumable"] = consumable
+        if offhand is not None:    item["offhand"]    = offhand
         if stackable  is not None: item["stackable"]  = stackable
         if atk is not None:
             atk = atk.strip()

@@ -531,6 +531,19 @@ def sp_cost(level: int) -> int:
     """SP na povýšení z `level` na `level+1` (triangulární: 1,2,3,…)."""
     return level + 1
 
+def spend_sp_amount(user_id: int, amount: int) -> bool:
+    """Odečte libovolný počet SP (nákup perku). False = nedostatek SP."""
+    if amount <= 0:
+        return False
+    data = _load()
+    uid  = pkey(user_id)
+    p    = _profile(data, uid)
+    if p.get("sp", 0) < amount:
+        return False
+    p["sp"] = p.get("sp", 0) - amount
+    _save(data)
+    return True
+
 def spend_sp(user_id: int, skill_id: str, amount: int = 1) -> bool:
     """Zvýší skill o 1 level. Cena = (level+1) SP, cap SKILL_CAP.
     gives (za každý utracený SP): hp→+5 HP & +1 hlad, mana→+5 MP, def→+1 DEF."""
@@ -919,6 +932,27 @@ class StatPointView(discord.ui.View):
         tbtn = discord.ui.Button(label=f"🔁 {other}", style=discord.ButtonStyle.secondary, row=4)
         tbtn.callback = self._toggle
         self.add_item(tbtn)
+
+        # ⭐ upgrady perků za SP
+        pbtn = discord.ui.Button(label="⭐ Upgrady perků", style=discord.ButtonStyle.success, row=4)
+        pbtn.callback = self._open_perk_upgrades
+        self.add_item(pbtn)
+
+    async def _open_perk_upgrades(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Toto není tvůj výběr.", ephemeral=True)
+            return
+        try:
+            from src.core.dnd.perks import PerkUpgradeView
+            view = PerkUpgradeView(self.user_id)
+            await interaction.response.send_message(
+                embed=view.build_embed(), view=view, ephemeral=True)
+        except Exception:
+            logger.exception("[StatPointView] otevření upgradů perků selhalo")
+            try:
+                await interaction.response.send_message("❌ Nepovedlo se otevřít upgrady.", ephemeral=True)
+            except Exception:
+                pass
 
     def _make_page(self, page: int):
         async def cb(interaction: discord.Interaction):
