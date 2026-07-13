@@ -709,8 +709,31 @@ def _equip_item(profile: dict, item_id: str, preferred_slot: str | None,
         if have < needed:
             failed.append((stat, needed, have))
     if failed:
-        reqs = ", ".join(f"**{stat}** {needed} (máš {have})" for stat, needed, have in failed)
-        return False, f"**{db_item['name']}** — nesplněné požadavky: {reqs}."
+        reg    = _skill_reg()
+        skills = profile.get("skills", {}) or {}
+        stats_ = profile.get("stats", {}) or {}
+        parts  = []
+        stale  = False
+        for stat, needed, have in failed:
+            label = reg.get(stat, stat)
+            known = (stat in reg) or (stat in skills) or (stat in stats_) or (stat in VLIV_REQUIRES)
+            if not known:
+                # requires míří na id, které v registru ani v profilu neexistuje
+                # → zastaralý požadavek u itemu (přejmenovaný perk/skill)
+                stale = True
+                parts.append(f"**{stat}** {needed} — ⚠️ neznámé ID")
+            else:
+                parts.append(f"**{label}** {needed} (máš {have})")
+        msg = f"**{db_item['name']}** — nesplněné požadavky: {', '.join(parts)}."
+        if stale:
+            have_ids = ", ".join(f"`{k}`" for k in skills) or "—"
+            msg += ("\n-# ⚠️ Item má zastaralý požadavek (skill s tímto ID neexistuje). "
+                    f"Oprav přes `/item edit`. Tvoje skilly: {have_ids}")
+            logger.warning(
+                f"[inv] item '{item_id}' má zastaralý requires: "
+                f"{[s for s, _, _ in failed if s not in reg and s not in skills and s not in stats_]}"
+            )
+        return False, msg
 
     req_perk = db_item.get("required_perk")
     if req_perk and user_id:
