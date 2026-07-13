@@ -2509,7 +2509,23 @@ class Inventory(commands.Cog):
             cat = v.get("category", "ostatní")
             by_cat.setdefault(cat, []).append((k, v))
 
-        embed = discord.Embed(title="📖  Databáze itemů", color=EMBED_COLOR)
+        # Discord limity: 1024 znaků / field, 25 fieldů a 6000 znaků / embed.
+        # Nabitá kategorie se dřív nacpala do JEDNOHO fieldu → HTTP 400 a
+        # "Aplikace neodpovídá". Proto sekáme na fieldy i na stránky.
+        FIELD_LIMIT  = 1024
+        EMBED_BUDGET = 5500
+        MAX_FIELDS   = 20
+
+        pages: list[list[tuple[str, str]]] = []   # stránka = [(name, value)]
+        cur: list[tuple[str, str]] = []
+        cur_chars = 0
+
+        def _flush():
+            nonlocal cur, cur_chars
+            if cur:
+                pages.append(cur)
+                cur, cur_chars = [], 0
+
         for cat, items in by_cat.items():
             lines = []
             for iid, iv in items:
@@ -2517,9 +2533,36 @@ class Inventory(commands.Cog):
                 if iv.get("consumable"): tags.append("consumable")
                 if iv.get("stackable"):  tags.append("stackable")
                 tag_str = f"  *{', '.join(tags)}*" if tags else ""
-                lines.append(f"**{iv['name']}**  `{iid}`{tag_str}")
-            embed.add_field(name=cat, value="\n".join(lines), inline=False)
-        await interaction.followup.send(embed=embed)
+                lines.append(f"**{iv.get('name', iid)}**  `{iid}`{tag_str}")
+
+            # rozsekej kategorii na kusy po ≤1024 znacích
+            chunks: list[str] = []
+            buf: list[str] = []
+            blen = 0
+            for ln in lines:
+                if buf and blen + len(ln) + 1 > FIELD_LIMIT:
+                    chunks.append("\n".join(buf))
+                    buf, blen = [], 0
+                buf.append(ln)
+                blen += len(ln) + 1
+            if buf:
+                chunks.append("\n".join(buf))
+
+            for i, chunk in enumerate(chunks):
+                name = cat if len(chunks) == 1 else f"{cat} ({i + 1}/{len(chunks)})"
+                if cur and (len(cur) >= MAX_FIELDS or cur_chars + len(chunk) > EMBED_BUDGET):
+                    _flush()
+                cur.append((name, chunk))
+                cur_chars += len(chunk) + len(name)
+        _flush()
+
+        total = len(filtered)
+        for idx, fields in enumerate(pages):
+            embed = discord.Embed(title="📖  Databáze itemů", color=EMBED_COLOR)
+            for name, value in fields:
+                embed.add_field(name=name, value=value, inline=False)
+            embed.set_footer(text=f"Strana {idx + 1}/{len(pages)}  ·  {total} itemů")
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
     # ══════════════════════════════════════════════════════════════════════════
     # STORAGE — univerzální přesun (hráč)
