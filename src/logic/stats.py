@@ -147,14 +147,29 @@ _BASE_SKILLS = [
 ]
 
 def _skill_registry() -> dict:
-    """Globální registr skillů (základní Výdrž + z perků): id → {id,name,gives}."""
+    """Globální registr skillů (základní Výdrž + z perků): id → {id,name,gives}.
+
+    Respektuje tombstone (deleted_perks.json): smazaný seed perk nesmí dál cpát
+    do registru svůj skill. Jinak vznikne DUCH — starý skill id (lehke_zbrane)
+    žijící vedle nového (z perku light_weapons) pod stejným jménem, a itemy se
+    pak ptají na id, které žádný hráč nemá → 'máš 0'.
+    """
     reg = {s["id"]: dict(s) for s in _BASE_SKILLS}
     try:
-        from src.core.dnd.perks import _SEED_PERKS, load_perks
-        for src in (_SEED_PERKS, load_perks()):     # seed + živá DB (DB vyhrává)
-            for perk in src.values():
+        from src.core.dnd.perks import _SEED_PERKS, load_perks, load_deleted_perks
+        try:
+            deleted = load_deleted_perks()
+        except Exception:
+            logger.exception("[stats] _skill_registry: load_deleted_perks selhal")
+            deleted = set()
+        live = load_perks()
+        for src in (_SEED_PERKS, live):             # seed + živá DB (DB vyhrává)
+            for pid, perk in src.items():
                 if not isinstance(perk, dict):
                     continue                        # přeskoč ne-perk klíče (_connections, _deleted…)
+                # smazaný seed perk (a není vzkříšený v živé DB) → přeskoč
+                if pid in deleted and pid not in live:
+                    continue
                 us = perk.get("unlocks_skill")
                 if isinstance(us, dict) and us.get("id"):
                     reg[us["id"]] = us
