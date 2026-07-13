@@ -109,7 +109,7 @@ _VLIV_KEYS = ["SVETLO", "TEMNOTA", "ROVNOVAHA"]
 def _skill_reg() -> dict:
     """skill_id → název (z registru skillů přes stats)."""
     try:
-        from src.core.dnd.stats import _skill_registry
+        from src.logic.stats import _skill_registry
         return {sid: meta.get("name", sid) for sid, meta in _skill_registry().items()}
     except Exception:
         # NESMÍ se spolknout: prázdný registr = requires na skilly čtou vždy 0
@@ -123,14 +123,25 @@ def _require_keys() -> list:
 
 
 def _req_have(profile: dict, key: str) -> int:
-    """Aktuální hodnota hráče pro require/bonus klíč (atribut / Vliv / skill)."""
+    """Aktuální hodnota hráče pro require/bonus klíč (atribut / Vliv / skill).
+
+    Profil je zdroj pravdy. Registr skillů se používá jen jako doplněk pro
+    skilly na levelu 0 — dřív se na něm GATOVALO, takže když selhal, spadl
+    require na profile['stats'], kde skilly nejsou → vždycky 0 (item nešel
+    equipnout, i když hráč skill měl).
+    """
     if not profile:
         return 0
     if key in VLIV_REQUIRES:
         return profile.get(VLIV_REQUIRES[key], 0)
-    if key in _skill_reg():
-        return profile.get("skills", {}).get(key, 0)
-    return profile.get("stats", {}).get(key, 0)
+    skills = profile.get("skills", {}) or {}
+    if key in skills:
+        return skills[key]
+    stats = profile.get("stats", {}) or {}
+    if key in stats:
+        return stats[key]
+    # není ani ve skillech, ani v atributech → 0 (skill na levelu 0 / neznámý klíč)
+    return 0
 
 # Kategorie dostupné v /use
 USE_CATEGORIES = ["jídlo", "lektvary", "svitky", "ostatní"]

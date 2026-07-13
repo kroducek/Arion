@@ -2574,7 +2574,7 @@ class PerkUpgradeView(discord.ui.View):
             self.add_item(btn)
 
     def build_embed(self) -> discord.Embed:
-        from src.core.dnd.stats import _load, _profile
+        from src.logic.stats import _load, _profile
         sp    = _profile(_load(), pkey(self.user_id)).get("sp", 0)
         db    = load_perks()
         owned = owned_perks(self.user_id)
@@ -2609,7 +2609,7 @@ class PerkUpgradeView(discord.ui.View):
                 await interaction.response.send_message("❌ Toto není tvůj výběr.", ephemeral=True)
                 return
             try:
-                from src.core.dnd.stats import spend_sp_amount, _load, _profile
+                from src.logic.stats import spend_sp_amount, _load, _profile
                 db   = load_perks()
                 perk = db.get(perk_id) or _SEED_PERKS.get(perk_id, {})
                 name = perk.get("name", perk_id)
