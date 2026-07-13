@@ -109,9 +109,12 @@ _VLIV_KEYS = ["SVETLO", "TEMNOTA", "ROVNOVAHA"]
 def _skill_reg() -> dict:
     """skill_id → název (z registru skillů přes stats)."""
     try:
-        from src.logic.stats import _skill_registry
+        from src.core.dnd.stats import _skill_registry
         return {sid: meta.get("name", sid) for sid, meta in _skill_registry().items()}
     except Exception:
+        # NESMÍ se spolknout: prázdný registr = requires na skilly čtou vždy 0
+        # (item se pak nedá equipnout, i když hráč skill má)
+        logger.exception("[inv] _skill_reg: načtení registru skillů selhalo")
         return {}
 
 def _require_keys() -> list:
