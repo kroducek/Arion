@@ -69,6 +69,7 @@ DND_COGS = [
     "src.core.dnd.blacksmith",
     "src.core.dnd.character",
     "src.core.dnd.ranks",
+    "src.core.dnd.board",
     
     # D&D logika / postavy
     "src.logic.profile",
