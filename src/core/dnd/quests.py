@@ -641,13 +641,17 @@ class QuestsCog(commands.Cog):
 
     @quest_group.command(name="status", description="Změň stav questu")
     @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(name="Název questu", status="Nový stav")
+    @app_commands.describe(
+        name="Název questu", status="Nový stav",
+        winner="Jen u ZÁVODNÍCH zakázek: kdo splnil první. Ostatní dostanou nesplněno.",
+    )
     @app_commands.choices(status=[
         app_commands.Choice(name="🟢 Aktivní",   value=Status.ACTIVE),
         app_commands.Choice(name="✅ Dokončený", value=Status.COMPLETED),
         app_commands.Choice(name="❌ Neúspěšný", value=Status.FAILED),
     ])
-    async def quest_status(self, interaction: discord.Interaction, name: str, status: str):
+    async def quest_status(self, interaction: discord.Interaction, name: str, status: str,
+                           winner: discord.Member | None = None):
         await interaction.response.defer(ephemeral=True)
 
         quests = load_quests()
@@ -666,6 +670,18 @@ class QuestsCog(commands.Cog):
             member_ids = []
         meta       = STATUS_META[status]
 
+        # ── Závodní zakázka: vítěz bere vše, ostatní mají smůlu ──────────────
+        if winner is not None:
+            if status != Status.COMPLETED:
+                await interaction.followup.send(
+                    "❌ Vítěze lze vyhlásit jen u stavu **dokončený**.", ephemeral=True)
+                return
+            if winner.id not in member_ids:
+                await interaction.followup.send(
+                    f"❌ {winner.mention} tuhle zakázku nemá vzatou.", ephemeral=True)
+                return
+        winner_id = winner.id if winner else None
+
         if status in (Status.COMPLETED, Status.FAILED):
             quest_data["status"] = status
             quest_data["closed"] = today()
@@ -680,28 +696,45 @@ class QuestsCog(commands.Cog):
             # ── Automatické přidělování XP při dokončení ─────────────────────────
             xp_reward = _parse_xp(quest_data.get("xp")) if status == Status.COMPLETED else 0
 
-            diaries  = load_diaries()
-            dm_embed = discord.Embed(
-                title=f"{meta['emoji']}  Quest {status}",
-                description=f"**{name}**",
-                color=meta["color"],
-            )
-            dm_embed.set_footer(text=f"⭐ {ARION_NAME}  ·  Zapsáno do tvého deníku")
+            diaries = load_diaries()
             for uid in member_ids:
+                # Závod: vítěz má DOKONČENO, ostatní NESPLNĚNO.
+                # (Bez vítěze se chová quest jako dřív — všem stejně.)
+                is_loser  = (winner_id is not None and uid != winner_id)
+                u_status  = Status.FAILED if is_loser else status
+                u_meta    = STATUS_META[u_status]
+
                 uid_str = str(uid)
                 entries = _migrate_entries(diaries.get(uid_str, []))
-                if not update_diary_quest_status(entries, name, status):
+                if not update_diary_quest_status(entries, name, u_status):
                     entries.append({
-                        "text":   f"{today()} — {meta['emoji']} **{name}** — {status.upper()}",
+                        "text":   f"{today()} — {u_meta['emoji']} **{name}** — {u_status.upper()}",
                         "pinned": False,
                         "tag":    QUEST_TAG,
                     })
                 diaries[uid_str] = entries
-                
-                # Přidej XP, pokud je quest dokončen
-                if xp_reward > 0:
+
+                # DM embed se staví PRO KAŽDÉHO ZVLÁŠŤ — dřív se vyráběl jednou
+                # před smyčkou, takže druhému hráči přistály i odměny prvního.
+                dm_embed = discord.Embed(
+                    title=f"{u_meta['emoji']}  Quest {u_status}",
+                    description=f"**{name}**",
+                    color=u_meta["color"],
+                )
+                if is_loser:
+                    win_m = guild.get_member(winner_id)
+                    dm_embed.description += (
+                        f"\n-# Zakázku splnil/a první "
+                        f"{win_m.display_name if win_m else 'někdo jiný'}. Příště buď rychlejší."
+                    )
+                dm_embed.set_footer(text=f"⭐ {ARION_NAME}  ·  Zapsáno do tvého deníku")
+
+                member = guild.get_member(uid)
+                earns  = (u_status == Status.COMPLETED)
+
+                # XP jen tomu, kdo quest doopravdy splnil
+                if earns and xp_reward > 0:
                     xp_result = add_xp(uid, xp_reward)
-                    # Přidej do embedu info o XP a levelupu
                     if xp_result["leveled_up"]:
                         dm_embed.add_field(
                             name="✨ Odměna",
@@ -714,18 +747,15 @@ class QuestsCog(commands.Cog):
                             value=f"+{xp_reward} XP  ({xp_result['xp']}/{xp_result['cap']})",
                             inline=False,
                         )
-                
-                member = guild.get_member(uid)
 
-                # ── Rank body za dokončený quest ────────────────────────────
+                # ── Rank body ────────────────────────────────────────────────
                 # award_quest_rank si sám ohlásí rank up (kanál + DM) a nikdy
                 # nevyhodí výjimku — uzavření questu nesmí spadnout kvůli ranku.
-                if status == Status.COMPLETED and member:
+                if earns and member:
                     diff = quest_data.get("difficulty", DEFAULT_DIFFICULTY)
                     rk   = await award_quest_rank(member, diff, interaction.channel)
                     if rk:
-                        d_meta = DIFFICULTY.get(diff, {})
-                        pts    = d_meta.get("points", 0)
+                        pts = DIFFICULTY.get(diff, {}).get("points", 0)
                         if rk["ranked_up"]:
                             dm_embed.add_field(
                                 name="🎖️ Rank",

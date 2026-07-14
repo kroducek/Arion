@@ -40,6 +40,25 @@ MAX_BOARD_QUESTS = 1     # kolik questů z nástěnky smí mít hráč rozdělan
 
 ANYWHERE = "kdekoliv"    # zakázka bez konkrétní destinace — visí na VŠECH nástěnkách
 
+# ── Druhy zakázek ─────────────────────────────────────────────────────────────
+class QType:
+    EXCLUSIVE = "exclusive"   # kdo dřív klikne — zmizí z nástěnky
+    RACE      = "race"        # závod: může vzít víc lidí, VISÍ DÁL, vyhraje kdo splní první
+    GROUP     = "group"       # skupinová: vůdce vezme, ostatní potvrdí, jdou na to spolu
+
+QTYPE_META: dict[str, dict] = {
+    QType.EXCLUSIVE: {"emoji": "📜", "label": "Zakázka",
+                      "desc": "Vezme si ji první, kdo klikne."},
+    QType.RACE:      {"emoji": "🏁", "label": "Závod",
+                      "desc": "Může vzít víc dobrodruhů. Vyhrává, kdo splní první."},
+    QType.GROUP:     {"emoji": "🛡️", "label": "Skupinová",
+                      "desc": "Vezme ji vůdce party, členové potvrdí."},
+}
+DEFAULT_QTYPE = QType.EXCLUSIVE
+
+MIN_GROUP_SIZE  = 2      # kolik dobrodruhů minimálně na skupinovou zakázku
+GROUP_TIMEOUT   = 600    # kolik vteřin má parta na sesbírání (10 min)
+
 # Značka, podle které poznáme quest vzatý z nástěnky. Díky ní NEPOTŘEBUJEME
 # druhý stav — limit se odvodí z quests.json a po uzavření questu se uvolní SÁM.
 BOARD_SOURCE = "board"
@@ -107,10 +126,24 @@ def save_boards(data: dict):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def taken_names() -> set[str]:
-    """Zakázky, které si někdo vzal a ještě je nedokončil."""
+    """Zakázky, které si někdo vzal a tím je STÁHL z nástěnky.
+
+    ZÁVOD se sem NEPOČÍTÁ — ten visí dál a může se do něj přidat kdokoli další.
+    """
     return {
         n for n, q in load_quests().items()
         if q.get("source") == BOARD_SOURCE
+        and q.get("status", Status.ACTIVE) == Status.ACTIVE
+        and q.get("qtype", DEFAULT_QTYPE) != QType.RACE
+    }
+
+def race_counts() -> dict[str, int]:
+    """{název závodní zakázky: kolik lidí závodí}"""
+    return {
+        n: len(q.get("members") or [])
+        for n, q in load_quests().items()
+        if q.get("source") == BOARD_SOURCE
+        and q.get("qtype") == QType.RACE
         and q.get("status", Status.ACTIVE) == Status.ACTIVE
     }
 
@@ -172,11 +205,15 @@ def board_embed(dest: str, offers: list[str], pool: dict) -> discord.Embed:
         embed.add_field(name="— prázdná —",
                         value="Momentálně tu nic nevisí. Zeptej se později.",
                         inline=False)
+    races = race_counts()
     for i, name in enumerate(offers):
         q    = pool.get(name, {})
         diff = DIFFICULTY.get(q.get("difficulty", DEFAULT_DIFFICULTY), {})
         xp   = q.get("xp")
         mr   = q.get("min_rank", STARTING_RANK)
+
+        qt   = q.get("qtype", DEFAULT_QTYPE)
+        qm   = QTYPE_META.get(qt, QTYPE_META[DEFAULT_QTYPE])
 
         meta = [f"{diff.get('label', '?')}", f"**{mr}+**"]
         # na městské nástěnce dává smysl označit jen ty univerzální
@@ -184,11 +221,19 @@ def board_embed(dest: str, offers: list[str], pool: dict) -> discord.Embed:
             meta.insert(0, "🗺️ Kdekoliv")
         if xp:
             meta.append(f"⭐ {xp} XP")
-        embed.add_field(
-            name=f"{i + 1}.  {name}",
-            value=f"*{q.get('info', '')}*\n-# {'  ·  '.join(meta)}",
-            inline=False,
-        )
+
+        head = f"{qm['emoji']} {i + 1}.  {name}"
+        body = [f"*{q.get('info', '')}*"]
+        if qt == QType.RACE:
+            n_racers = races.get(name, 0)
+            body.append(f"-# 🏁 **Závod** — kdo splní první, bere odměnu."
+                        + (f"  ·  závodí **{n_racers}**" if n_racers else ""))
+        elif qt == QType.GROUP:
+            body.append(f"-# 🛡️ **Skupinová** — bere ji **vůdce party** "
+                        f"(min. {MIN_GROUP_SIZE} dobrodruzi).")
+        body.append(f"-# {'  ·  '.join(meta)}")
+
+        embed.add_field(name=head, value="\n".join(body), inline=False)
     embed.set_footer(text=f"⭐ {ARION_NAME}")
     return embed
 
@@ -241,7 +286,8 @@ class BoardView(discord.ui.View):
                     f"Zakázka **{name}** už v zásobníku není.", ephemeral=True)
                 return
 
-            uid = interaction.user.id
+            uid   = interaction.user.id
+            qtype = q.get("qtype", DEFAULT_QTYPE)
 
             # má vůbec postavu?
             from src.utils.paths import PROFILES as _PF
@@ -256,43 +302,88 @@ class BoardView(discord.ui.View):
                 return
 
             quests = load_quests()
-            if name in quests:
+            existing = quests.get(name)
+
+            # ── ZÁVOD: zakázku může vzít víc lidí a VISÍ DÁL ─────────────────
+            if qtype == QType.RACE:
+                if existing:
+                    if uid in existing.get("members", []):
+                        await interaction.followup.send(
+                            "Tuhle zakázku už závodíš.", ephemeral=True)
+                        return
+                    existing.setdefault("members", []).append(uid)
+                else:
+                    quests[name] = _new_quest(q, [uid], qtype)
+                save_quests(quests)
+
+                await _write_diary(interaction.guild, [uid], name, q)
+                await refresh_all_boards(interaction.client, boards)   # jen přepočet počtu
+
+                racers = len(quests[name]["members"])
+                log_action("board_race", interaction.user.display_name,
+                           interaction.user.display_name, name)
+                await interaction.followup.send(
+                    f"🏁 Vstoupil/a jsi do závodu o **{name}**.\n"
+                    f"-# Závodí {racers} dobrodruhů. Kdo splní první, bere odměnu.",
+                    ephemeral=True)
+                return
+
+            # ── SKUPINOVÁ: bere ji jen VŮDCE PARTY, členové potvrdí ──────────
+            if qtype == QType.GROUP:
+                if existing:
+                    await interaction.followup.send(
+                        "Tuhle zakázku už si někdo vzal.", ephemeral=True)
+                    return
+
+                leads = led_parties(uid)
+                if not leads:
+                    await interaction.followup.send(
+                        "🛡️ Skupinovou zakázku může vzít **jen vůdce party**.\n"
+                        "-# Založ partu (`/party create`), nebo ať ji vezme tvůj vůdce.",
+                        ephemeral=True)
+                    return
+
+                # parta musí mít dost lidí, aby to vůbec šlo dotáhnout
+                big_enough = [(n, p) for n, p in leads
+                              if len(p.get("members", [])) >= MIN_GROUP_SIZE]
+                if not big_enough:
+                    await interaction.followup.send(
+                        f"🛡️ Tvoje parta má málo členů — potřebuješ aspoň "
+                        f"**{MIN_GROUP_SIZE}** dobrodruhy.", ephemeral=True)
+                    return
+
+                if len(big_enough) > 1:
+                    # vede víc part → ať si vybere
+                    pick = PartyPickView(self.dest, name, interaction.user, big_enough)
+                    await interaction.followup.send(
+                        f"Vedeš víc part — se kterou vezmeš **{name}**?",
+                        view=pick, ephemeral=True)
+                    return
+
+                pname, party = big_enough[0]
+                view = GroupTakeView(self.dest, name, interaction.user, pname, party)
+                msg  = await interaction.channel.send(
+                    embed=view.build_embed(pool), view=view)
+                view.message = msg
+                await interaction.followup.send(
+                    f"🛡️ Svolal/a jsi partu **{pname}** na **{name}**.\n"
+                    f"-# Ať členové kliknou *Potvrdit*. Pak dej *Vyrazit*.",
+                    ephemeral=True)
+                return
+
+            # ── EXKLUZIVNÍ: první bere, mizí ─────────────────────────────────
+            if existing:
                 await interaction.followup.send(
                     "Tuhle zakázku už si někdo vzal.", ephemeral=True)
                 return
 
-            # zapiš jako běžný aktivní quest (dál to jede stávajícím systémem)
-            quests[name] = {
-                "info":         q.get("info", ""),
-                "xp":           q.get("xp"),
-                "category":     Category.SOLO,
-                "difficulty":   q.get("difficulty", DEFAULT_DIFFICULTY),
-                "destination":  q.get("destination", ANYWHERE),
-                "parent_quest": None,
-                "members":      [uid],
-                "added":        today(),
-                "source":       BOARD_SOURCE,
-            }
+            quests[name] = _new_quest(q, [uid], qtype)
             save_quests(quests)
-
-            # deník + DM (recyklujeme helper z quests.py) — s destinací v popisu
-            _dest = q.get("destination")
-            _info = q.get("info", "")
-            if _dest and _dest != ANYWHERE:
-                _info = f"{_info}\n📍 {dest_label(_dest)}".strip()
-
-            diaries = load_diaries()
-            await _assign_and_notify(
-                interaction.guild, [uid], diaries, name,
-                _info, Category.SOLO, q.get("xp"),
-            )
-            save_diaries(diaries)
+            await _write_diary(interaction.guild, [uid], name, q)
 
             # Univerzální zakázka visí na VÍC nástěnkách → sundej ji ze všech
             # a všechny překresli, ať si ji nikdo nezkusí vzít podruhé.
-            for key, b in boards.items():
-                if name in b.get("offers", []):
-                    b["offers"] = [n for n in b["offers"] if n != name]
+            _drop_from_boards(boards, name)
             save_boards(boards)
             await refresh_all_boards(interaction.client, boards)
 
@@ -308,6 +399,237 @@ class BoardView(discord.ui.View):
                 await interaction.followup.send("❌ Něco se pokazilo.", ephemeral=True)
             except Exception:
                 pass
+
+
+def _new_quest(q: dict, members: list[int], qtype: str) -> dict:
+    """Záznam do quests.json — dál to jede stávajícím systémem."""
+    return {
+        "info":         q.get("info", ""),
+        "xp":           q.get("xp"),
+        "category":     Category.SOLO,
+        "difficulty":   q.get("difficulty", DEFAULT_DIFFICULTY),
+        "destination":  q.get("destination", ANYWHERE),
+        "qtype":        qtype,
+        "parent_quest": None,
+        "members":      list(members),
+        "added":        today(),
+        "source":       BOARD_SOURCE,
+    }
+
+
+async def _write_diary(guild, member_ids: list[int], name: str, q: dict) -> None:
+    """Zápis do deníku + DM (recyklujeme helper z quests.py)."""
+    _dest = q.get("destination")
+    _info = q.get("info", "")
+    if _dest and _dest != ANYWHERE:
+        _info = f"{_info}\n📍 {dest_label(_dest)}".strip()
+    diaries = load_diaries()
+    await _assign_and_notify(
+        guild, member_ids, diaries, name, _info, Category.SOLO, q.get("xp"))
+    save_diaries(diaries)
+
+
+def _drop_from_boards(boards: dict, name: str) -> None:
+    for b in boards.values():
+        if name in b.get("offers", []):
+            b["offers"] = [n for n in b["offers"] if n != name]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SKUPINOVÁ ZAKÁZKA — bere ji VŮDCE PARTY, členové potvrdí
+# ══════════════════════════════════════════════════════════════════════════════
+
+# parties.json čteme přímo (stejný tvar jako PartyManager) — žádný import navíc.
+def load_parties() -> dict:
+    from src.utils.paths import PARTIES
+    return load_json(PARTIES, default={})
+
+def led_parties(user_id: int) -> list[tuple[str, dict]]:
+    """Party, kterým je hráč VŮDCEM. (Hráč jich může mít až 3.)"""
+    return [(n, p) for n, p in load_parties().items()
+            if p.get("leader") == user_id]
+
+
+class GroupTakeView(discord.ui.View):
+    """Vůdce svolá partu na zakázku, členové potvrdí, vůdce vyrazí.
+
+    Krátkodobá view (10 min) — nepřežije restart, a nemusí: když bot spadne,
+    zakázka na nástěnce pořád visí a parta se svolá znovu.
+    """
+
+    def __init__(self, dest: str, quest_name: str, leader: discord.Member,
+                 party_name: str, party: dict):
+        super().__init__(timeout=GROUP_TIMEOUT)
+        self.dest       = dest
+        self.name       = quest_name
+        self.leader     = leader
+        self.party_name = party_name
+        # členové party kromě vůdce — ti musí potvrdit
+        self.roster     = [m for m in party.get("members", []) if m != leader.id]
+        self.confirmed  = {leader.id}          # vůdce je potvrzený automaticky
+        self.message    = None
+
+    def build_embed(self, pool: dict | None = None) -> discord.Embed:
+        pool = pool if pool is not None else load_pool()
+        q    = pool.get(self.name, {})
+        diff = DIFFICULTY.get(q.get("difficulty", DEFAULT_DIFFICULTY), {})
+
+        embed = discord.Embed(
+            title=f"🛡️  Skupinová zakázka — {self.name}",
+            description=(f"*{q.get('info', '')}*\n\n"
+                         f"**{self.leader.display_name}** svolává partu "
+                         f"**{self.party_name}**.\n"
+                         f"-# {diff.get('label','?')}  ·  "
+                         f"{q.get('min_rank', STARTING_RANK)}+  ·  "
+                         f"{dest_label(q.get('destination'))}"),
+            color=dest_color(self.dest),
+        )
+        rows = [f"👑 <@{self.leader.id}>  ✅"]
+        for m in self.roster:
+            rows.append(f"• <@{m}>  " + ("✅" if m in self.confirmed else "⏳"))
+        embed.add_field(
+            name=f"Parta ({len(self.confirmed)}/{len(self.roster) + 1} potvrzeno)",
+            value="\n".join(rows),
+            inline=False,
+        )
+        embed.set_footer(
+            text=f"Min. {MIN_GROUP_SIZE} dobrodruzi  ·  vyrazit může jen vůdce  ·  ⭐ {ARION_NAME}")
+        return embed
+
+    @discord.ui.button(label="Potvrdit", style=discord.ButtonStyle.primary, emoji="✅")
+    async def confirm(self, interaction: discord.Interaction, _b: discord.ui.Button):
+        uid = interaction.user.id
+        if uid not in self.roster:
+            await interaction.response.send_message(
+                f"Nejsi členem party **{self.party_name}**.", ephemeral=True)
+            return
+        if uid in self.confirmed:
+            await interaction.response.send_message("Už jsi potvrdil/a.", ephemeral=True)
+            return
+
+        pool = load_pool()
+        q    = pool.get(self.name)
+        if not q:
+            await interaction.response.send_message("Zakázka už neexistuje.", ephemeral=True)
+            return
+
+        from src.utils.paths import PROFILES as _PF
+        if pkey(uid) not in load_json(_PF, default={}):
+            await interaction.response.send_message(
+                "Nemáš průkaz dobrodruha.", ephemeral=True)
+            return
+
+        ok, why = can_take(uid, q)
+        if not ok:
+            await interaction.response.send_message(f"❌ {why}", ephemeral=True)
+            return
+
+        self.confirmed.add(uid)
+        await interaction.response.edit_message(embed=self.build_embed(pool), view=self)
+
+    @discord.ui.button(label="Vyrazit", style=discord.ButtonStyle.success, emoji="🚀")
+    async def start(self, interaction: discord.Interaction, _b: discord.ui.Button):
+        if interaction.user.id != self.leader.id:
+            await interaction.response.send_message(
+                "Vyrazit může jen vůdce party.", ephemeral=True)
+            return
+        if len(self.confirmed) < MIN_GROUP_SIZE:
+            await interaction.response.send_message(
+                f"Potřebujete aspoň **{MIN_GROUP_SIZE}** potvrzené dobrodruhy "
+                f"(zatím {len(self.confirmed)}).", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        pool   = load_pool()
+        q      = pool.get(self.name)
+        quests = load_quests()
+        if not q or self.name in quests:
+            await interaction.followup.send("Zakázka už není dostupná.", ephemeral=True)
+            return
+
+        members = list(self.confirmed)
+        quests[self.name] = _new_quest(q, members, QType.GROUP)
+        quests[self.name]["party"] = self.party_name
+        save_quests(quests)
+        await _write_diary(interaction.guild, members, self.name, q)
+
+        boards = load_boards()
+        _drop_from_boards(boards, self.name)
+        save_boards(boards)
+        await refresh_all_boards(interaction.client, boards)
+
+        log_action("board_group", self.leader.display_name, self.party_name,
+                   f"{self.name} ({len(members)} členů)")
+
+        done = discord.Embed(
+            title=f"🛡️  Parta {self.party_name} vyrazila — {self.name}",
+            description="\n".join(f"• <@{m}>" for m in members),
+            color=dest_color(self.dest),
+        )
+        done.set_footer(text=f"⭐ {ARION_NAME}")
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            await self.message.edit(embed=done, view=self)
+        self.stop()
+
+    @discord.ui.button(label="Zrušit", style=discord.ButtonStyle.danger, emoji="❌")
+    async def cancel(self, interaction: discord.Interaction, _b: discord.ui.Button):
+        if interaction.user.id != self.leader.id:
+            await interaction.response.send_message(
+                "Zrušit může jen vůdce party.", ephemeral=True)
+            return
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(
+            content="❌ Svolávání party zrušeno.", embed=None, view=self)
+        self.stop()
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(
+                    content="⌛ Parta se nesešla včas.", embed=None, view=self)
+            except Exception:
+                pass
+
+
+class PartyPickView(discord.ui.View):
+    """Vůdce vede víc part (limit 3) → ať si vybere, se kterou na to jde."""
+
+    def __init__(self, dest: str, quest_name: str, leader: discord.Member,
+                 parties: list[tuple[str, dict]]):
+        super().__init__(timeout=120)
+        self.dest   = dest
+        self.name   = quest_name
+        self.leader = leader
+
+        select = discord.ui.Select(
+            placeholder="Se kterou partou na to jdeš?",
+            options=[
+                discord.SelectOption(
+                    label=pname,
+                    description=f"{len(p.get('members', []))} členů",
+                    emoji=p.get("emoji") or "🛡️",
+                )
+                for pname, p in parties[:25]
+            ],
+        )
+        select.callback = self._picked
+        self.add_item(select)
+        self._parties = dict(parties)
+
+    async def _picked(self, interaction: discord.Interaction):
+        pname = interaction.data["values"][0]
+        party = self._parties.get(pname, {})
+        view  = GroupTakeView(self.dest, self.name, self.leader, pname, party)
+        msg   = await interaction.channel.send(embed=view.build_embed(), view=view)
+        view.message = msg
+        await interaction.response.edit_message(
+            content=f"🛡️ Svolal/a jsi partu **{pname}** na **{self.name}**.", view=None)
+
 
 
 async def refresh_board(bot, dest: str, boards: dict | None = None) -> str | None:
@@ -445,6 +767,7 @@ class BoardCog(commands.Cog):
         info="Zadání / popis.",
         difficulty="Obtížnost — určuje rank body za splnění.",
         destination="Kde se zakázka odehrává (určuje, na které nástěnce visí).",
+        qtype="Druh: exkluzivní / závod / skupinová.",
         xp="Odměna XP (volitelné).",
         min_rank="Minimální rank pro převzetí (výchozí F3).",
     )
@@ -453,10 +776,15 @@ class BoardCog(commands.Cog):
         for d, m in DIFFICULTY.items()
     ])
     @app_commands.choices(destination=_dest_choices())
+    @app_commands.choices(qtype=[
+        app_commands.Choice(name=f"{m['emoji']} {m['label']} — {m['desc']}", value=k)
+        for k, m in QTYPE_META.items()
+    ])
     async def board_add(self, interaction: discord.Interaction,
                         name: str, info: str,
                         difficulty: str = DEFAULT_DIFFICULTY,
                         destination: str = ANYWHERE,
+                        qtype: str = DEFAULT_QTYPE,
                         xp: str | None = None,
                         min_rank: str = STARTING_RANK):
         await interaction.response.defer(ephemeral=True)
@@ -472,16 +800,19 @@ class BoardCog(commands.Cog):
             "difficulty":  difficulty,
             "min_rank":    min_rank,
             "destination": destination,
+            "qtype":       qtype,
         }
         save_pool(pool)
         log_action("board_add", interaction.user.display_name, "—", name)
 
         where = ("na všech nástěnkách" if destination == ANYWHERE
                  else f"na nástěnce {dest_label(destination)}")
+        qm = QTYPE_META.get(qtype, QTYPE_META[DEFAULT_QTYPE])
         await interaction.followup.send(
             f"✅ Zakázka **{name}** {'upravena' if existed else 'přidána'} "
             f"({len(pool)} v zásobníku).\n"
-            f"-# Visí {where}. Na nástěnku se dostane při `/nastenka reload`.",
+            f"-# {qm['emoji']} {qm['label']} · visí {where}.\n"
+            f"-# Na nástěnku se dostane při `/nastenka reload`.",
             ephemeral=True)
 
     @nastenka.command(name="remove", description="[DM] Odebere zakázku ze zásobníku.")
@@ -533,7 +864,9 @@ class BoardCog(commands.Cog):
         for name, q in pool.items():
             diff = DIFFICULTY.get(q.get("difficulty", DEFAULT_DIFFICULTY), {})
             mark = "📌" if name in on_board else ("⏳" if name in taken else "·")
-            lines.append(f"{mark} **{name}**  —  {dest_label(q.get('destination'))}  ·  "
+            qm = QTYPE_META.get(q.get("qtype", DEFAULT_QTYPE), QTYPE_META[DEFAULT_QTYPE])
+            lines.append(f"{mark} {qm['emoji']} **{name}**  —  "
+                         f"{dest_label(q.get('destination'))}  ·  "
                          f"{diff.get('label','?')}  ·  "
                          f"{q.get('min_rank', STARTING_RANK)}+"
                          + (f"  ·  ⭐ {q['xp']}" if q.get("xp") else ""))
