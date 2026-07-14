@@ -19,16 +19,14 @@ from src.core.dnd.ranks import (
     rank_index, get_rank,
 )
 
+logger = logging.getLogger("Board")
+
 # Destinace bereme z onboardu — jediný zdroj pravdy. Přidáš tam město → naskočí i tady.
 try:
     from src.logic.onboard import DESTINATIONS
 except Exception:                     # kdyby se onboard nenačetl, nástěnka nesmí spadnout
-    logging.getLogger("Board").exception("[board] import DESTINATIONS selhal")
+    logger.exception("[board] import DESTINATIONS selhal")
     DESTINATIONS = {}
-
-ANYWHERE = "kdekoliv"                 # zakázka bez konkrétní destinace
-
-logger = logging.getLogger("Board")
 
 ARION_NAME  = "Aurionis"
 BOARD_COLOR = 0xC9A227
@@ -37,8 +35,10 @@ BOARD_COLOR = 0xC9A227
 # LADĚNÍ
 # ══════════════════════════════════════════════════════════════════════════════
 
-OFFER_COUNT      = 3     # kolik questů visí na nástěnce naráz
+OFFER_COUNT      = 3     # kolik zakázek visí na JEDNÉ nástěnce
 MAX_BOARD_QUESTS = 1     # kolik questů z nástěnky smí mít hráč rozdělaných
+
+ANYWHERE = "kdekoliv"    # zakázka bez konkrétní destinace — visí na VŠECH nástěnkách
 
 # Značka, podle které poznáme quest vzatý z nástěnky. Díky ní NEPOTŘEBUJEME
 # druhý stav — limit se odvodí z quests.json a po uzavření questu se uvolní SÁM.
@@ -48,6 +48,23 @@ BOARD_SOURCE = "board"
 _DATA_DIR        = os.path.dirname(QUESTS_FILE)
 QUEST_POOL_FILE  = os.path.join(_DATA_DIR, "quest_pool.json")
 QUEST_BOARD_FILE = os.path.join(_DATA_DIR, "quest_board.json")
+
+
+def board_keys() -> list[str]:
+    """Všechny možné nástěnky: každé město + obecná."""
+    return list(DESTINATIONS.keys()) + [ANYWHERE]
+
+def dest_label(key: str | None) -> str:
+    """'aquion' → '🌊 Aquion'.  None / 'kdekoliv' → '🗺️ Kdekoliv'."""
+    if not key or key == ANYWHERE:
+        return "🗺️ Kdekoliv"
+    d = DESTINATIONS.get(key)
+    return f"{d['emoji']} {d['name']}" if d else key
+
+def dest_color(key: str | None) -> int:
+    d = DESTINATIONS.get(key or "")
+    return d.get("color", BOARD_COLOR) if d else BOARD_COLOR
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ÚLOŽIŠTĚ
@@ -59,37 +76,46 @@ def load_pool() -> dict:
 def save_pool(data: dict):
     save_json(QUEST_POOL_FILE, data)
 
-def load_board() -> dict:
-    b = load_json(QUEST_BOARD_FILE, default={})
-    b.setdefault("channel_id", None)
-    b.setdefault("message_id", None)
-    b.setdefault("offers", [])
-    return b
 
-def save_board(data: dict):
+def load_boards() -> dict:
+    """{dest_key: {channel_id, message_id, offers}}  — jedna nástěnka na destinaci."""
+    raw = load_json(QUEST_BOARD_FILE, default={})
+
+    # Migrace ze starého formátu (jedna globální nástěnka na top-levelu).
+    if "offers" in raw or "channel_id" in raw:
+        raw = {ANYWHERE: {
+            "channel_id": raw.get("channel_id"),
+            "message_id": raw.get("message_id"),
+            "offers":     raw.get("offers", []),
+        }}
+        save_json(QUEST_BOARD_FILE, raw)
+        logger.info("[board] migrace: jedna nástěnka → nástěnka podle destinace")
+
+    for key in board_keys():
+        b = raw.setdefault(key, {})
+        b.setdefault("channel_id", None)
+        b.setdefault("message_id", None)
+        b.setdefault("offers", [])
+    return raw
+
+def save_boards(data: dict):
     save_json(QUEST_BOARD_FILE, data)
-
-
-def _is_dm(interaction: discord.Interaction) -> bool:
-    return interaction.user.guild_permissions.administrator
-
-
-def dest_label(key: str | None) -> str:
-    """'aquion' → '🌊 Aquion'.  None / 'kdekoliv' → '🗺️ Kdekoliv'."""
-    if not key or key == ANYWHERE:
-        return "🗺️ Kdekoliv"
-    d = DESTINATIONS.get(key)
-    if not d:
-        return key
-    return f"{d['emoji']} {d['name']}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LOGIKA
 # ══════════════════════════════════════════════════════════════════════════════
 
+def taken_names() -> set[str]:
+    """Zakázky, které si někdo vzal a ještě je nedokončil."""
+    return {
+        n for n, q in load_quests().items()
+        if q.get("source") == BOARD_SOURCE
+        and q.get("status", Status.ACTIVE) == Status.ACTIVE
+    }
+
 def player_board_quests(user_id: int) -> list[str]:
-    """Rozdělané questy z nástěnky. Odvozeno z quests.json — žádný extra stav."""
+    """Rozdělané questy hráče z nástěnky. Odvozeno z quests.json — žádný extra stav."""
     return [
         name for name, q in load_quests().items()
         if q.get("source") == BOARD_SOURCE
@@ -101,50 +127,61 @@ def can_take(user_id: int, quest: dict) -> tuple[bool, str]:
     """Smí hráč vzít tenhle quest? → (ano, důvod když ne)."""
     active = player_board_quests(user_id)
     if len(active) >= MAX_BOARD_QUESTS:
-        return False, (f"Už máš rozdělaný quest z nástěnky: **{active[0]}**.\n"
-                       f"-# Dokonči ho, než si vezmeš další.")
+        return False, (f"Už máš rozdělanou zakázku: **{active[0]}**.\n"
+                       f"-# Dokonči ji, než si vezmeš další.")
 
     rank, _ = get_rank(user_id)
     min_rank = quest.get("min_rank", STARTING_RANK)
     if rank_index(rank) < rank_index(min_rank):
-        return False, (f"Na tenhle quest potřebuješ rank **{min_rank}** "
-                       f"(máš **{rank}**).")
+        return False, f"Na tuhle zakázku potřebuješ rank **{min_rank}** (máš **{rank}**)."
     return True, ""
 
 
-def reroll_offers(pool: dict, keep: list[str] | None = None) -> list[str]:
-    """Vylosuje novou nabídku. Questy, co si někdo vzal, se znovu nelosují."""
-    taken = {
-        n for n, q in load_quests().items()
-        if q.get("source") == BOARD_SOURCE and q.get("status", Status.ACTIVE) == Status.ACTIVE
-    }
-    available = [n for n in pool if n not in taken]
+def pool_for(dest: str, pool: dict) -> list[str]:
+    """Zakázky vhodné pro nástěnku dané destinace.
+
+    Nástěnka města  → zakázky toho města + univerzální ('kdekoliv').
+    Obecná nástěnka → jen univerzální.
+    """
+    out = []
+    for name, q in pool.items():
+        qd = q.get("destination", ANYWHERE)
+        if qd == dest or (dest != ANYWHERE and qd == ANYWHERE):
+            out.append(name)
+    return out
+
+
+def reroll_offers(dest: str, pool: dict) -> list[str]:
+    """Vylosuje novou nabídku pro jednu nástěnku. Rozdělané zakázky se nelosují."""
+    taken     = taken_names()
+    available = [n for n in pool_for(dest, pool) if n not in taken]
     random.shuffle(available)
     return available[:OFFER_COUNT]
 
 
-def board_embed(offers: list[str], pool: dict) -> discord.Embed:
+def board_embed(dest: str, offers: list[str], pool: dict) -> discord.Embed:
+    title = ("📌  Nástěnka dobrodruhů" if dest == ANYWHERE
+             else f"📌  Nástěnka — {dest_label(dest)}")
     embed = discord.Embed(
-        title="📌  Nástěnka dobrodruhů",
+        title=title,
         description=("Zakázky vyvěšené v guildě. Vezmi si jednu — a vrať se s vítězstvím.\n"
-                     f"-# Naráz můžeš mít rozdělaný **{MAX_BOARD_QUESTS}** quest z nástěnky."),
-        color=BOARD_COLOR,
+                     f"-# Naráz můžeš mít rozdělanou **{MAX_BOARD_QUESTS}** zakázku."),
+        color=dest_color(dest),
     )
     if not offers:
-        embed.add_field(
-            name="— prázdná —",
-            value="Momentálně tu nic nevisí. Zeptej se později.",
-            inline=False,
-        )
+        embed.add_field(name="— prázdná —",
+                        value="Momentálně tu nic nevisí. Zeptej se později.",
+                        inline=False)
     for i, name in enumerate(offers):
         q    = pool.get(name, {})
         diff = DIFFICULTY.get(q.get("difficulty", DEFAULT_DIFFICULTY), {})
         xp   = q.get("xp")
         mr   = q.get("min_rank", STARTING_RANK)
 
-        meta = [dest_label(q.get("destination")),
-                f"{diff.get('label', '?')}",
-                f"**{mr}+**"]
+        meta = [f"{diff.get('label', '?')}", f"**{mr}+**"]
+        # na městské nástěnce dává smysl označit jen ty univerzální
+        if q.get("destination", ANYWHERE) == ANYWHERE and dest != ANYWHERE:
+            meta.insert(0, "🗺️ Kdekoliv")
         if xp:
             meta.append(f"⭐ {xp} XP")
         embed.add_field(
@@ -161,36 +198,36 @@ def board_embed(offers: list[str], pool: dict) -> discord.Embed:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class BoardView(discord.ui.View):
-    """Persistent view. Tlačítka mají PEVNÉ custom_id, takže fungují i po deployi.
+    """Jedna view na destinaci. custom_id = 'board:<dest>:<idx>' → tlačítko ví,
+    ke které nástěnce patří, a funguje i po restartu bota.
 
-    Nabídku nečteme z paměti, ale ze souboru při každém kliknutí — proto tlačítka
-    fungují i po restartu, kdy je view zaregistrované bez znalosti aktuální nabídky.
+    Nabídku čteme ze souboru při KAŽDÉM kliknutí — proto view nemusí nic pamatovat.
     """
 
-    def __init__(self):
+    def __init__(self, dest: str):
         super().__init__(timeout=None)          # timeout=None → persistent
+        self.dest = dest
+        for i in range(OFFER_COUNT):
+            btn = discord.ui.Button(
+                label=str(i + 1),
+                style=discord.ButtonStyle.success,
+                emoji="📜",
+                custom_id=f"board:{dest}:{i}",
+            )
+            btn.callback = self._make_cb(i)
+            self.add_item(btn)
 
-    @discord.ui.button(label="1", style=discord.ButtonStyle.success,
-                       emoji="📜", custom_id="board:take:0")
-    async def take_0(self, interaction: discord.Interaction, _b: discord.ui.Button):
-        await self._take(interaction, 0)
-
-    @discord.ui.button(label="2", style=discord.ButtonStyle.success,
-                       emoji="📜", custom_id="board:take:1")
-    async def take_1(self, interaction: discord.Interaction, _b: discord.ui.Button):
-        await self._take(interaction, 1)
-
-    @discord.ui.button(label="3", style=discord.ButtonStyle.success,
-                       emoji="📜", custom_id="board:take:2")
-    async def take_2(self, interaction: discord.Interaction, _b: discord.ui.Button):
-        await self._take(interaction, 2)
+    def _make_cb(self, idx: int):
+        async def cb(interaction: discord.Interaction):
+            await self._take(interaction, idx)
+        return cb
 
     async def _take(self, interaction: discord.Interaction, idx: int):
         await interaction.response.defer(ephemeral=True)
         try:
-            board  = load_board()
+            boards = load_boards()
             pool   = load_pool()
-            offers = board.get("offers", [])
+            offers = boards.get(self.dest, {}).get("offers", [])
 
             if idx >= len(offers):
                 await interaction.followup.send(
@@ -201,15 +238,14 @@ class BoardView(discord.ui.View):
             q    = pool.get(name)
             if not q:
                 await interaction.followup.send(
-                    f"Quest **{name}** už v zásobníku není.", ephemeral=True)
+                    f"Zakázka **{name}** už v zásobníku není.", ephemeral=True)
                 return
 
             uid = interaction.user.id
 
             # má vůbec postavu?
-            from src.utils.json_utils import load_json as _lj
             from src.utils.paths import PROFILES as _PF
-            if pkey(uid) not in _lj(_PF, default={}):
+            if pkey(uid) not in load_json(_PF, default={}):
                 await interaction.followup.send(
                     "Nemáš průkaz dobrodruha — projdi nejdřív tutoriálem.", ephemeral=True)
                 return
@@ -252,47 +288,72 @@ class BoardView(discord.ui.View):
             )
             save_diaries(diaries)
 
-            # sundej z nabídky a překresli nástěnku
-            board["offers"] = [n for n in offers if n != name]
-            save_board(board)
-            await refresh_board(interaction.client, board)
+            # Univerzální zakázka visí na VÍC nástěnkách → sundej ji ze všech
+            # a všechny překresli, ať si ji nikdo nezkusí vzít podruhé.
+            for key, b in boards.items():
+                if name in b.get("offers", []):
+                    b["offers"] = [n for n in b["offers"] if n != name]
+            save_boards(boards)
+            await refresh_all_boards(interaction.client, boards)
 
             log_action("board_take", interaction.user.display_name,
-                       interaction.user.display_name, name)
+                       interaction.user.display_name, f"{name} ({self.dest})")
             await interaction.followup.send(
                 f"📜 Vzal/a jsi zakázku **{name}**.\n"
                 f"-# Zapsáno do deníku. Dokonči ji, než si vezmeš další.",
                 ephemeral=True)
         except Exception:
-            logger.exception("[board] převzetí questu selhalo")
+            logger.exception(f"[board] převzetí zakázky selhalo ({self.dest}/{idx})")
             try:
                 await interaction.followup.send("❌ Něco se pokazilo.", ephemeral=True)
             except Exception:
                 pass
 
 
-async def refresh_board(bot, board: dict | None = None) -> str | None:
-    """Překreslí vyvěšenou nástěnku. Vrací text chyby, nebo None."""
-    board = board or load_board()
-    ch_id, msg_id = board.get("channel_id"), board.get("message_id")
+async def refresh_board(bot, dest: str, boards: dict | None = None) -> str | None:
+    """Překreslí JEDNU nástěnku. Vrací text chyby, nebo None."""
+    boards = boards if boards is not None else load_boards()
+    b = boards.get(dest, {})
+    ch_id, msg_id = b.get("channel_id"), b.get("message_id")
     if not ch_id or not msg_id:
-        return "Nástěnka není vyvěšená — použij `/nastenka post`."
+        return f"Nástěnka {dest_label(dest)} není vyvěšená — `/nastenka post`."
     try:
         channel = bot.get_channel(ch_id) or await bot.fetch_channel(ch_id)
         message = await channel.fetch_message(msg_id)
-        await message.edit(embed=board_embed(board.get("offers", []), load_pool()),
-                           view=BoardView())
+        await message.edit(embed=board_embed(dest, b.get("offers", []), load_pool()),
+                           view=BoardView(dest))
         return None
     except discord.NotFound:
-        return "Zpráva s nástěnkou už neexistuje — vyvěs ji znovu `/nastenka post`."
+        return f"Zpráva nástěnky {dest_label(dest)} už neexistuje — vyvěs ji znovu."
     except Exception:
-        logger.exception("[board] refresh selhal")
-        return "Překreslení nástěnky selhalo."
+        logger.exception(f"[board] refresh {dest} selhal")
+        return f"Překreslení nástěnky {dest_label(dest)} selhalo."
+
+
+async def refresh_all_boards(bot, boards: dict | None = None) -> list[str]:
+    """Překreslí všechny VYVĚŠENÉ nástěnky. Vrací seznam chyb."""
+    boards = boards if boards is not None else load_boards()
+    errors = []
+    for dest, b in boards.items():
+        if not b.get("message_id"):
+            continue                    # nevyvěšená → přeskoč
+        err = await refresh_board(bot, dest, boards)
+        if err:
+            errors.append(err)
+    return errors
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # COG
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _dest_choices(include_anywhere: bool = True) -> list[app_commands.Choice]:
+    out = [app_commands.Choice(name=f"{d['emoji']} {d['name']}", value=k)
+           for k, d in DESTINATIONS.items()]
+    if include_anywhere:
+        out.append(app_commands.Choice(name="🗺️ Kdekoliv / obecná", value=ANYWHERE))
+    return out
+
 
 class BoardCog(commands.Cog):
     def __init__(self, bot):
@@ -302,81 +363,102 @@ class BoardCog(commands.Cog):
 
     # ── Vyvěšení ─────────────────────────────────────────────────────────────
 
-    @nastenka.command(name="post", description="[DM] Vyvěsí nástěnku do tohoto kanálu.")
+    @nastenka.command(name="post",
+                      description="[DM] Vyvěsí nástěnku dané destinace do tohoto kanálu.")
     @app_commands.checks.has_permissions(administrator=True)
-    async def board_post(self, interaction: discord.Interaction):
+    @app_commands.describe(destination="Které město (nebo obecná nástěnka).")
+    @app_commands.choices(destination=_dest_choices())
+    async def board_post(self, interaction: discord.Interaction, destination: str):
         await interaction.response.defer(ephemeral=True)
-        board = load_board()
-        pool  = load_pool()
-        if not board.get("offers"):
-            board["offers"] = reroll_offers(pool)
+        boards = load_boards()
+        pool   = load_pool()
+        b      = boards.setdefault(destination, {"channel_id": None,
+                                                 "message_id": None, "offers": []})
+        if not b["offers"]:
+            b["offers"] = reroll_offers(destination, pool)
 
         msg = await interaction.channel.send(
-            embed=board_embed(board["offers"], pool), view=BoardView())
-        board["channel_id"] = interaction.channel.id
-        board["message_id"] = msg.id
-        save_board(board)
+            embed=board_embed(destination, b["offers"], pool),
+            view=BoardView(destination))
+        b["channel_id"] = interaction.channel.id
+        b["message_id"] = msg.id
+        save_boards(boards)
+
+        log_action("board_post", interaction.user.display_name, "—", destination)
         await interaction.followup.send(
-            f"📌 Nástěnka vyvěšena ({len(board['offers'])} zakázek).", ephemeral=True)
+            f"📌 Nástěnka {dest_label(destination)} vyvěšena "
+            f"({len(b['offers'])} zakázek).", ephemeral=True)
 
     @nastenka.command(name="reload",
-                      description="[DM] Vymění zakázky na nástěnce za nové z poolu.")
+                      description="[DM] Vymění zakázky na nástěnce (prázdné = všechny).")
     @app_commands.checks.has_permissions(administrator=True)
-    async def board_reload(self, interaction: discord.Interaction):
+    @app_commands.describe(destination="Která nástěnka (prázdné = všechny vyvěšené).")
+    @app_commands.choices(destination=_dest_choices())
+    async def board_reload(self, interaction: discord.Interaction,
+                           destination: str | None = None):
         await interaction.response.defer(ephemeral=True)
         pool = load_pool()
         if not pool:
             await interaction.followup.send(
-                "Zásobník je prázdný — přidej questy `/nastenka add`.", ephemeral=True)
+                "Zásobník je prázdný — přidej zakázky `/nastenka add`.", ephemeral=True)
             return
 
-        board = load_board()
-        board["offers"] = reroll_offers(pool)
-        save_board(board)
+        boards  = load_boards()
+        targets = [destination] if destination else [
+            d for d, b in boards.items() if b.get("message_id")
+        ]
+        if not targets:
+            await interaction.followup.send(
+                "Žádná nástěnka není vyvěšená — `/nastenka post`.", ephemeral=True)
+            return
 
-        err = await refresh_board(self.bot, board)
-        log_action("board_reload", interaction.user.display_name, "—",
-                   ",".join(board["offers"]))
+        lines = []
+        for dest in targets:
+            b = boards.setdefault(dest, {"channel_id": None,
+                                         "message_id": None, "offers": []})
+            b["offers"] = reroll_offers(dest, pool)
+            lines.append(f"{dest_label(dest)} — **{len(b['offers'])}** zakázek")
+        save_boards(boards)
 
-        running = sum(
-            1 for q in load_quests().values()
-            if q.get("source") == BOARD_SOURCE
-            and q.get("status", Status.ACTIVE) == Status.ACTIVE
-        )
-        msg = f"♻️ Nástěnka obnovena — **{len(board['offers'])}** nových zakázek."
+        errors = []
+        for dest in targets:
+            err = await refresh_board(self.bot, dest, boards)
+            if err:
+                errors.append(err)
+
+        log_action("board_reload", interaction.user.display_name, "—", ",".join(targets))
+
+        running = len(taken_names())
+        msg = "♻️ Nástěnky obnoveny:\n" + "\n".join(f"-# {l}" for l in lines)
         if running:
-            msg += f"\n-# Rozdělané questy hráčů ({running}) běží dál, nesahal jsem na ně."
-        if err:
-            msg += f"\n⚠️ {err}"
-        await interaction.followup.send(msg, ephemeral=True)
+            msg += f"\n-# Rozdělané zakázky hráčů ({running}) běží dál, nesahal jsem na ně."
+        if errors:
+            msg += "\n⚠️ " + "\n⚠️ ".join(errors)
+        await interaction.followup.send(msg[:1900], ephemeral=True)
 
     # ── Zásobník ─────────────────────────────────────────────────────────────
 
-    @nastenka.command(name="add", description="[DM] Přidá quest do zásobníku nástěnky.")
+    @nastenka.command(name="add", description="[DM] Přidá zakázku do zásobníku.")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
         name="Název zakázky.",
         info="Zadání / popis.",
         difficulty="Obtížnost — určuje rank body za splnění.",
+        destination="Kde se zakázka odehrává (určuje, na které nástěnce visí).",
         xp="Odměna XP (volitelné).",
         min_rank="Minimální rank pro převzetí (výchozí F3).",
-        destination="Kde se zakázka odehrává.",
     )
     @app_commands.choices(difficulty=[
         app_commands.Choice(name=f"{m['label']} — +{m['points']} rank bodů", value=d)
         for d, m in DIFFICULTY.items()
     ])
-    @app_commands.choices(destination=[
-        app_commands.Choice(name="🗺️ Kdekoliv", value=ANYWHERE),
-        *[app_commands.Choice(name=f"{d['emoji']} {d['name']}", value=k)
-          for k, d in DESTINATIONS.items()],
-    ])
+    @app_commands.choices(destination=_dest_choices())
     async def board_add(self, interaction: discord.Interaction,
                         name: str, info: str,
                         difficulty: str = DEFAULT_DIFFICULTY,
+                        destination: str = ANYWHERE,
                         xp: str | None = None,
-                        min_rank: str = STARTING_RANK,
-                        destination: str = ANYWHERE):
+                        min_rank: str = STARTING_RANK):
         await interaction.response.defer(ephemeral=True)
         if min_rank not in RANK_LADDER:
             await interaction.followup.send(f"❌ Rank `{min_rank}` neexistuje.", ephemeral=True)
@@ -393,12 +475,16 @@ class BoardCog(commands.Cog):
         }
         save_pool(pool)
         log_action("board_add", interaction.user.display_name, "—", name)
+
+        where = ("na všech nástěnkách" if destination == ANYWHERE
+                 else f"na nástěnce {dest_label(destination)}")
         await interaction.followup.send(
-            f"✅ Zakázka **{name}** {'upravena' if existed else 'přidána'} do zásobníku "
-            f"({len(pool)} celkem).\n-# Na nástěnku se dostane při `/nastenka reload`.",
+            f"✅ Zakázka **{name}** {'upravena' if existed else 'přidána'} "
+            f"({len(pool)} v zásobníku).\n"
+            f"-# Visí {where}. Na nástěnku se dostane při `/nastenka reload`.",
             ephemeral=True)
 
-    @nastenka.command(name="remove", description="[DM] Odebere quest ze zásobníku.")
+    @nastenka.command(name="remove", description="[DM] Odebere zakázku ze zásobníku.")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(name="Zakázka k odebrání.")
     async def board_remove(self, interaction: discord.Interaction, name: str):
@@ -410,36 +496,43 @@ class BoardCog(commands.Cog):
         del pool[name]
         save_pool(pool)
 
-        board = load_board()
-        if name in board.get("offers", []):
-            board["offers"] = [n for n in board["offers"] if n != name]
-            save_board(board)
-            await refresh_board(self.bot, board)
+        boards  = load_boards()
+        changed = False
+        for b in boards.values():
+            if name in b.get("offers", []):
+                b["offers"] = [n for n in b["offers"] if n != name]
+                changed = True
+        if changed:
+            save_boards(boards)
+            await refresh_all_boards(self.bot, boards)
 
         log_action("board_remove", interaction.user.display_name, "—", name)
         await interaction.followup.send(f"🗑️ **{name}** odebrána ze zásobníku.", ephemeral=True)
 
-    @nastenka.command(name="pool", description="[DM] Vypíše celý zásobník.")
+    @nastenka.command(name="pool", description="[DM] Vypíše zásobník zakázek.")
     @app_commands.checks.has_permissions(administrator=True)
-    async def board_pool(self, interaction: discord.Interaction):
+    @app_commands.describe(destination="Filtr podle destinace (volitelné).")
+    @app_commands.choices(destination=_dest_choices())
+    async def board_pool(self, interaction: discord.Interaction,
+                         destination: str | None = None):
         await interaction.response.defer(ephemeral=True)
         pool = load_pool()
+        if destination:
+            pool = {n: q for n, q in pool.items()
+                    if q.get("destination", ANYWHERE) == destination}
         if not pool:
             await interaction.followup.send(
-                "Zásobník je prázdný. Přidej questy `/nastenka add`.", ephemeral=True)
+                "Zásobník je prázdný. Přidej zakázky `/nastenka add`.", ephemeral=True)
             return
 
-        offers = set(load_board().get("offers", []))
-        taken  = {
-            n for n, q in load_quests().items()
-            if q.get("source") == BOARD_SOURCE
-            and q.get("status", Status.ACTIVE) == Status.ACTIVE
-        }
+        boards   = load_boards()
+        on_board = {n for b in boards.values() for n in b.get("offers", [])}
+        taken    = taken_names()
 
         lines = []
         for name, q in pool.items():
             diff = DIFFICULTY.get(q.get("difficulty", DEFAULT_DIFFICULTY), {})
-            mark = "📌" if name in offers else ("⏳" if name in taken else "·")
+            mark = "📌" if name in on_board else ("⏳" if name in taken else "·")
             lines.append(f"{mark} **{name}**  —  {dest_label(q.get('destination'))}  ·  "
                          f"{diff.get('label','?')}  ·  "
                          f"{q.get('min_rank', STARTING_RANK)}+"
@@ -451,8 +544,10 @@ class BoardCog(commands.Cog):
         if len(desc) > 4000:
             desc = desc[:3990].rsplit("\n", 1)[0] + "\n-# …"
 
-        embed = discord.Embed(title=f"📚  Zásobník zakázek ({len(pool)})",
-                              description=desc, color=BOARD_COLOR)
+        title = f"📚  Zásobník zakázek ({len(pool)})"
+        if destination:
+            title += f" — {dest_label(destination)}"
+        embed = discord.Embed(title=title, description=desc, color=dest_color(destination))
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @board_remove.autocomplete("name")
@@ -467,5 +562,7 @@ class BoardCog(commands.Cog):
 
 
 async def setup(bot):
-    bot.add_view(BoardView())          # ← registrace persistent view (přežije restart)
+    # persistent view pro KAŽDOU nástěnku (jinak tlačítka po restartu umřou)
+    for dest in board_keys():
+        bot.add_view(BoardView(dest))
     await bot.add_cog(BoardCog(bot))
