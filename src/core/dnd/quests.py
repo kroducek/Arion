@@ -7,6 +7,9 @@ from datetime import datetime
 
 from src.utils.paths import QUESTS as QUESTS_FILE, QUEST_LOG as QUEST_LOG_FILE, DIARIES as DIARY_FILE
 from src.utils.json_utils import load_json, save_json
+from src.logic.ranks import (
+    DIFFICULTY_POINTS, DIFFICULTY_META, award_quest_rank_points, next_rank,
+)
 from src.utils.audit import log_action, get_recent
 from src.logic.stats import add_xp
 
@@ -472,11 +475,17 @@ class QuestsCog(commands.Cog):
         xp="Odměna za splnění (volitelné)",
         members="Hráči oddělení mezerou (@zmínka) — jen pro Side/Solo questy",
         parent_quest="Main quest ke kterému patří (jen pro side questy)",
+        difficulty="Obtížnost — určuje rank body za splnění.",
     )
     @app_commands.choices(category=[
         app_commands.Choice(name="⚔️ Main Quest — pro všechny", value=Category.MAIN),
         app_commands.Choice(name="🗺️ Side Quest — pro vybrané (s hlavním questem)", value=Category.SIDE),
         app_commands.Choice(name="🏃 Solo Quest — pro vybrané (bez hlavního questu)", value=Category.SOLO),
+    ])
+    @app_commands.choices(difficulty=[
+        app_commands.Choice(name=f"{m['emoji']} {m['label']} — +{DIFFICULTY_POINTS[d]} rank bodů",
+                            value=d)
+        for d, m in DIFFICULTY_META.items()
     ])
     async def quest_add(
         self,
@@ -485,6 +494,7 @@ class QuestsCog(commands.Cog):
         info: str,
         category: str = Category.SIDE,
         xp: str | None = None,
+        difficulty: str = "normal",
         members: str | None = None,
         parent_quest: str | None = None,
     ):
@@ -544,6 +554,7 @@ class QuestsCog(commands.Cog):
             "info":         info,
             "xp":           xp,
             "category":     category,
+            "difficulty":   difficulty,
             "parent_quest": parent_quest,
             "members":      member_ids,
             "added":        today(),
@@ -706,6 +717,32 @@ class QuestsCog(commands.Cog):
                         )
                 
                 member = guild.get_member(uid)
+
+                # ── Rank body za dokončený quest ────────────────────────────
+                if status == Status.COMPLETED and member:
+                    diff    = quest_data.get("difficulty", "normal")
+                    rk      = await award_quest_rank_points(
+                        member, interaction.channel, diff, name)
+                    if rk:
+                        d_meta = DIFFICULTY_META.get(diff, {})
+                        if rk["rank_ups"]:
+                            dm_embed.add_field(
+                                name="🎖️ Rank",
+                                value=(f"+{rk['gained']} bodů  ·  **POVÝŠENÍ! "
+                                       f"{rk['old_rank']} → {rk['new_rank']}**"),
+                                inline=False,
+                            )
+                        else:
+                            need = rk["needed"]
+                            dm_embed.add_field(
+                                name="🎖️ Rank",
+                                value=(f"{d_meta.get('emoji','')} +{rk['gained']} bodů  "
+                                       f"({rk['points']}/{need} do {next_rank(rk['new_rank'])})"
+                                       if need else
+                                       f"+{rk['gained']} bodů  ·  👑 vrchol žebříčku"),
+                                inline=False,
+                            )
+
                 if member:
                     try:
                         await member.send(embed=dm_embed)

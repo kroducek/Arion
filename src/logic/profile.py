@@ -367,6 +367,17 @@ def _build_prukaz_embed(target, profile) -> discord.Embed:
     if title:
         lines.append(f"\U0001f4ac *{title}*")
     lines.append(f"\U0001f396\ufe0f Rank: **{profile.get('rank', 'F3')}**")
+    try:
+        from src.logic.ranks import cost_to_next, next_rank
+        _rank = profile.get("rank", "F3")
+        _need = cost_to_next(_rank)
+        _pts  = int(profile.get("rank_points", 0) or 0)
+        if _need:
+            lines.append(f"-# Postup: {_pts} / {_need} bodů do **{next_rank(_rank)}**")
+        else:
+            lines.append("-# 👑 Vrchol žebříčku")
+    except Exception:
+        pass
     lines.append(f"-# {COIN} **{balance}**  \u00b7  {COIN_SILVER} **{silver_bal}**  \u00b7  {COIN_STARDUST} **{stardust_bal}**")
     if equipped_spirit:
         sf = f"+{equipped_spirit['fury']}" if equipped_spirit["fury"] > 0 else str(equipped_spirit["fury"])
