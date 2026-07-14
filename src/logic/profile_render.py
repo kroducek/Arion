@@ -231,7 +231,7 @@ def render_prukaz_card(profile, char_name, gold, silver, stardust, rank="F3",
     # Hvězdy dle POSTUPU, ne dle číslice: X3 = ★☆☆ (nejnižší) … X1 = ★★★, S/S+ = ★★★.
     # Dřív se brala číslice napřímo → F3 (nejhorší) svítilo ★★★ a F1 (nejlepší) ★☆☆.
     try:
-        from src.logic.ranks import rank_stars
+        from src.core.dnd.ranks import rank_stars
         filled = rank_stars(rank)
     except Exception:
         filled = 1

@@ -368,7 +368,7 @@ def _build_prukaz_embed(target, profile) -> discord.Embed:
         lines.append(f"\U0001f4ac *{title}*")
     lines.append(f"\U0001f396\ufe0f Rank: **{profile.get('rank', 'F3')}**")
     try:
-        from src.logic.ranks import cost_to_next, next_rank
+        from src.core.dnd.ranks import cost_to_next, next_rank
         _rank = profile.get("rank", "F3")
         _need = cost_to_next(_rank)
         _pts  = int(profile.get("rank_points", 0) or 0)

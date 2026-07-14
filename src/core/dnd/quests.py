@@ -7,7 +7,7 @@ from datetime import datetime
 
 from src.utils.paths import QUESTS as QUESTS_FILE, QUEST_LOG as QUEST_LOG_FILE, DIARIES as DIARY_FILE
 from src.utils.json_utils import load_json, save_json
-from src.logic.ranks import (
+from src.core.dnd.ranks import (
     DIFFICULTY_POINTS, DIFFICULTY_META, award_quest_rank_points, next_rank,
 )
 from src.utils.audit import log_action, get_recent
