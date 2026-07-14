@@ -19,6 +19,15 @@ from src.core.dnd.ranks import (
     rank_index, get_rank,
 )
 
+# Destinace bereme z onboardu — jediný zdroj pravdy. Přidáš tam město → naskočí i tady.
+try:
+    from src.logic.onboard import DESTINATIONS
+except Exception:                     # kdyby se onboard nenačetl, nástěnka nesmí spadnout
+    logging.getLogger("Board").exception("[board] import DESTINATIONS selhal")
+    DESTINATIONS = {}
+
+ANYWHERE = "kdekoliv"                 # zakázka bez konkrétní destinace
+
 logger = logging.getLogger("Board")
 
 ARION_NAME  = "Aurionis"
@@ -63,6 +72,16 @@ def save_board(data: dict):
 
 def _is_dm(interaction: discord.Interaction) -> bool:
     return interaction.user.guild_permissions.administrator
+
+
+def dest_label(key: str | None) -> str:
+    """'aquion' → '🌊 Aquion'.  None / 'kdekoliv' → '🗺️ Kdekoliv'."""
+    if not key or key == ANYWHERE:
+        return "🗺️ Kdekoliv"
+    d = DESTINATIONS.get(key)
+    if not d:
+        return key
+    return f"{d['emoji']} {d['name']}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -123,7 +142,9 @@ def board_embed(offers: list[str], pool: dict) -> discord.Embed:
         xp   = q.get("xp")
         mr   = q.get("min_rank", STARTING_RANK)
 
-        meta = [f"{diff.get('label', '?')}  ·  **{mr}+**"]
+        meta = [dest_label(q.get("destination")),
+                f"{diff.get('label', '?')}",
+                f"**{mr}+**"]
         if xp:
             meta.append(f"⭐ {xp} XP")
         embed.add_field(
@@ -210,6 +231,7 @@ class BoardView(discord.ui.View):
                 "xp":           q.get("xp"),
                 "category":     Category.SOLO,
                 "difficulty":   q.get("difficulty", DEFAULT_DIFFICULTY),
+                "destination":  q.get("destination", ANYWHERE),
                 "parent_quest": None,
                 "members":      [uid],
                 "added":        today(),
@@ -217,11 +239,16 @@ class BoardView(discord.ui.View):
             }
             save_quests(quests)
 
-            # deník + DM (recyklujeme helper z quests.py)
+            # deník + DM (recyklujeme helper z quests.py) — s destinací v popisu
+            _dest = q.get("destination")
+            _info = q.get("info", "")
+            if _dest and _dest != ANYWHERE:
+                _info = f"{_info}\n📍 {dest_label(_dest)}".strip()
+
             diaries = load_diaries()
             await _assign_and_notify(
                 interaction.guild, [uid], diaries, name,
-                q.get("info", ""), Category.SOLO, q.get("xp"),
+                _info, Category.SOLO, q.get("xp"),
             )
             save_diaries(diaries)
 
@@ -333,16 +360,23 @@ class BoardCog(commands.Cog):
         difficulty="Obtížnost — určuje rank body za splnění.",
         xp="Odměna XP (volitelné).",
         min_rank="Minimální rank pro převzetí (výchozí F3).",
+        destination="Kde se zakázka odehrává.",
     )
     @app_commands.choices(difficulty=[
         app_commands.Choice(name=f"{m['label']} — +{m['points']} rank bodů", value=d)
         for d, m in DIFFICULTY.items()
     ])
+    @app_commands.choices(destination=[
+        app_commands.Choice(name="🗺️ Kdekoliv", value=ANYWHERE),
+        *[app_commands.Choice(name=f"{d['emoji']} {d['name']}", value=k)
+          for k, d in DESTINATIONS.items()],
+    ])
     async def board_add(self, interaction: discord.Interaction,
                         name: str, info: str,
                         difficulty: str = DEFAULT_DIFFICULTY,
                         xp: str | None = None,
-                        min_rank: str = STARTING_RANK):
+                        min_rank: str = STARTING_RANK,
+                        destination: str = ANYWHERE):
         await interaction.response.defer(ephemeral=True)
         if min_rank not in RANK_LADDER:
             await interaction.followup.send(f"❌ Rank `{min_rank}` neexistuje.", ephemeral=True)
@@ -351,10 +385,11 @@ class BoardCog(commands.Cog):
         pool = load_pool()
         existed = name in pool
         pool[name] = {
-            "info":       info,
-            "xp":         xp,
-            "difficulty": difficulty,
-            "min_rank":   min_rank,
+            "info":        info,
+            "xp":          xp,
+            "difficulty":  difficulty,
+            "min_rank":    min_rank,
+            "destination": destination,
         }
         save_pool(pool)
         log_action("board_add", interaction.user.display_name, "—", name)
@@ -405,7 +440,8 @@ class BoardCog(commands.Cog):
         for name, q in pool.items():
             diff = DIFFICULTY.get(q.get("difficulty", DEFAULT_DIFFICULTY), {})
             mark = "📌" if name in offers else ("⏳" if name in taken else "·")
-            lines.append(f"{mark} **{name}**  —  {diff.get('label','?')}  ·  "
+            lines.append(f"{mark} **{name}**  —  {dest_label(q.get('destination'))}  ·  "
+                         f"{diff.get('label','?')}  ·  "
                          f"{q.get('min_rank', STARTING_RANK)}+"
                          + (f"  ·  ⭐ {q['xp']}" if q.get("xp") else ""))
 
