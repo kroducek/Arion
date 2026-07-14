@@ -219,6 +219,10 @@ def _ensure_inv_fields(profile: dict) -> dict:
     _link_inventory(profile)
     profile.setdefault("notes", [])
     profile.setdefault("equipment", {})
+    # Příznak "item drží OBĚ ruce" (obouruční zbraň, nebo jednoruční na tieru 0).
+    # NESMÍ se hádat ze shody id v obou rukou — na tieru 2+ jde legálně držet
+    # DVĚ STEJNÉ dýky, což je od markeru k nerozeznání (unequip by jednu ztratil).
+    profile.setdefault("both_hands", False)
     profile.setdefault("ring_slots", 2)
     profile["amulet_slots"] = 1   # jediný amulet slot
     # Zajisti že všechny sloty existují (i v případě starého/částečného profilu)
@@ -228,6 +232,14 @@ def _ensure_inv_fields(profile: dict) -> dict:
     for i in range(1, profile["ring_slots"] + 1):
         profile["equipment"].setdefault(f"ring_{i}", None)
     profile["equipment"].setdefault("amulet_1", None)
+    # Migrace both_hands: profily zaequipované PŘED zavedením příznaku.
+    # Obě ruce se stejným id = obouruční zbraň (dual wielding tehdy neexistoval),
+    # takže příznak dopočítáme, ať se ta zbraň neduplikuje / neztratí.
+    _eq = profile["equipment"]
+    if not profile.get("both_hands"):
+        _hl, _hr = _eq.get("hand_l"), _eq.get("hand_r")
+        if _hl and _hl == _hr:
+            profile["both_hands"] = True
     # Migrace: zrušený ammo slot — munice teď žije v Toulci, ukazatel jen zahoď
     profile["equipment"].pop("ammo", None)
     # Migrace: zrušené sloty wrists/headwear — případné itemy vrať do inventáře
@@ -778,19 +790,22 @@ def _equip_item(profile: dict, item_id: str, preferred_slot: str | None,
         need = _hand_slots_needed(db_item, tier)
 
         def _free_hand(slot: str) -> list[str]:
-            """Uvolní ruku (i obouruční marker) → vrátí seznam vrácených itemů."""
+            """Uvolní ruku → vrátí seznam vrácených itemů.
+            Pokud item drží obě ruce (profile['both_hands']), uvolní obě a vrátí
+            JEDNU kopii. Jinak uvolní jen tuhle ruku (dvě stejné dýky = dvě kopie)."""
             freed_ids = []
             old = equipment.get(slot)
             if not old:
                 return freed_ids
             twin = "hand_r" if slot == "hand_l" else "hand_l"
-            both = equipment.get(twin) == old          # obouruční marker
+            both = profile.get("both_hands") and equipment.get(twin) == old
             _remove_equip_bonus(profile, items_db.get(old, {}).get("equip_bonus", {}))
             _add_to_inventory(inventory, old, 1)
             freed_ids.append(old)
             equipment[slot] = None
             if both:
                 equipment[twin] = None
+                profile["both_hands"] = False
             return freed_ids
 
         freed: list[str] = []
@@ -802,7 +817,8 @@ def _equip_item(profile: dict, item_id: str, preferred_slot: str | None,
                     if fid not in freed:
                         freed.append(fid)
             equipment["hand_l"] = item_id
-            equipment["hand_r"] = item_id          # marker — obě ruce = tentýž item
+            equipment["hand_r"] = item_id          # obě ruce = tentýž item…
+            profile["both_hands"] = True           # …a tohle říká, že je to JEDEN kus
             note = "obouruční" if hand_type == "two" else "zabírá obě ruce"
         # ── item zabírá JEDNU ruku ─────────────────────────────────────────────
         else:
@@ -889,9 +905,17 @@ def _unequip_slot(profile: dict, slot: str, items_db: dict) -> tuple[bool, str]:
         for s in FULL_SET_SLOTS:
             if equipment.get(s) == item_id:
                 equipment[s] = None
-    elif hand_type == "two" and slot in ("hand_l", "hand_r"):
-        equipment["hand_l"] = None
-        equipment["hand_r"] = None
+    elif slot in ("hand_l", "hand_r"):
+        # Obě ruce drží JEDEN item? To ví jen příznak both_hands — ne shoda id
+        # (na tieru 2+ jdou držet dvě stejné dýky = dvě samostatné kopie).
+        # Dřív se testoval jen hand_type == "two", takže jednoruční zbraň držící
+        # obě ruce (tier 0) se uvolnila jen z jedné → zůstala viset ve druhé
+        # A přibyla do inventáře = DUPLIKACE.
+        twin = "hand_r" if slot == "hand_l" else "hand_l"
+        if profile.get("both_hands") and equipment.get(twin) == item_id:
+            equipment[twin] = None
+            profile["both_hands"] = False
+        equipment[slot] = None
     else:
         equipment[slot] = None
 
