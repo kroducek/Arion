@@ -86,6 +86,25 @@ def next_rank(rank: str) -> str | None:
     i = rank_index(rank)
     return RANK_LADDER[i + 1] if i + 1 < len(RANK_LADDER) else None
 
+# Alias — profile.py si o něj říká pod tímhle jménem.
+def cost_to_next(rank: str) -> int | None:
+    return points_needed(rank)
+
+def rank_stars(rank: str) -> int:
+    """Kolik hvězd (1–3) svítí na průkazu.
+
+    Podle POSTUPU, ne podle číslice: X3 = ★☆☆ (nejnižší) → X1 = ★★★, S/S+ = ★★★.
+    (profile_render dřív bral číslici napřímo, takže F3 svítilo ★★★ a F1 ★☆☆.)
+    """
+    if not rank or rank_class(rank) == "S":
+        return 3
+    tail = rank[1:]
+    if tail == "3":
+        return 1
+    if tail == "2":
+        return 2
+    return 3
+
 def quest_points(difficulty: str | None) -> int:
     return DIFFICULTY.get(difficulty or DEFAULT_DIFFICULTY, {}).get("points", 0)
 
@@ -334,7 +353,6 @@ class RanksCog(commands.Cog):
             desc += "\n\n✅ Všechny rank role existují."
 
         embed = discord.Embed(title="🎖️  Kontrola rank rolí", description=desc, color=0xFFD700)
-        await interaction.response.is_done() or None
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @rank_set.autocomplete("rank")

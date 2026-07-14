@@ -8,7 +8,7 @@ from datetime import datetime
 from src.utils.paths import QUESTS as QUESTS_FILE, QUEST_LOG as QUEST_LOG_FILE, DIARIES as DIARY_FILE
 from src.utils.json_utils import load_json, save_json
 from src.core.dnd.ranks import (
-    DIFFICULTY_POINTS, DIFFICULTY_META, award_quest_rank_points, next_rank,
+    DIFFICULTY, DEFAULT_DIFFICULTY, award_quest_rank, next_rank,
 )
 from src.utils.audit import log_action, get_recent
 from src.logic.stats import add_xp
@@ -483,9 +483,8 @@ class QuestsCog(commands.Cog):
         app_commands.Choice(name="🏃 Solo Quest — pro vybrané (bez hlavního questu)", value=Category.SOLO),
     ])
     @app_commands.choices(difficulty=[
-        app_commands.Choice(name=f"{m['emoji']} {m['label']} — +{DIFFICULTY_POINTS[d]} rank bodů",
-                            value=d)
-        for d, m in DIFFICULTY_META.items()
+        app_commands.Choice(name=f"{m['label']} — +{m['points']} rank bodů", value=d)
+        for d, m in DIFFICULTY.items()
     ])
     async def quest_add(
         self,
@@ -494,7 +493,7 @@ class QuestsCog(commands.Cog):
         info: str,
         category: str = Category.SIDE,
         xp: str | None = None,
-        difficulty: str = "normal",
+        difficulty: str = DEFAULT_DIFFICULTY,
         members: str | None = None,
         parent_quest: str | None = None,
     ):
@@ -719,27 +718,29 @@ class QuestsCog(commands.Cog):
                 member = guild.get_member(uid)
 
                 # ── Rank body za dokončený quest ────────────────────────────
+                # award_quest_rank si sám ohlásí rank up (kanál + DM) a nikdy
+                # nevyhodí výjimku — uzavření questu nesmí spadnout kvůli ranku.
                 if status == Status.COMPLETED and member:
-                    diff    = quest_data.get("difficulty", "normal")
-                    rk      = await award_quest_rank_points(
-                        member, interaction.channel, diff, name)
+                    diff = quest_data.get("difficulty", DEFAULT_DIFFICULTY)
+                    rk   = await award_quest_rank(member, diff, interaction.channel)
                     if rk:
-                        d_meta = DIFFICULTY_META.get(diff, {})
-                        if rk["rank_ups"]:
+                        d_meta = DIFFICULTY.get(diff, {})
+                        pts    = d_meta.get("points", 0)
+                        if rk["ranked_up"]:
                             dm_embed.add_field(
                                 name="🎖️ Rank",
-                                value=(f"+{rk['gained']} bodů  ·  **POVÝŠENÍ! "
+                                value=(f"+{pts} bodů  ·  **POVÝŠENÍ! "
                                        f"{rk['old_rank']} → {rk['new_rank']}**"),
                                 inline=False,
                             )
                         else:
                             need = rk["needed"]
+                            nxt  = next_rank(rk["new_rank"])
                             dm_embed.add_field(
                                 name="🎖️ Rank",
-                                value=(f"{d_meta.get('emoji','')} +{rk['gained']} bodů  "
-                                       f"({rk['points']}/{need} do {next_rank(rk['new_rank'])})"
+                                value=(f"+{pts} bodů  ({rk['points']}/{need} do {nxt})"
                                        if need else
-                                       f"+{rk['gained']} bodů  ·  👑 vrchol žebříčku"),
+                                       f"+{pts} bodů  ·  👑 maximální rank"),
                                 inline=False,
                             )
 
