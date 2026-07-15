@@ -910,7 +910,7 @@ class _CureView(discord.ui.View):
 class StatPointView(discord.ui.View):
     """Rozdávání bodů s přepínačem: Atributy (AP) ↔ Skilly (SP)."""
 
-    SKILLS_PER_PAGE = 20  # 4 řady × 5 (5. řada = navigace + přepínač)
+    SKILLS_PER_PAGE = 15  # 3 řady × 5 (row 3 = akce, row 4 = navigace)
 
     def __init__(self, user_id: int, mode: str = "ap", page: int = 0):
         super().__init__(timeout=300)
@@ -926,12 +926,12 @@ class StatPointView(discord.ui.View):
         page_targets = targets[self.page * self.SKILLS_PER_PAGE:(self.page + 1) * self.SKILLS_PER_PAGE]
 
         for idx, (tid, name, emo) in enumerate(page_targets):
-            row = min(idx // 5, 3)
+            row = min(idx // 5, 2)
             btn = discord.ui.Button(label=f"{emo} {name}"[:80], style=discord.ButtonStyle.blurple, row=row)
             btn.callback = self._make_cb(tid, name)
             self.add_item(btn)
 
-        # navigace stránek (jen když je stránek víc)
+        # navigace stránek (row 4) — jen když je stránek víc
         if total_pages > 1:
             prev = discord.ui.Button(label="◀", style=discord.ButtonStyle.secondary, row=4, disabled=self.page == 0)
             prev.callback = self._make_page(self.page - 1)
@@ -942,16 +942,37 @@ class StatPointView(discord.ui.View):
             nxt.callback = self._make_page(self.page + 1)
             self.add_item(nxt)
 
-        # přepínač režimu
+        # Akční tlačítka (přepínač, perky, furioku) = 3 prvky. Když je stránkování,
+        # nav sedí na row 4, takže akce dáme na row 3 — nikdy se nepřekročí 5/řadu.
+        # Bez stránkování je row 4 volná, ať akce nekradou místo skillům na row 3.
+        action_row = 3 if total_pages > 1 else 4
+
         other = "Skilly (SP)" if self.mode == "ap" else "Atributy (AP)"
-        tbtn = discord.ui.Button(label=f"🔁 {other}", style=discord.ButtonStyle.secondary, row=4)
+        tbtn = discord.ui.Button(label=f"🔁 {other}", style=discord.ButtonStyle.secondary, row=action_row)
         tbtn.callback = self._toggle
         self.add_item(tbtn)
 
-        # ⭐ upgrady perků za SP
-        pbtn = discord.ui.Button(label="⭐ Upgrady perků", style=discord.ButtonStyle.success, row=4)
+        pbtn = discord.ui.Button(label="⭐ Upgrady perků", style=discord.ButtonStyle.success, row=action_row)
         pbtn.callback = self._open_perk_upgrades
         self.add_item(pbtn)
+
+        fbtn = discord.ui.Button(label="🔥 Furioku", style=discord.ButtonStyle.primary, row=action_row)
+        fbtn.callback = self._open_furioka
+        self.add_item(fbtn)
+
+    async def _open_furioka(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Toto není tvůj výběr.", ephemeral=True)
+            return
+        try:
+            from src.logic.spirits import open_furioka
+            await open_furioka(interaction, self.user_id)
+        except Exception:
+            logger.exception("[StatPointView] otevření furioku selhalo")
+            try:
+                await interaction.response.send_message("❌ Nepovedlo se otevřít furioku.", ephemeral=True)
+            except Exception:
+                pass
 
     async def _open_perk_upgrades(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:

@@ -133,6 +133,16 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_uses": 0,
         "cooldown_type": None,
     },
+    "furioku_utok": {
+        "name": "Furioku: Útok",
+        "group": "Furioku",
+        "passive": True,
+        "unique": False,
+        "desc": "Vliješ své furioku do úderu. Funguje jako ATK — vynaložená furioku poskytuje ekvivalentní bonus k útoku.",
+        "subdesc": "Využiješ např. 10 furioku → +10 ATK. Po zásahu se využitá furioku spotřebuje.",
+        "cooldown_uses": 0,
+        "cooldown_type": None,
+    },
     # ── Magie ─────────────────────────────────────────────────────────────────
     "zprava": {
         "name": "Zpráva",
