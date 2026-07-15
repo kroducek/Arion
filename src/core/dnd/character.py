@@ -202,6 +202,14 @@ class CharacterCog(commands.Cog):
 
         await self._rename_roster(interaction, jmeno)
 
+        # achievement za druhou postavu (účtový — 2+ postavy na účtu)
+        try:
+            from src.core.dnd.achievements import check_two_characters_achievement
+            await check_two_characters_achievement(
+                interaction.user, interaction.channel, char_count(uid))
+        except Exception:
+            pass
+
         # spusť onboarding pro nový slot (lazy import kvůli pořadí načítání cogů)
         from src.logic.onboard import TutorialPartOneView
         embed = discord.Embed(

@@ -66,6 +66,24 @@ ACHIEVEMENTS_DEF: dict[str, dict] = {
         "auto":        False,
         "rarity":      "Common",
     },
+    "Lumenie: Nový příchod": {
+        "emoji":       "🏰",
+        "description": "Dokončil jsi tutorial a začal svou pouť v Lumenii.",
+        "auto":        False,
+        "rarity":      "Common",
+    },
+    "Aquion: Nový příchod": {
+        "emoji":       "🌊",
+        "description": "Dokončil jsi tutorial a začal svou pouť v Aquionu.",
+        "auto":        False,
+        "rarity":      "Common",
+    },
+    "Dračí skála: Nový příchod": {
+        "emoji":       "🏔️",
+        "description": "Dokončil jsi tutorial a začal svou pouť na Dračí skále.",
+        "auto":        False,
+        "rarity":      "Common",
+    },
     "Naplno vyzbrojený!": {
         "emoji":       "🦾",
         "description": "Obsadil jsi úplně všechny sloty výbavy najednou.",
@@ -77,6 +95,12 @@ ACHIEVEMENTS_DEF: dict[str, dict] = {
         "description": "Nasbíral jsi 100 perků. Skutečný polyhistor.",
         "auto":        True,
         "rarity":      "Legendary",
+    },
+    "Dvě osobnosti": {
+        "emoji":       "🎭",
+        "description": "Vytvořil sis druhou postavu. Kdo z nich jsi doopravdy?",
+        "auto":        True,
+        "rarity":      "Rare",
     },
 }
 
@@ -122,7 +146,10 @@ def grant_achievement(user_id: int, name: str) -> bool:
 # ── Announce ──────────────────────────────────────────────────────────────────
 
 async def announce_achievement(member: discord.Member, channel, name: str):
-    ach   = ACHIEVEMENTS_DEF[name]
+    ach = ACHIEVEMENTS_DEF.get(name)
+    if ach is None:                        # neznámý název → nespadni, jen zaloguj
+        print(f"[achievements] pokus o oznámení neznámého achievementu: {name!r}")
+        return
     color = RARITY_COLOR.get(ach["rarity"], 0xFFD700)
     embed = discord.Embed(
         title=f"{ach['emoji']}  Achievement odemčen!",
@@ -187,6 +214,13 @@ async def check_perk_collector_achievement(member: discord.Member, channel, perk
         if grant_achievement(member.id, name):
             await announce_achievement(member, channel, name)
 
+async def check_two_characters_achievement(member: discord.Member, channel, char_count: int) -> None:
+    """Voláno po vytvoření postavy. Udělí 'Dvě osobnosti' při 2+ postavách na účtu."""
+    name = "Dvě osobnosti"
+    if char_count >= 2 and not has_achievement(member.id, name):
+        if grant_achievement(member.id, name):
+            await announce_achievement(member, channel, name)
+
 # ── Cog ───────────────────────────────────────────────────────────────────────
 
 class AchievementsCog(commands.Cog):
@@ -199,7 +233,10 @@ class AchievementsCog(commands.Cog):
     @app_commands.describe(member="Hráč (výchozí: ty)")
     async def achievements_cmd(self, interaction: discord.Interaction, member: discord.Member | None = None):
         target = member or interaction.user
-        earned = load_achievements().get(str(target.id), [])
+        raw    = load_achievements().get(str(target.id), [])
+        # počítej jen achievementy, které SKUTEČNĚ existují v definici — jinak
+        # by staré/neznámé záznamy nafoukly počet (to byl ten „4/11 ale nic odemčeno").
+        earned = [n for n in raw if n in ACHIEVEMENTS_DEF]
 
         lines = []
         for name, ach in ACHIEVEMENTS_DEF.items():
