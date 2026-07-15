@@ -126,6 +126,16 @@ class CharacterCog(commands.Cog):
             # chybí práva (Manage Nicknames) nebo je to majitel serveru — nevadí
             pass
 
+    async def _resync_rank_role(self, interaction: discord.Interaction):
+        """Rank role sedí na Discord UŽIVATELI, ale rank je PER POSTAVA — po přepnutí
+        (nebo smazání) aktivní postavy je proto nutné roli přerovnat na její rank."""
+        try:
+            from src.core.dnd.ranks import get_rank, sync_rank_role
+            rank, _ = get_rank(interaction.user.id)
+            await sync_rank_role(interaction.user, rank)
+        except Exception:
+            pass          # rank cog nemusí být načtený / chybí role — nevadí
+
     async def _slot_autocomplete(self, interaction: discord.Interaction, current: str):
         """Nabídne sloty hráče jako '1 · Kaiser ⭐' místo ručního psaní čísla."""
         uid = interaction.user.id
@@ -231,6 +241,7 @@ class CharacterCog(commands.Cog):
         switch_char(uid, slot_s)
         name = active_name(uid)
         await self._rename_roster(interaction, name)
+        await self._resync_rank_role(interaction)
         await interaction.response.send_message(
             f"⭐ Přepnuto na **{name}** (slot {slot}).", ephemeral=True
         )
@@ -279,6 +290,7 @@ class CharacterCog(commands.Cog):
         delete_char(uid, slot_s)  # smaže z registru + přepne aktivní na zbývající
         new_name = active_name(uid)
         await self._rename_roster(interaction, new_name)
+        await self._resync_rank_role(interaction)
 
         smazano = ", ".join(hit) if hit else "nic (postava byla prázdná)"
         await interaction.edit_original_response(

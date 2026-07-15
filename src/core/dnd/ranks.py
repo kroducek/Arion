@@ -62,7 +62,12 @@ def _save(data: dict):
     save_json(PROFILES_FILE, data)
 
 def _profile(data: dict, uid: str) -> dict:
+    """POZOR: vytvoří prázdný profil, když neexistuje. Pro čtení použij _get."""
     return data.setdefault(uid, {})
+
+def _get(data: dict, uid: str) -> dict | None:
+    """Profil bez vytváření — None když postava neexistuje."""
+    return data.get(uid)
 
 
 def rank_index(rank: str) -> int:
@@ -111,18 +116,21 @@ def quest_points(difficulty: str | None) -> int:
 
 def get_rank(user_id: int) -> tuple[str, int]:
     """(rank, body v rámci ranku) aktivní postavy."""
-    p = _profile(_load(), pkey(user_id))
+    p = _get(_load(), pkey(user_id)) or {}
     return p.get("rank", STARTING_RANK), int(p.get("rank_points", 0) or 0)
 
 
-def add_rank_points(user_id: int, pts: int) -> dict:
-    """Přičte body ranku aktivní postavě a případně povýší (i vícekrát naráz).
+def add_rank_points(user_id: int, pts: int) -> dict | None:
+    """Přičte body ranku AKTIVNÍ postavě a případně povýší (i vícekrát naráz).
 
-    Vrací: {'old_rank','new_rank','ranked_up','ranks_gained','points','needed'}
+    Vrací dict, nebo None když aktivní postava nemá profil (neprošla tutoriálem)
+    — ať admin omylem nevytvoří 'ducha' v profiles.json bez záznamu v characters.
     """
     data = _load()
     uid  = pkey(user_id)
-    p    = _profile(data, uid)
+    p    = _get(data, uid)
+    if p is None:
+        return None
 
     rank   = p.get("rank", STARTING_RANK)
     points = int(p.get("rank_points", 0) or 0) + max(0, int(pts))
@@ -156,11 +164,14 @@ def add_rank_points(user_id: int, pts: int) -> dict:
 
 
 def set_rank(user_id: int, rank: str) -> bool:
-    """Natvrdo nastaví rank (admin). Body vynuluje."""
+    """Natvrdo nastaví rank AKTIVNÍ postavě (admin). Body vynuluje.
+    False = neplatný rank, nebo postava nemá profil."""
     if rank not in RANK_LADDER:
         return False
     data = _load()
-    p    = _profile(data, pkey(user_id))
+    p    = _get(data, pkey(user_id))
+    if p is None:
+        return False
     p["rank"]        = rank
     p["rank_points"] = 0
     _save(data)
@@ -223,6 +234,8 @@ async def award_quest_rank(member: discord.Member, difficulty: str | None,
         if pts <= 0:
             return None
         res = add_rank_points(member.id, pts)
+        if not res:
+            return None                 # postava bez profilu → tiše nic
         if not res["ranked_up"]:
             return res
 
@@ -321,6 +334,11 @@ class RanksCog(commands.Cog):
                           member: discord.Member, points: int):
         await interaction.response.defer(ephemeral=True)
         res = add_rank_points(member.id, points)
+        if not res:
+            await interaction.followup.send(
+                f"❌ {member.mention} nemá aktivní postavu s profilem "
+                f"(neprošel/a tutoriálem).", ephemeral=True)
+            return
         log_action("rank_points", interaction.user.display_name,
                    member.display_name, str(points))
         msg = f"✅ {member.mention} +{points} bodů ranku."
