@@ -72,6 +72,15 @@ GAME_INFO = [
         "cog":     "BattleshipsCog",
         "handler": "bs_start",
     },
+    {
+        "id":      "tictactoe",
+        "label":   "⭕ Piškvorky",
+        "desc":    "Klasika 3×3 na tahy — tři v řadě vyhrávají",
+        "players": "2",
+        "bet":     True,
+        "cog":     "TicTacToeCog",
+        "handler": "ttt_start",
+    },
 ]
 
 
