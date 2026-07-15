@@ -1,3 +1,13 @@
+"""
+tictactoe.py — Piškvorky (3×3) pro Aurionis.
+
+Cesta: src/core/bot/tictactoe.py
+Přidej do cog listu ArionBOTa (main_bot.py):  "src.core.bot.tictactoe"
+A do minigames_hub.py GAME_INFO (už dodáno v aktualizovaném hubu).
+
+1v1 na tahy — klikací mřížka 3×3. Volitelná sázka (oba stejně, vítěz bere pot,
+remíza vrací). Kdo se připojí ke stolu, hraje; pořadí a symboly se losují.
+"""
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -21,11 +31,31 @@ E_X   = "❌"
 E_O   = "🟢"
 E_BLANK = "⬛"
 
-WIN_LINES = [
-    (0, 1, 2), (3, 4, 5), (6, 7, 8),      # řádky
-    (0, 3, 6), (1, 4, 7), (2, 5, 8),      # sloupce
-    (0, 4, 8), (2, 4, 6),                 # diagonály
-]
+# Velikost mřížky. Discord View = max 5 řad × 5 tlačítek = 25 → strop je 5×5.
+MIN_SIZE = 3
+MAX_SIZE = 5
+DEFAULT_SIZE = 5
+WIN_K = 3                 # kolik symbolů v řadě = výhra (klasika, i na větší mřížce)
+
+
+def win_lines(n: int, k: int = WIN_K) -> list[tuple[int, ...]]:
+    """Všechny výherní linie délky k v mřížce n×n (indexy 0..n*n-1).
+
+    Vodorovně, svisle a obě diagonály. Pro 3×3/k=3 dá klasických 8 linií.
+    """
+    lines = []
+    for r in range(n):
+        for c in range(n):
+            if c + k <= n:                                   # →
+                lines.append(tuple(r * n + c + i for i in range(k)))
+            if r + k <= n:                                   # ↓
+                lines.append(tuple((r + i) * n + c for i in range(k)))
+            if r + k <= n and c + k <= n:                    # ↘
+                lines.append(tuple((r + i) * n + c + i for i in range(k)))
+            if r + k <= n and c - (k - 1) >= 0:              # ↙
+                lines.append(tuple((r + i) * n + c - i for i in range(k)))
+    return lines
+
 
 TURN_TIMEOUT = 100       # vteřin — po nečinnosti může soupeř nárokovat výhru
 TTT_COLOR    = 0x9B59B6
@@ -114,16 +144,18 @@ class TTTLeaderboardView(discord.ui.View):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class Match:
-    def __init__(self, cog, channel_id: int, host: discord.Member, bet: int):
+    def __init__(self, cog, channel_id: int, host: discord.Member, bet: int, size: int = DEFAULT_SIZE):
         self.cog        = cog
         self.channel_id = channel_id
         self.bet        = max(0, bet)
+        self.size       = max(MIN_SIZE, min(size, MAX_SIZE))
+        self.win_lines  = win_lines(self.size, WIN_K)
         self.currency   = get_minigame_currency()   # zamkni měnu na dobu hry
         self.phase      = "lobby"                    # lobby | playing | ended
         self.host_id    = host.id
         self.names      = {host.id: host.display_name}
         self.guest_id: int | None = None
-        self.board      = [EMPTY] * 9
+        self.board      = [EMPTY] * (self.size * self.size)
         self.symbols    = {}                         # uid → "x"/"o"
         self.turn       = None                       # uid na tahu
         self.last_action = time.time()
@@ -166,10 +198,10 @@ class Match:
         return True
 
     def winner_symbol(self) -> str | None:
-        for a, b, c in WIN_LINES:
-            line = self.board[a]
-            if line is not EMPTY and line == self.board[b] == self.board[c]:
-                return line
+        for line in self.win_lines:
+            first = self.board[line[0]]
+            if first is not EMPTY and all(self.board[i] == first for i in line):
+                return first
         return None
 
     def is_full(self) -> bool:
@@ -217,7 +249,8 @@ class Match:
         coin = COIN_GOLD if self.currency == "gold" else COIN_SILVER
 
         if self.phase == "lobby":
-            desc = [f"**{self.names[self.host_id]}** vyzývá k piškvorkám! ⭕"]
+            desc = [f"**{self.names[self.host_id]}** vyzývá k piškvorkám! ⭕",
+                    f"-# Mřížka **{self.size}×{self.size}** · {WIN_K} v řadě vyhrává"]
             if self.bet > 0:
                 desc.append(f"Sázka **{self.bet}** {coin} od každého  ·  pot **{self.pot()}** {coin}")
             desc.append("")
@@ -310,12 +343,12 @@ class LobbyView(discord.ui.View):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# UI — HRACÍ MŘÍŽKA 3×3
+# UI — HRACÍ MŘÍŽKA (3×3 až 5×5)
 # ══════════════════════════════════════════════════════════════════════════════
 
 class CellButton(discord.ui.Button):
-    def __init__(self, pos: int):
-        super().__init__(label="\u200b", style=discord.ButtonStyle.secondary, row=pos // 3)
+    def __init__(self, pos: int, size: int):
+        super().__init__(label="\u200b", style=discord.ButtonStyle.secondary, row=pos // size)
         self.pos = pos
 
     async def callback(self, interaction: discord.Interaction):
@@ -326,8 +359,8 @@ class BoardView(discord.ui.View):
     def __init__(self, match: Match):
         super().__init__(timeout=None)
         self.match = match
-        for pos in range(9):
-            self.add_item(CellButton(pos))
+        for pos in range(match.size * match.size):
+            self.add_item(CellButton(pos, match.size))
         self._sync_buttons()
 
     def _sync_buttons(self):
@@ -403,7 +436,7 @@ class TicTacToeCog(commands.Cog):
 
     group = app_commands.Group(name="tictactoe", description="Piškvorky — 1v1 na tahy")
 
-    async def _open(self, interaction: discord.Interaction, sazka: int = 0):
+    async def _open(self, interaction: discord.Interaction, sazka: int = 0, size: int = DEFAULT_SIZE):
         cid = interaction.channel_id
         existing = self.games.get(cid)
         if existing and existing.phase != "ended":
@@ -418,20 +451,27 @@ class TicTacToeCog(commands.Cog):
                 f"❌ Nemáš dost — potřebuješ **{sazka}** {minigame_coin()}.", ephemeral=True)
             return
 
-        match = Match(self, cid, interaction.user, sazka)
+        match = Match(self, cid, interaction.user, sazka, size)
         self.games[cid] = match
         await interaction.response.send_message(
             embed=match.build_embed(), view=LobbyView(match))
         match.message = await interaction.original_response()
 
-    # vstup z hubu
+    # vstup z hubu (výchozí velikost)
     async def ttt_start(self, interaction: discord.Interaction, sazka: int = 0):
-        await self._open(interaction, sazka)
+        await self._open(interaction, sazka, DEFAULT_SIZE)
 
     @group.command(name="lobby", description="Otevři piškvorky, kam někdo přijme výzvu")
-    @app_commands.describe(sazka="Sázka od každého (0 = bez sázky)")
-    async def lobby_cmd(self, interaction: discord.Interaction, sazka: int = 0):
-        await self._open(interaction, sazka)
+    @app_commands.describe(sazka="Sázka od každého (0 = bez sázky)",
+                           velikost="Rozměr mřížky (3–5, výhra vždy 3 v řadě)")
+    @app_commands.choices(velikost=[
+        app_commands.Choice(name="3×3 (klasika)", value=3),
+        app_commands.Choice(name="4×4", value=4),
+        app_commands.Choice(name="5×5", value=5),
+    ])
+    async def lobby_cmd(self, interaction: discord.Interaction, sazka: int = 0,
+                        velikost: int = DEFAULT_SIZE):
+        await self._open(interaction, sazka, velikost)
 
     @group.command(name="cancel", description="Zruš piškvorky v tomto kanálu")
     async def cancel_cmd(self, interaction: discord.Interaction):
