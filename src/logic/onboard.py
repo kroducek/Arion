@@ -2631,20 +2631,27 @@ class FinalEnterView(TutorialView):
             logger.exception(f"[onboard] Nepodařilo se zapsat do deníku: {e}")
 
         # Achievement se udělí úplně nakonec, až po uvítání v hubu i městském chatu.
-        # Nový system: Achievement se jmenuje podle destinace, aby hráči věděli kam přišli.
+        # "Vítej v Aurionisu" se dá jen za PRVNÍ dokončení tutoriálu (grant_achievement
+        # je účtový a sám odmítne duplicitu, takže druhá postava ho už nedostane).
+        # Oznámení jde do kanálu podle destinace, kam hráč zamířil.
         try:
             from src.core.dnd.achievements import grant_achievement, announce_achievement
-            
-            # Mapování destinací na achievement ID
-            dest_achievements = {
-                "lumenie":     "Lumenie: Nový příchod",
-                "aquion":      "Aquion: Nový příchod",
-                "draci_skala": "Dračí skála: Nový příchod",
+
+            # Kanály příchodu podle destinace
+            DEST_CHANNELS = {
+                "lumenie":     1485643091426676816,
+                "aquion":      1485643326358290542,
+                "draci_skala": 1485643414501462057,
             }
-            
-            achievement_id = dest_achievements.get(self.dest_key, "Vítej v Aurionisu")
-            if grant_achievement(interaction.user.id, achievement_id):
-                await announce_achievement(interaction.user, interaction.channel, achievement_id)
+
+            if grant_achievement(interaction.user.id, "Vítej v Aurionisu"):
+                ch_id   = DEST_CHANNELS.get(self.dest_key)
+                channel = interaction.channel
+                if ch_id:
+                    channel = (interaction.client.get_channel(ch_id)
+                               or await interaction.client.fetch_channel(ch_id)
+                               or interaction.channel)
+                await announce_achievement(interaction.user, channel, "Vítej v Aurionisu")
         except Exception as e:
             logger.exception(f"[onboard] Nepodařilo se udělit tutorial achievement: {e}")
 

@@ -66,24 +66,6 @@ ACHIEVEMENTS_DEF: dict[str, dict] = {
         "auto":        False,
         "rarity":      "Common",
     },
-    "Lumenie: Nový příchod": {
-        "emoji":       "🏰",
-        "description": "Dokončil jsi tutorial a začal svou pouť v Lumenii.",
-        "auto":        False,
-        "rarity":      "Common",
-    },
-    "Aquion: Nový příchod": {
-        "emoji":       "🌊",
-        "description": "Dokončil jsi tutorial a začal svou pouť v Aquionu.",
-        "auto":        False,
-        "rarity":      "Common",
-    },
-    "Dračí skála: Nový příchod": {
-        "emoji":       "🏔️",
-        "description": "Dokončil jsi tutorial a začal svou pouť na Dračí skále.",
-        "auto":        False,
-        "rarity":      "Common",
-    },
     "Naplno vyzbrojený!": {
         "emoji":       "🦾",
         "description": "Obsadil jsi úplně všechny sloty výbavy najednou.",
