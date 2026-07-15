@@ -1,13 +1,3 @@
-"""
-tictactoe.py — Piškvorky (3×3) pro Aurionis.
-
-Cesta: src/core/bot/tictactoe.py
-Přidej do cog listu ArionBOTa (main_bot.py):  "src.core.bot.tictactoe"
-A do minigames_hub.py GAME_INFO (už dodáno v aktualizovaném hubu).
-
-1v1 na tahy — klikací mřížka 3×3. Volitelná sázka (oba stejně, vítěz bere pot,
-remíza vrací). Kdo se připojí ke stolu, hraje; pořadí a symboly se losují.
-"""
 import discord
 from discord import app_commands
 from discord.ext import commands
