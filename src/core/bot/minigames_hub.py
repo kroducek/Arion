@@ -63,6 +63,15 @@ GAME_INFO = [
         "cog":     "BlackjackCog",
         "handler": "bj_start",
     },
+    {
+        "id":      "battleships",
+        "label":   "⚓ Lodě",
+        "desc":    "Námořní bitva 1v1 — potop soupeřovu flotilu dřív než on tvoji",
+        "players": "2",
+        "bet":     True,
+        "cog":     "BattleshipsCog",
+        "handler": "bs_start",
+    },
 ]
 
 
