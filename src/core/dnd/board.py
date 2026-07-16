@@ -727,7 +727,7 @@ async def refresh_hub(bot, dest: str, boards: dict | None = None) -> str | None:
         channel = bot.get_channel(ch_id) or await bot.fetch_channel(ch_id)
         message = await channel.fetch_message(msg_id)
         await message.edit(embed=hub_embed(dest, b.get("offers", []), load_pool()),
-                           view=BoardView(dest))
+                           view=None)
         return None
     except discord.NotFound:
         return f"Hub panel {dest_label(dest)} už neexistuje — vyvěs ho znovu."
@@ -814,8 +814,7 @@ class BoardCog(commands.Cog):
             b["offers"] = reroll_offers(destination, pool)
 
         msg = await interaction.channel.send(
-            embed=hub_embed(destination, b["offers"], pool),
-            view=BoardView(destination))
+            embed=hub_embed(destination, b["offers"], pool))
         b["hub_channel_id"] = interaction.channel.id
         b["hub_message_id"] = msg.id
         save_boards(boards)
