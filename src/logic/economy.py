@@ -16,6 +16,25 @@ from src.utils.paths import (
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey
 
+# Destinace pro lokaci obchodů — jediný zdroj pravdy je onboard.
+try:
+    from src.logic.onboard import DESTINATIONS as _DESTS
+except Exception:
+    _DESTS = {}
+LOKACE_NONE = "zadna"
+
+def _lokace_choices():
+    opts = [app_commands.Choice(name="🗺️ Žádná / všude", value=LOKACE_NONE)]
+    for k, d in _DESTS.items():
+        opts.append(app_commands.Choice(name=f"{d.get('emoji','')} {d.get('name',k)}", value=k))
+    return opts
+
+def _lokace_label(key: str | None) -> str:
+    if not key or key == LOKACE_NONE:
+        return "🗺️ bez lokace"
+    d = _DESTS.get(key)
+    return f"{d.get('emoji','')} {d.get('name',key)}" if d else key
+
 COIN         = "<:goldcoin:1490171741237018795>"
 
 # ── Datová vrstva ──────────────────────────────────────────────────────────────
@@ -192,6 +211,23 @@ def _load_shops() -> dict:
 
 def _save_shops(data: dict) -> None:
     save_json(SHOPS_FILE, data)
+
+
+def shops_in_location(location: str) -> list[dict]:
+    """Obchody dané lokace — pro městský panel (board.py). Čte jen, nemění nic.
+    Vrací [{'nazev','open','lokace'}]. 'bez lokace' obchody se do měst nepočítají.
+    """
+    out = []
+    for preset, shop in _load_shops().items():
+        if shop.get("lokace") == location:
+            out.append({
+                "preset": preset,
+                "nazev":  shop.get("nazev", preset),
+                "open":   bool(shop.get("open")),
+                "channel": shop.get("channel"),
+                "message": shop.get("message"),
+            })
+    return out
 
 async def _ac_preset(
     interaction: discord.Interaction, current: str
@@ -580,7 +616,9 @@ class Economy(commands.Cog):
         item4   = "Item 4",
         item5   = "Item 5",
         ostatni = "Volný text pro ostatní zboží (lektvary, jídlo…)",
+        lokace  = "Ve kterém městě obchod stojí (pro panel města).",
     )
+    @app_commands.choices(lokace=_lokace_choices())
     async def gshop_create(
         self,
         interaction: discord.Interaction,
@@ -593,6 +631,7 @@ class Economy(commands.Cog):
         item4:   str | None = None,
         item5:   str | None = None,
         ostatni: str | None = None,
+        lokace:  str = LOKACE_NONE,
     ):
         await interaction.response.defer(ephemeral=True)
         preset = preset.strip().lower().replace(" ", "_")
@@ -613,6 +652,7 @@ class Economy(commands.Cog):
             "popis":   popis or "",
             "items":   parsed,
             "ostatni": ostatni or "",
+            "lokace":  lokace,
             "open":    False,
             "message": None,
             "channel": None,
@@ -636,7 +676,9 @@ class Economy(commands.Cog):
         item4   = "Item 4",
         item5   = "Item 5",
         ostatni = "Nová sekce Ostatní",
+        lokace  = "Změň město obchodu (pro panel města).",
     )
+    @app_commands.choices(lokace=_lokace_choices())
     @app_commands.autocomplete(preset=_ac_preset)
     async def gshop_edit(
         self,
@@ -650,6 +692,7 @@ class Economy(commands.Cog):
         item4:   str | None = None,
         item5:   str | None = None,
         ostatni: str | None = None,
+        lokace:  str | None = None,
     ):
         await interaction.response.defer(ephemeral=True)
         shops = _load_shops()
@@ -670,6 +713,8 @@ class Economy(commands.Cog):
             shop["items"] = parsed
         if ostatni is not None:
             shop["ostatni"] = ostatni
+        if lokace is not None:
+            shop["lokace"] = lokace
 
         _save_shops(shops)
 

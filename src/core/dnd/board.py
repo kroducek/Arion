@@ -115,6 +115,9 @@ def load_boards() -> dict:
         b.setdefault("channel_id", None)
         b.setdefault("message_id", None)
         b.setdefault("offers", [])
+        # městský hub panel (samostatná zpráva vedle RP nástěnky, sdílí offers)
+        b.setdefault("hub_channel_id", None)
+        b.setdefault("hub_message_id", None)
     return raw
 
 def save_boards(data: dict):
@@ -235,6 +238,65 @@ def board_embed(dest: str, offers: list[str], pool: dict) -> discord.Embed:
 
         embed.add_field(name=head, value="\n".join(body), inline=False)
     embed.set_footer(text=f"⭐ {ARION_NAME}")
+    return embed
+
+
+def hub_embed(dest: str, offers: list[str], pool: dict) -> discord.Embed:
+    """Městský panel: zakázky + obchody + lore střípek. Jeden embed pro lokaci."""
+    embed = discord.Embed(
+        title=f"🏙️  {dest_label(dest)}",
+        color=dest_color(dest),
+    )
+
+    # ── Lore střípek (rotace á 12 h) ──
+    try:
+        from src.core.dnd.lore import current_fragment
+        frag = current_fragment(dest)
+        if frag:
+            embed.description = f"*{frag}*"
+    except Exception:
+        pass
+
+    # ── Zakázky ──
+    if offers:
+        races = race_counts()
+        lines = []
+        for i, name in enumerate(offers):
+            q    = pool.get(name, {})
+            diff = DIFFICULTY.get(q.get("difficulty", DEFAULT_DIFFICULTY), {})
+            qt   = q.get("qtype", DEFAULT_QTYPE)
+            qm   = QTYPE_META.get(qt, QTYPE_META[DEFAULT_QTYPE])
+            tag  = ""
+            if qt == QType.RACE:
+                n = races.get(name, 0)
+                tag = f"  ·  🏁 závod" + (f" ({n})" if n else "")
+            elif qt == QType.GROUP:
+                tag = "  ·  🛡️ skupinová"
+            lines.append(f"{qm['emoji']} **{name}** — {diff.get('label','?')} · "
+                         f"{q.get('min_rank', STARTING_RANK)}+{tag}")
+        embed.add_field(name="📜 Volné zakázky", value="\n".join(lines), inline=False)
+    else:
+        embed.add_field(name="📜 Volné zakázky",
+                        value="*Momentálně žádné. Zeptej se později.*", inline=False)
+
+    # ── Objevené obchody (čte gshopy dané lokace) ──
+    try:
+        from src.logic.economy import shops_in_location
+        shops = shops_in_location(dest)
+        if shops:
+            slines = []
+            for s in shops:
+                mark = "🟢 otevřeno" if s["open"] else "🔴 zavřeno"
+                slines.append(f"**{s['nazev']}** — {mark}")
+            embed.add_field(name="🏪 Objevené obchody",
+                            value="\n".join(slines), inline=False)
+        else:
+            embed.add_field(name="🏪 Objevené obchody",
+                            value="*Zatím žádné obchody.*", inline=False)
+    except Exception:
+        logger.exception("[board] načtení obchodů pro hub selhalo")
+
+    embed.set_footer(text=f"⭐ {ARION_NAME}  ·  střípek se mění každých 12 h")
     return embed
 
 
@@ -644,6 +706,8 @@ async def refresh_board(bot, dest: str, boards: dict | None = None) -> str | Non
         message = await channel.fetch_message(msg_id)
         await message.edit(embed=board_embed(dest, b.get("offers", []), load_pool()),
                            view=BoardView(dest))
+        # překresli i městský hub panel téže destinace (sdílí offers)
+        await refresh_hub(bot, dest, boards)
         return None
     except discord.NotFound:
         return f"Zpráva nástěnky {dest_label(dest)} už neexistuje — vyvěs ji znovu."
@@ -652,16 +716,39 @@ async def refresh_board(bot, dest: str, boards: dict | None = None) -> str | Non
         return f"Překreslení nástěnky {dest_label(dest)} selhalo."
 
 
+async def refresh_hub(bot, dest: str, boards: dict | None = None) -> str | None:
+    """Překreslí městský hub panel (pokud je vyvěšený)."""
+    boards = boards if boards is not None else load_boards()
+    b = boards.get(dest, {})
+    ch_id, msg_id = b.get("hub_channel_id"), b.get("hub_message_id")
+    if not ch_id or not msg_id:
+        return None                     # hub není vyvěšen → nic
+    try:
+        channel = bot.get_channel(ch_id) or await bot.fetch_channel(ch_id)
+        message = await channel.fetch_message(msg_id)
+        await message.edit(embed=hub_embed(dest, b.get("offers", []), load_pool()),
+                           view=BoardView(dest))
+        return None
+    except discord.NotFound:
+        return f"Hub panel {dest_label(dest)} už neexistuje — vyvěs ho znovu."
+    except Exception:
+        logger.exception(f"[board] refresh hub {dest} selhal")
+        return f"Překreslení hub panelu {dest_label(dest)} selhalo."
+
+
 async def refresh_all_boards(bot, boards: dict | None = None) -> list[str]:
-    """Překreslí všechny VYVĚŠENÉ nástěnky. Vrací seznam chyb."""
+    """Překreslí všechny VYVĚŠENÉ nástěnky i hub panely. Vrací seznam chyb."""
     boards = boards if boards is not None else load_boards()
     errors = []
     for dest, b in boards.items():
-        if not b.get("message_id"):
-            continue                    # nevyvěšená → přeskoč
-        err = await refresh_board(bot, dest, boards)
-        if err:
-            errors.append(err)
+        if b.get("message_id"):
+            err = await refresh_board(bot, dest, boards)   # ta překreslí i hub
+            if err:
+                errors.append(err)
+        elif b.get("hub_message_id"):
+            err = await refresh_hub(bot, dest, boards)      # jen hub (RP nástěnka nevisí)
+            if err:
+                errors.append(err)
     return errors
 
 
@@ -710,6 +797,34 @@ class BoardCog(commands.Cog):
         await interaction.followup.send(
             f"📌 Nástěnka {dest_label(destination)} vyvěšena "
             f"({len(b['offers'])} zakázek).", ephemeral=True)
+
+    @nastenka.command(name="hub",
+                      description="[DM] Vyvěsí městský panel (zakázky + obchody + lore).")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(destination="Které město.")
+    @app_commands.choices(destination=_dest_choices(include_anywhere=False))
+    async def board_hub(self, interaction: discord.Interaction, destination: str):
+        await interaction.response.defer(ephemeral=True)
+        boards = load_boards()
+        pool   = load_pool()
+        b      = boards.setdefault(destination, {"channel_id": None, "message_id": None,
+                                                 "offers": [], "hub_channel_id": None,
+                                                 "hub_message_id": None})
+        if not b["offers"]:
+            b["offers"] = reroll_offers(destination, pool)
+
+        msg = await interaction.channel.send(
+            embed=hub_embed(destination, b["offers"], pool),
+            view=BoardView(destination))
+        b["hub_channel_id"] = interaction.channel.id
+        b["hub_message_id"] = msg.id
+        save_boards(boards)
+
+        log_action("board_hub", interaction.user.display_name, "—", destination)
+        await interaction.followup.send(
+            f"🏙️ Městský panel {dest_label(destination)} vyvěšen.\n"
+            f"-# Zakázky + obchody + lore střípek (rotace á 12 h). "
+            f"Aktualizuje se s `/nastenka reload`.", ephemeral=True)
 
     @nastenka.command(name="reload",
                       description="[DM] Vymění zakázky na nástěnce (prázdné = všechny).")

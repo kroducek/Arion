@@ -70,6 +70,7 @@ DND_COGS = [
     "src.core.dnd.character",
     "src.core.dnd.ranks",
     "src.core.dnd.board",
+    "src.core.dnd.lore",
     
     # D&D logika / postavy
     "src.logic.profile",
