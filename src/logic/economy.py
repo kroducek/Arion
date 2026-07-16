@@ -16,24 +16,32 @@ from src.utils.paths import (
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey
 
-# Destinace pro lokaci obchodů — jediný zdroj pravdy je onboard.
-try:
-    from src.logic.onboard import DESTINATIONS as _DESTS
-except Exception:
-    _DESTS = {}
+# Destinace pro lokaci obchodů — čteno LÍNĚ (až za běhu), aby nezáleželo na
+# pořadí načítání cogů. Statické choices se vyhodnotí při importu, kdy onboard
+# ještě nemusí být načtený → nabízela se jen "Žádná". Autocomplete čte za běhu.
 LOKACE_NONE = "zadna"
 
-def _lokace_choices():
-    opts = [app_commands.Choice(name="🗺️ Žádná / všude", value=LOKACE_NONE)]
-    for k, d in _DESTS.items():
-        opts.append(app_commands.Choice(name=f"{d.get('emoji','')} {d.get('name',k)}", value=k))
-    return opts
+def _get_dests() -> dict:
+    try:
+        from src.logic.onboard import DESTINATIONS
+        return DESTINATIONS or {}
+    except Exception:
+        return {}
 
 def _lokace_label(key: str | None) -> str:
     if not key or key == LOKACE_NONE:
         return "🗺️ bez lokace"
-    d = _DESTS.get(key)
+    d = _get_dests().get(key)
     return f"{d.get('emoji','')} {d.get('name',key)}" if d else key
+
+async def _lokace_autocomplete(interaction, current: str):
+    cur = (current or "").lower()
+    opts = [app_commands.Choice(name="🗺️ Žádná / všude", value=LOKACE_NONE)]
+    for k, d in _get_dests().items():
+        label = f"{d.get('emoji','')} {d.get('name',k)}"
+        if cur in label.lower() or cur in k.lower():
+            opts.append(app_commands.Choice(name=label, value=k))
+    return opts[:25]
 
 COIN         = "<:goldcoin:1490171741237018795>"
 
@@ -618,7 +626,7 @@ class Economy(commands.Cog):
         ostatni = "Volný text pro ostatní zboží (lektvary, jídlo…)",
         lokace  = "Ve kterém městě obchod stojí (pro panel města).",
     )
-    @app_commands.choices(lokace=_lokace_choices())
+    @app_commands.autocomplete(lokace=_lokace_autocomplete)
     async def gshop_create(
         self,
         interaction: discord.Interaction,
@@ -678,8 +686,7 @@ class Economy(commands.Cog):
         ostatni = "Nová sekce Ostatní",
         lokace  = "Změň město obchodu (pro panel města).",
     )
-    @app_commands.choices(lokace=_lokace_choices())
-    @app_commands.autocomplete(preset=_ac_preset)
+    @app_commands.autocomplete(lokace=_lokace_autocomplete, preset=_ac_preset)
     async def gshop_edit(
         self,
         interaction: discord.Interaction,
