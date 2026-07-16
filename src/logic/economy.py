@@ -4,6 +4,7 @@ from discord.ext import commands
 import json
 import logging
 import os
+import random
 
 from src.utils.paths import (
     ECONOMY as ECONOMY_FILE,
@@ -221,6 +222,67 @@ def _save_shops(data: dict) -> None:
     save_json(SHOPS_FILE, data)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# SHOP POOLY  —  zboží podle TYPU obchodu (kovar, pekarna…), sdílené všemi shopy
+# ══════════════════════════════════════════════════════════════════════════════
+
+SHOP_POOLS_FILE = os.path.join(os.path.dirname(SHOPS_FILE), "shop_pools.json")
+
+OFFER_SIZE = 4        # kolik položek reload náhodně vylosuje z poolů shopu
+
+
+def _load_pools() -> dict:
+    """{typ: [item, item, …]}  — typy jsou volné, vznikají přidáním prvního itemu."""
+    return load_json(SHOP_POOLS_FILE, default={})
+
+def _save_pools(data: dict) -> None:
+    save_json(SHOP_POOLS_FILE, data)
+
+
+def _parse_one_item(raw: str) -> tuple[dict | None, str | None]:
+    """Jeden item ve formátu emoji;název;cena;item_id? → (item, chyba)."""
+    parsed, err = _parse_items([raw])
+    if err:
+        return None, err
+    if not parsed:
+        return None, "Prázdný item."
+    return parsed[0], None
+
+
+def roll_offer(shop: dict) -> list[dict]:
+    """Sestaví aktuální nabídku obchodu:
+       náhodných OFFER_SIZE z poolů jeho typů  +  všechny speciály  +  unikát.
+
+    Pooly se míchají dohromady (shop může mít víc typů). Unikát visí, dokud
+    ho někdo nekoupí (shop['unique'] != None). Speciály jsou vždy.
+    """
+    pools = _load_pools()
+    bag = []
+    for t in shop.get("pool_types", []):
+        bag.extend(pools.get(t, []))
+
+    # náhodný výběr bez opakování (kolik je, tolik max)
+    picked = random.sample(bag, min(OFFER_SIZE, len(bag))) if bag else []
+
+    offer = list(picked)
+    offer.extend(shop.get("specials", []))       # lokální speciály vždy
+    unique = shop.get("unique")
+    if unique:                                    # vzácný kus, dokud není koupen
+        u = dict(unique)
+        u["_unique"] = True                       # značka pro nákup (po koupi zmizí)
+        offer.append(u)
+    return offer
+
+
+def shop_display_items(shop: dict) -> list[dict]:
+    """Co se má reálně zobrazit/koupit. Nové shopy = 'offer' (vylosováno),
+    staré shopy bez poolů = původní 'items' (zpětná kompatibilita)."""
+    if shop.get("pool_types") or shop.get("specials") or shop.get("unique"):
+        # nabídka se drží uložená (aby reload = vědomá akce, ne každý render jiný)
+        return shop.get("offer", [])
+    return shop.get("items", [])
+
+
 def shops_in_location(location: str) -> list[dict]:
     """Obchody dané lokace — pro městský panel (board.py). Čte jen, nemění nic.
     Vrací [{'nazev','open','lokace'}]. 'bez lokace' obchody se do měst nepočítají.
@@ -263,12 +325,13 @@ def _build_shop_embed(shop: dict, is_open: bool) -> discord.Embed:
     if shop.get("popis") or status_line:
         embed.description = (f"*{shop['popis']}*" if shop.get("popis") else "") + status_line
 
-    items = shop.get("items", [])
+    items = shop_display_items(shop)
     if items:
-        item_lines = [
-            f"**{i}.** {item['emoji']} **{item['name']}**\n-# {item['price']} {COIN}"
-            for i, item in enumerate(items, 1)
-        ]
+        item_lines = []
+        for i, item in enumerate(items, 1):
+            star = "  ✨" if item.get("_unique") else ""
+            item_lines.append(
+                f"**{i}.** {item['emoji']} **{item['name']}**{star}\n-# {item['price']} {COIN}")
         embed.add_field(name="⚔️  Předměty", value="\n\n".join(item_lines), inline=False)
 
     if shop.get("ostatni"):
@@ -284,10 +347,12 @@ class ShopView(discord.ui.View):
     def __init__(self, preset_id: str, shop: dict):
         super().__init__(timeout=None)
         self.preset_id = preset_id
-        for i, item in enumerate(shop.get("items", [])):
+        for i, item in enumerate(shop_display_items(shop)):
+            tag = "  ✨" if item.get("_unique") else ""
             btn = discord.ui.Button(
-                label=f"{item['emoji']}  {item['name']}  ·  {item['price']} zl.",
-                style=discord.ButtonStyle.secondary,
+                label=f"{item['emoji']}  {item['name']}  ·  {item['price']} zl.{tag}",
+                style=(discord.ButtonStyle.success if item.get("_unique")
+                       else discord.ButtonStyle.secondary),
                 custom_id=f"gshop_{preset_id}_{i}",
             )
             btn.callback = self._make_callback(i)
@@ -306,7 +371,7 @@ class ShopView(discord.ui.View):
                 return await interaction.response.send_message(
                     "Obchod je momentálně zavřený.", ephemeral=True
                 )
-            items = shop.get("items", [])
+            items = shop_display_items(shop)
             if item_index >= len(items):
                 return await interaction.response.send_message(
                     "Tento item už neexistuje.", ephemeral=True
@@ -330,7 +395,6 @@ class ShopView(discord.ui.View):
             inventory = profile.setdefault("inventory", [])
             item_id   = item.get("item_id")
             if item_id:
-                # Registered item — stackuje se s ostatními stejnými
                 entry = next(
                     (e for e in inventory if e.get("type") == "registered" and e.get("id") == item_id),
                     None,
@@ -340,7 +404,6 @@ class ShopView(discord.ui.View):
                 else:
                     inventory.append({"type": "registered", "id": item_id, "qty": 1})
             else:
-                # Free item — stackuje se podle jména
                 entry = next(
                     (e for e in inventory if e.get("type") == "free" and e.get("name") == item["name"]),
                     None,
@@ -351,9 +414,20 @@ class ShopView(discord.ui.View):
                     inventory.append({"type": "free", "name": item["name"], "qty": 1})
             save_json(PROFILES_FILE, profiles)
 
+            # Unikát po koupi zmizí — sundej ho ze shopu i z nabídky a překresli
+            if item.get("_unique"):
+                shop["unique"] = None
+                shop["offer"] = [it for it in shop.get("offer", []) if not it.get("_unique")]
+                _save_shops(shops)
+                try:
+                    await interaction.message.edit(view=ShopView(preset_id, shop))
+                except Exception:
+                    pass
+
             await interaction.response.send_message(
-                f"✅ Koupil/a jsi **{item['emoji']} {item['name']}** za **{price}** {COIN}.\n"
-                f"-# Zbývá ti **{economy[uid]}** {COIN}.",
+                f"✅ Koupil/a jsi **{item['emoji']} {item['name']}** za **{price}** {COIN}."
+                + ("  ✨ *(unikát!)*" if item.get("_unique") else "")
+                + f"\n-# Zbývá ti **{economy[uid]}** {COIN}.",
                 ephemeral=True,
             )
         return callback
@@ -661,6 +735,10 @@ class Economy(commands.Cog):
             "items":   parsed,
             "ostatni": ostatni or "",
             "lokace":  lokace,
+            "pool_types": [],
+            "specials":   [],
+            "unique":     None,
+            "offer":      [],
             "open":    False,
             "message": None,
             "channel": None,
@@ -767,6 +845,10 @@ class Economy(commands.Cog):
             )
 
         shop["open"] = True
+        # poolový shop bez namíchané nabídky → vylosuj při otevření
+        if (shop.get("pool_types") or shop.get("specials") or shop.get("unique")) \
+                and not shop.get("offer"):
+            shop["offer"] = roll_offer(shop)
         msg = await interaction.channel.send(
             embed=_build_shop_embed(shop, is_open=True),
             view=ShopView(preset, shop),
@@ -859,6 +941,167 @@ class Economy(commands.Cog):
         await interaction.followup.send(
             f"🗑️ Preset **`{preset}`** — **{shop.get('nazev', '')}** smazán.", ephemeral=True
         )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SHOP POOLY  —  /gpool add/list/remove  +  /gshop reload/special/unique
+    # ══════════════════════════════════════════════════════════════════════════
+
+    pool_group = app_commands.Group(name="gpool", description="Admin: Zásobníky zboží podle typu")
+
+    async def _ac_pooltype(self, interaction: discord.Interaction, current: str):
+        cur = (current or "").lower()
+        return [app_commands.Choice(name=t, value=t)
+                for t in _load_pools() if cur in t.lower()][:25]
+
+    @pool_group.command(name="add", description="Admin: Přidá item do poolu typu (kovar, pekarna…)")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(
+        typ="Typ obchodu (volný — kovar, pekarna, alchymie…). Nový se založí sám.",
+        item="Item: `emoji;název;cena` nebo `emoji;název;cena;item_id`",
+    )
+    @app_commands.autocomplete(typ=_ac_pooltype)
+    async def gpool_add(self, interaction: discord.Interaction, typ: str, item: str):
+        await interaction.response.defer(ephemeral=True)
+        typ = typ.strip().lower().replace(" ", "_")
+        parsed, err = _parse_one_item(item)
+        if err:
+            return await interaction.followup.send(f"❌ {err}", ephemeral=True)
+        pools = _load_pools()
+        pools.setdefault(typ, []).append(parsed)
+        _save_pools(pools)
+        await interaction.followup.send(
+            f"✅ Přidáno do poolu **{typ}**: {parsed['emoji']} {parsed['name']} "
+            f"· {parsed['price']} zl.  (celkem **{len(pools[typ])}**)", ephemeral=True)
+
+    @pool_group.command(name="list", description="Admin: Vypíše pool typu")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(typ="Typ obchodu")
+    @app_commands.autocomplete(typ=_ac_pooltype)
+    async def gpool_list(self, interaction: discord.Interaction, typ: str):
+        await interaction.response.defer(ephemeral=True)
+        typ = typ.strip().lower().replace(" ", "_")
+        items = _load_pools().get(typ, [])
+        if not items:
+            return await interaction.followup.send(
+                f"Pool **{typ}** je prázdný nebo neexistuje.", ephemeral=True)
+        lines = [f"{i+1}. {it['emoji']} **{it['name']}** · {it['price']} zl."
+                 + (f"  `{it['item_id']}`" if it.get("item_id") else "")
+                 for i, it in enumerate(items)]
+        desc = "\n".join(lines)
+        if len(desc) > 3900:
+            desc = desc[:3900] + "\n-# …"
+        embed = discord.Embed(title=f"📦 Pool — {typ} ({len(items)})",
+                              description=desc, color=0xC9A84C)
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @pool_group.command(name="remove", description="Admin: Odebere item z poolu podle čísla z /gpool list")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(typ="Typ obchodu", cislo="Pořadí z /gpool list")
+    @app_commands.autocomplete(typ=_ac_pooltype)
+    async def gpool_remove(self, interaction: discord.Interaction, typ: str, cislo: int):
+        await interaction.response.defer(ephemeral=True)
+        typ = typ.strip().lower().replace(" ", "_")
+        pools = _load_pools()
+        items = pools.get(typ, [])
+        if not (1 <= cislo <= len(items)):
+            return await interaction.followup.send(
+                f"❌ Neplatné číslo (1–{len(items)}).", ephemeral=True)
+        removed = items.pop(cislo - 1)
+        _save_pools(pools)
+        await interaction.followup.send(
+            f"🗑️ Odebráno z **{typ}**: {removed['emoji']} {removed['name']}", ephemeral=True)
+
+    @shop_group.command(name="reload", description="Admin: Přemíchá nabídku shopu z poolů")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(preset="Shop k přemíchání")
+    @app_commands.autocomplete(preset=_ac_preset)
+    async def gshop_reload(self, interaction: discord.Interaction, preset: str):
+        await interaction.response.defer(ephemeral=True)
+        shops = _load_shops()
+        shop  = shops.get(preset)
+        if not shop:
+            return await interaction.followup.send(f"❌ Preset `{preset}` neexistuje.", ephemeral=True)
+        shop["offer"] = roll_offer(shop)
+        _save_shops(shops)
+        # překresli živou zprávu, pokud je otevřená
+        if shop.get("open") and shop.get("message") and shop.get("channel"):
+            try:
+                channel = interaction.guild.get_channel(shop["channel"])
+                msg = await channel.fetch_message(shop["message"])
+                await msg.edit(embed=_build_shop_embed(shop, is_open=True),
+                               view=ShopView(preset, shop))
+            except Exception:
+                logging.exception("[gshop_reload] živá zpráva")
+        await interaction.followup.send(
+            f"♻️ **{shop.get('nazev','')}** přemíchán — **{len(shop['offer'])}** položek "
+            f"({', '.join(shop.get('pool_types', [])) or 'bez poolu'}).", ephemeral=True)
+
+    @shop_group.command(name="special", description="Admin: Přidá lokální speciál do shopu (vždy v nabídce)")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(preset="Shop", item="`emoji;název;cena;item_id?` (prázdné = vypíše speciály)")
+    @app_commands.autocomplete(preset=_ac_preset)
+    async def gshop_special(self, interaction: discord.Interaction, preset: str, item: str | None = None):
+        await interaction.response.defer(ephemeral=True)
+        shops = _load_shops()
+        shop  = shops.get(preset)
+        if not shop:
+            return await interaction.followup.send(f"❌ Preset `{preset}` neexistuje.", ephemeral=True)
+        specials = shop.setdefault("specials", [])
+        if not item:
+            if not specials:
+                return await interaction.followup.send("Žádné speciály.", ephemeral=True)
+            lines = [f"{i+1}. {s['emoji']} {s['name']} · {s['price']} zl." for i, s in enumerate(specials)]
+            return await interaction.followup.send("**Speciály:**\n" + "\n".join(lines), ephemeral=True)
+        parsed, err = _parse_one_item(item)
+        if err:
+            return await interaction.followup.send(f"❌ {err}", ephemeral=True)
+        specials.append(parsed)
+        _save_shops(shops)
+        await interaction.followup.send(
+            f"✅ Speciál přidán do **{shop.get('nazev','')}**: {parsed['emoji']} {parsed['name']}.\n"
+            f"-# Projeví se po `/gshop reload`.", ephemeral=True)
+
+    @shop_group.command(name="unique", description="Admin: Nastaví/sundá unikátní vzácný item (visí do koupě)")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(preset="Shop", item="`emoji;název;cena;item_id?` — prázdné = sundá unikát")
+    @app_commands.autocomplete(preset=_ac_preset)
+    async def gshop_unique(self, interaction: discord.Interaction, preset: str, item: str | None = None):
+        await interaction.response.defer(ephemeral=True)
+        shops = _load_shops()
+        shop  = shops.get(preset)
+        if not shop:
+            return await interaction.followup.send(f"❌ Preset `{preset}` neexistuje.", ephemeral=True)
+        if not item:
+            shop["unique"] = None
+            _save_shops(shops)
+            return await interaction.followup.send("🚫 Unikát sundán.\n-# Projeví se po `/gshop reload`.", ephemeral=True)
+        parsed, err = _parse_one_item(item)
+        if err:
+            return await interaction.followup.send(f"❌ {err}", ephemeral=True)
+        shop["unique"] = parsed
+        _save_shops(shops)
+        await interaction.followup.send(
+            f"✨ Unikát nastaven pro **{shop.get('nazev','')}**: {parsed['emoji']} {parsed['name']} "
+            f"· {parsed['price']} zl.\n-# Visí dokud ho někdo nekoupí. Projeví se po `/gshop reload`.",
+            ephemeral=True)
+
+    @shop_group.command(name="settype", description="Admin: Nastaví typy poolů shopu (čárkou)")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(preset="Shop", typy="Typy oddělené čárkou (kovar,alchymie). Prázdné = zruší.")
+    @app_commands.autocomplete(preset=_ac_preset)
+    async def gshop_settype(self, interaction: discord.Interaction, preset: str, typy: str | None = None):
+        await interaction.response.defer(ephemeral=True)
+        shops = _load_shops()
+        shop  = shops.get(preset)
+        if not shop:
+            return await interaction.followup.send(f"❌ Preset `{preset}` neexistuje.", ephemeral=True)
+        types = [t.strip().lower().replace(" ", "_") for t in (typy or "").split(",") if t.strip()]
+        shop["pool_types"] = types
+        shop["offer"] = roll_offer(shop)
+        _save_shops(shops)
+        await interaction.followup.send(
+            f"✅ **{shop.get('nazev','')}** má typy: {', '.join(types) or '—'}.\n"
+            f"-# Nabídka přemíchána ({len(shop['offer'])} položek).", ephemeral=True)
 
 
 async def setup(bot):
