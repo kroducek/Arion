@@ -2453,14 +2453,8 @@ DEST_ROLE_IDS = {
     "draci_skala": 1479574079160979588,
 }
 
-# ID hub kanálů
-DEST_HUB_CHANNEL_IDS = {
-    "lumenie":     1479577214562467932,   # #hub-lumenie
-    "aquion":      1479577365410480260,   # #hub-aquion
-    "draci_skala": 1479577639537610872,   # #hub-draci-skala
-}
-
-# ID chat kanálů hned pod huby — hráč se sem přesune po tutoriálu
+# ID městských chat kanálů — sem hráč po tutoriálu dostane práva a přijde
+# uvítání (dřív šlo zvlášť do #hub-* kanálů, ty už nejsou potřeba).
 DEST_CHAT_CHANNEL_IDS = {
     "lumenie":     1485643091426676816,
     "aquion":      1485643326358290542,
@@ -2554,40 +2548,10 @@ class FinalEnterView(TutorialView):
         except Exception as e:
             logger.exception(f"[onboard] Auto-quest chyba: {e}")
 
-        # ── Pošli uvítání do hub kanálu destinace ─────────────────────────
-        hub_channel_id = DEST_HUB_CHANNEL_IDS.get(self.dest_key, 0)
-        if hub_channel_id:
-            hub_channel = interaction.guild.get_channel(hub_channel_id)
-            if hub_channel:
-                try:
-                    dest        = DESTINATIONS[self.dest_key]
-                    city_name   = dest["name"]
-                    preposition = "na" if self.dest_key == "draci_skala" else "v"
-
-                    hub_embed = discord.Embed(
-                        title=f"{dest['emoji']}  Vítej {preposition} {city_name}!",
-                        description=(
-                            f"{interaction.user.mention} právě vstoupil/a do příběhu.\n\n"
-                            + DEST_HUB_WELCOME[self.dest_key]
-                        ),
-                        color=dest["color"],
-                    )
-                    if assigned:
-                        quest_lines = [
-                            f"📜 **{qname}**" + (f"  ✨ {qxp}" if qxp else "")
-                            for qname, qxp in assigned
-                        ]
-                        hub_embed.add_field(
-                            name="📋 Questy přidány do deníku",
-                            value="\n".join(quest_lines),
-                            inline=False,
-                        )
-                    hub_embed.set_footer(text="⭐ Aurionis  ·  /diary show — zobraz svůj deník")
-                    await hub_channel.send(embed=hub_embed)
-                except Exception as e:
-                    logger.exception(f"[onboard] Nepodařilo se poslat uvítání do hub kanálu: {e}")
-
-        # ── Přidej hráče do chat kanálu (vidí + píší) ─────────────────────
+        # ── Přidej hráče do chat kanálu + pošli uvítání (jedna zpráva) ────
+        #    Dřív šlo uvítání zvlášť do #hub-* kanálu a do chatu jen holá věta.
+        #    Teď je to sloučené: příchod hráče a uvítací embed v jedné zprávě
+        #    v městském chatu, takže hub kanály nejsou potřeba.
         chat_channel_id = DEST_CHAT_CHANNEL_IDS.get(self.dest_key, 0)
         if chat_channel_id:
             chat_channel = interaction.guild.get_channel(chat_channel_id)
@@ -2598,9 +2562,32 @@ class FinalEnterView(TutorialView):
                         read_messages=True,
                         send_messages=True,
                     )
-                    dest = DESTINATIONS[self.dest_key]
+                    dest        = DESTINATIONS[self.dest_key]
+                    city_name   = dest["name"]
+                    preposition = "na" if self.dest_key == "draci_skala" else "v"
+
+                    welcome = discord.Embed(
+                        title=f"{dest['emoji']}  Vítej {preposition} {city_name}!",
+                        description=DEST_HUB_WELCOME[self.dest_key],
+                        color=dest["color"],
+                    )
+                    if assigned:
+                        quest_lines = [
+                            f"📜 **{qname}**" + (f"  ✨ {qxp}" if qxp else "")
+                            for qname, qxp in assigned
+                        ]
+                        welcome.add_field(
+                            name="📋 Questy přidány do deníku",
+                            value="\n".join(quest_lines),
+                            inline=False,
+                        )
+                    welcome.set_footer(text="⭐ Aurionis  ·  /diary show — zobraz svůj deník")
+
+                    # mention musí být v contentu, v embedu by hráče nepingnul
                     await chat_channel.send(
-                        f"{interaction.user.mention} {dest['emoji']} *přichází do {dest['name']}.*"
+                        content=f"{interaction.user.mention} {dest['emoji']} "
+                                f"*přichází do {dest['name']}.*",
+                        embed=welcome,
                     )
                 except Exception as e:
                     logger.exception(f"[onboard] Nepodařilo se přidat do chat kanálu: {e}")
