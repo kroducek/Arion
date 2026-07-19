@@ -314,6 +314,19 @@ async def _ac_preset(
     ][:25]
 
 
+async def _ac_pooltype(
+    interaction: discord.Interaction, current: str
+) -> list[app_commands.Choice[str]]:
+    """Nabídne existující typy poolů (kovar, pekarna…). Nový typ jde napsat ručně."""
+    cur = (current or "").lower()
+    pools = _load_pools()
+    return [
+        app_commands.Choice(name=f"{typ}  ({len(items)})", value=typ)
+        for typ, items in pools.items()
+        if not cur or cur in typ.lower()
+    ][:25]
+
+
 # ── Shop embed ────────────────────────────────────────────────────────────────
 
 def _build_shop_embed(shop: dict, is_open: bool) -> discord.Embed:
@@ -692,7 +705,9 @@ class Economy(commands.Cog):
         preset  = "Unikátní ID presetu (např. kovarna_lumenie)",
         nazev   = "Zobrazovaný název shopu",
         popis   = "Krátký popis / uvítací text (volitelné)",
-        item1   = "Item 1  —  formát: emoji;název;cena  (např. ⚔️;Železný meč;50)",
+        typy    = "Pooly zboží — čárkou (kovar,alchymie). Zboží se pak losuje z poolu.",
+        unikat  = "Vzácný kus: emoji;název;cena;item_id?  (visí dokud ho někdo nekoupí)",
+        item1   = "Item 1  —  formát: emoji;název;cena  (pevný item, když nechceš pool)",
         item2   = "Item 2",
         item3   = "Item 3",
         item4   = "Item 4",
@@ -700,13 +715,15 @@ class Economy(commands.Cog):
         ostatni = "Volný text pro ostatní zboží (lektvary, jídlo…)",
         lokace  = "Ve kterém městě obchod stojí (pro panel města).",
     )
-    @app_commands.autocomplete(lokace=_lokace_autocomplete)
+    @app_commands.autocomplete(lokace=_lokace_autocomplete, typy=_ac_pooltype)
     async def gshop_create(
         self,
         interaction: discord.Interaction,
         preset:  str,
         nazev:   str,
         popis:   str | None = None,
+        typy:    str | None = None,
+        unikat:  str | None = None,
         item1:   str | None = None,
         item2:   str | None = None,
         item3:   str | None = None,
@@ -725,28 +742,52 @@ class Economy(commands.Cog):
         parsed, err = _parse_items([item1, item2, item3, item4, item5])
         if err:
             return await interaction.followup.send(f"❌ {err}", ephemeral=True)
-        if not parsed and not ostatni:
+
+        # typy poolů (čárkou) + volitelný unikát
+        pool_types = [t.strip().lower().replace(" ", "_")
+                      for t in (typy or "").split(",") if t.strip()]
+        unique = None
+        if unikat:
+            unique, uerr = _parse_one_item(unikat)
+            if uerr:
+                return await interaction.followup.send(f"❌ Unikát: {uerr}", ephemeral=True)
+
+        if not parsed and not ostatni and not pool_types and not unique:
             return await interaction.followup.send(
-                "❌ Shop musí mít alespoň jeden item nebo sekci Ostatní.", ephemeral=True
+                "❌ Shop musí mít alespoň jeden item, pool (`typy`), unikát nebo sekci Ostatní.",
+                ephemeral=True
             )
+
         shops[preset] = {
             "nazev":   nazev,
             "popis":   popis or "",
             "items":   parsed,
             "ostatni": ostatni or "",
             "lokace":  lokace,
-            "pool_types": [],
+            "pool_types": pool_types,
             "specials":   [],
-            "unique":     None,
+            "unique":     unique,
             "offer":      [],
             "open":    False,
             "message": None,
             "channel": None,
         }
+        # rovnou namíchej první nabídku, ať shop není prázdný
+        if pool_types or unique:
+            shops[preset]["offer"] = roll_offer(shops[preset])
         _save_shops(shops)
+        info = []
+        if pool_types:
+            info.append(f"📦 pooly: {', '.join(pool_types)} "
+                        f"({len(shops[preset]['offer'])} v nabídce)")
+        if unique:
+            info.append(f"✨ unikát: {unique['emoji']} {unique['name']}")
+        if parsed:
+            info.append(f"{len(parsed)} pevných itemů")
         await interaction.followup.send(
             f"✅ Preset **`{preset}`** — **{nazev}** vytvořen.\n"
-            f"-# Použij `/gshop open preset:{preset}` pro zveřejnění.",
+            + (f"-# {'  ·  '.join(info)}\n" if info else "")
+            + f"-# Použij `/gshop open preset:{preset}` pro zveřejnění.",
             ephemeral=True,
         )
 
@@ -903,9 +944,25 @@ class Economy(commands.Cog):
             status = "🟢 otevřeno" if s.get("open") else "🔴 zavřeno"
             ch = interaction.guild.get_channel(s.get("channel") or 0)
             ch_txt = f"  ·  {ch.mention}" if ch and s.get("open") else ""
+
+            types = s.get("pool_types") or []
+            if types:
+                detail = (f"📦 pooly: {', '.join(types)}  ·  "
+                          f"{len(s.get('offer', []))} v nabídce")
+                extra = []
+                if s.get("specials"):
+                    extra.append(f"{len(s['specials'])}× speciál")
+                if s.get("unique"):
+                    extra.append("✨ unikát")
+                if extra:
+                    detail += "  ·  " + ", ".join(extra)
+            else:
+                detail = (f"⚠️ starý režim — {len(s.get('items', []))} pevných itemů  ·  "
+                          f"přepni přes `/gshop settype`")
+
             lines.append(
                 f"**`{sid}`** — {s.get('nazev', '?')}  ·  {status}{ch_txt}\n"
-                f"-# {len(s.get('items', []))} itemů"
+                f"-# {detail}"
             )
         embed = discord.Embed(
             title="🏪  Přehled shopů",
@@ -947,11 +1004,6 @@ class Economy(commands.Cog):
     # ══════════════════════════════════════════════════════════════════════════
 
     pool_group = app_commands.Group(name="gpool", description="Admin: Zásobníky zboží podle typu")
-
-    async def _ac_pooltype(self, interaction: discord.Interaction, current: str):
-        cur = (current or "").lower()
-        return [app_commands.Choice(name=t, value=t)
-                for t in _load_pools() if cur in t.lower()][:25]
 
     @pool_group.command(name="add", description="Admin: Přidá item do poolu typu (kovar, pekarna…)")
     @app_commands.checks.has_permissions(administrator=True)
@@ -1088,7 +1140,7 @@ class Economy(commands.Cog):
     @shop_group.command(name="settype", description="Admin: Nastaví typy poolů shopu (čárkou)")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(preset="Shop", typy="Typy oddělené čárkou (kovar,alchymie). Prázdné = zruší.")
-    @app_commands.autocomplete(preset=_ac_preset)
+    @app_commands.autocomplete(preset=_ac_preset, typy=_ac_pooltype)
     async def gshop_settype(self, interaction: discord.Interaction, preset: str, typy: str | None = None):
         await interaction.response.defer(ephemeral=True)
         shops = _load_shops()
