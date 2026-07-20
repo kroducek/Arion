@@ -80,6 +80,17 @@ _VLIV_LABELS = {"TEMNOTA": "Temnota", "SVETLO": "Světlo", "ROVNOVAHA": "Rovnov�
                 "vliv_temnota": "Temnota", "vliv_svetlo": "Světlo", "vliv_rovnovaha": "Rovnováha",
                 "hp_max": "max HP", "mana_max": "max many"}
 
+# Emoji ke statům, vlivům a zdrojům — pro hezký výpis bonusů (+1 ⚫ apod.)
+_STAT_EMOJI = {
+    "STR": "💪", "DEX": "🏹", "INS": "👁️", "INT": "🧠", "CHA": "💬", "WIS": "🦉",
+    "TEMNOTA": "⚫", "SVETLO": "☀️", "ROVNOVAHA": "⚖️",
+    "vliv_temnota": "⚫", "vliv_svetlo": "☀️", "vliv_rovnovaha": "⚖️",
+    "hp_max": "❤️", "mana_max": "🔷", "hp_bonus": "❤️", "mana_bonus": "🔷",
+}
+
+def _stat_emoji(key: str) -> str:
+    return _STAT_EMOJI.get(key, "✨")
+
 def _stat_label(key: str) -> str:
     """Hezký název klíče: skill → název, Vliv → Temnota/Světlo…, jinak raw."""
     return _skill_reg().get(key) or _VLIV_LABELS.get(key) or key
@@ -926,6 +937,29 @@ def _unequip_slot(profile: dict, slot: str, items_db: dict) -> tuple[bool, str]:
 # EMBED BUILDERS
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _item_bonuses(db_item: dict) -> list[tuple[str, str, int]]:
+    """Vytáhne z předmětu VŠECHNY equip bonusy jako (emoji, label, hodnota).
+
+    Sjednocuje hp_bonus, mana_bonus a stat_bonus/equip_bonus (staty i vlivy),
+    aby se daly hezky vypsat i sečíst do celkového přehledu.
+    """
+    out: list[tuple[str, str, int]] = []
+    if db_item.get("hp_bonus"):
+        out.append(("❤️", "max HP", int(db_item["hp_bonus"])))
+    if db_item.get("mana_bonus"):
+        out.append(("🔷", "max many", int(db_item["mana_bonus"])))
+    for stat, val in {**(db_item.get("equip_bonus") or {}),
+                      **(db_item.get("stat_bonus") or {})}.items():
+        try:
+            v = int(val)
+        except (ValueError, TypeError):
+            continue
+        if v == 0:
+            continue
+        out.append((_stat_emoji(stat), _stat_label(stat), v))
+    return out
+
+
 def _build_equip_embed(profile: dict, member: discord.Member,
                        items_db: dict) -> discord.Embed:
     """Embed zobrazující equipment + přehled dostupných úložišť (úvod /inv)."""
@@ -939,34 +973,81 @@ def _build_equip_embed(profile: dict, member: discord.Member,
 
     equip_lines = []
     total_def   = 0
+    total_atk   = 0
+    dice_atk    = []                                # kostkové ATK (4d6…) — nesčítá se
+    bonus_totals: dict[tuple[str, str], int] = {}   # (emoji,label) → součet
     seen_items  = set()
     for slot in _active_slots(profile):
         label   = SLOT_LABELS.get(slot, slot)
         emoji   = SLOT_EMOJIS.get(slot, "▪️")
         item_id = equipment.get(slot)
         if not item_id:
-            equip_lines.append(f"{emoji} **{label}**  —")
-        else:
-            if slot == "hand_r" and equipment.get("hand_l") == item_id:
-                continue
-            db_item  = items_db.get(item_id) or {}
-            name     = db_item.get("name", f"[{item_id}]")
-            suffix   = "  *(obouruční)*" if db_item.get("hand_type") == "two" else ""
-            def_val  = db_item.get("def", 0)
-            atk_val  = db_item.get("atk", 0)
-            mods     = _parse_modifiers(db_item)
-            stat_str = ""
-            if atk_val: stat_str += f"  ⚔️{atk_val}"
-            if mods:    stat_str += f"  {mods}"
-            if def_val: stat_str += f"  🛡️{def_val}"
-            if item_id not in seen_items:
-                total_def += def_val
-                seen_items.add(item_id)
-            equip_lines.append(f"{emoji} **{label}**  {name}{suffix}{stat_str}")
+            equip_lines.append(f"{emoji} **{label}** ·  — *prázdné*")
+            continue
 
-    totals_str = f"  ·  🛡️ DEF celkem: **{total_def}**" if total_def else ""
-    embed.add_field(name=f"⚔️  Equipment{totals_str}",
+        if slot == "hand_r" and equipment.get("hand_l") == item_id:
+            continue
+        db_item = items_db.get(item_id) or {}
+        name    = db_item.get("name", f"[{item_id}]")
+        suffix  = "  *(obouruční)*" if db_item.get("hand_type") == "two" else ""
+        def_val = db_item.get("def", 0)
+        atk_val = db_item.get("atk", 0)
+        mods    = _parse_modifiers(db_item)
+
+        # inline staty předmětu: ⚔️ útok, 🛡️ obrana, efekty, stat bonusy
+        chips = []
+        if atk_val:
+            chips.append(f"⚔️ {atk_val}")
+        if def_val:
+            chips.append(f"🛡️ {def_val}")
+        if mods:
+            chips.append(mods)
+        for bemoji, blabel, bval in _item_bonuses(db_item):
+            sign = "+" if bval >= 0 else "−"
+            chips.append(f"{sign}{abs(bval)} {bemoji}")
+
+        stat_str = ("  ·  " + "  ".join(chips)) if chips else ""
+        equip_lines.append(f"{emoji} **{label}** ·  {name}{suffix}{stat_str}")
+
+        # do součtů každý předmět jen jednou (obouruční drží 2 sloty)
+        if item_id not in seen_items:
+            seen_items.add(item_id)
+            total_def += def_val or 0
+            if isinstance(atk_val, int):
+                total_atk += atk_val
+            elif atk_val:                          # kostkové ATK (např. 4d6)
+                dice_atk.append(str(atk_val))
+            for bemoji, blabel, bval in _item_bonuses(db_item):
+                bonus_totals[(bemoji, blabel)] = bonus_totals.get((bemoji, blabel), 0) + bval
+
+    embed.add_field(name="⚔️  Výbava",
                     value="\n".join(equip_lines) or "—", inline=False)
+
+    # ── Souhrn: celkové ATK/DEF + všechny bonusy ──────────────────────────────
+    summary = []
+    combat_bits = []
+    if total_atk or dice_atk:
+        atk_parts = []
+        if total_atk:
+            atk_parts.append(str(total_atk))
+        atk_parts.extend(dice_atk)
+        combat_bits.append(f"⚔️ ATK **{' + '.join(atk_parts)}**")
+    if total_def:
+        combat_bits.append(f"🛡️ DEF **{total_def}**")
+    if combat_bits:
+        summary.append("  ·  ".join(combat_bits))
+    if bonus_totals:
+        bonus_bits = []
+        for (bemoji, blabel), bval in bonus_totals.items():
+            if bval == 0:
+                continue
+            sign = "+" if bval >= 0 else "−"
+            bonus_bits.append(f"{sign}{abs(bval)} {bemoji} {blabel}")
+        if bonus_bits:
+            summary.append("  ·  ".join(bonus_bits))
+    if summary:
+        embed.add_field(name="✨  Celkem z výbavy",
+                        value="\n".join(summary), inline=False)
 
     stor_lines = []
     for skey in _available_storages(profile, items_db):
