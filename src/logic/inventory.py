@@ -971,25 +971,43 @@ def _build_equip_embed(profile: dict, member: discord.Member,
     embed.set_author(name=f"{member.display_name} — ⚔️ Výbava",
                      icon_url=member.display_avatar.url)
 
-    equip_lines = []
     total_def   = 0
     total_atk   = 0
     dice_atk    = []                                # kostkové ATK (4d6…) — nesčítá se
     bonus_totals: dict[tuple[str, str], int] = {}   # (emoji,label) → součet
-    seen_items  = set()
+
+    # Sekce pro přehlednost: zbraně / zbroj / doplňky
+    _WEAPON_SLOTS = {"hand_l", "hand_r"}
+    _ACCESSORY    = {"amulet_1"} | set(_active_ring_slots(profile))
+    sections: dict[str, list[str]] = {"w": [], "a": [], "x": []}
+
+    def _section_of(slot: str) -> str:
+        if slot in _WEAPON_SLOTS:  return "w"
+        if slot in _ACCESSORY:     return "x"
+        return "a"
+
     for slot in _active_slots(profile):
         label   = SLOT_LABELS.get(slot, slot)
         emoji   = SLOT_EMOJIS.get(slot, "▪️")
         item_id = equipment.get(slot)
+        equip_lines = sections[_section_of(slot)]
         if not item_id:
-            equip_lines.append(f"{emoji} **{label}** ·  — *prázdné*")
+            # prázdný slot ztlumeně malým písmem — nasazené kusy tak vyniknou
+            equip_lines.append(f"-# {emoji} {label} · —")
             continue
 
-        if slot == "hand_r" and equipment.get("hand_l") == item_id:
-            continue
+        if slot == "hand_r" and profile.get("both_hands") \
+                and equipment.get("hand_l") == item_id:
+            continue        # JEDEN kus držený oběma rukama — druhá řádka by lhala
         db_item = items_db.get(item_id) or {}
         name    = db_item.get("name", f"[{item_id}]")
-        suffix  = "  *(obouruční)*" if db_item.get("hand_type") == "two" else ""
+        if db_item.get("hand_type") == "two":
+            suffix = "  *(obouruční)*"
+        elif profile.get("both_hands") and slot == "hand_l" \
+                and equipment.get("hand_r") == item_id:
+            suffix = "  *(v obou rukou)*"     # jednoručka držená obouruč (tier 0)
+        else:
+            suffix = ""
         def_val = db_item.get("def", 0)
         atk_val = db_item.get("atk", 0)
         mods    = _parse_modifiers(db_item)
@@ -1009,19 +1027,26 @@ def _build_equip_embed(profile: dict, member: discord.Member,
         stat_str = ("  ·  " + "  ".join(chips)) if chips else ""
         equip_lines.append(f"{emoji} **{label}** ·  {name}{suffix}{stat_str}")
 
-        # do součtů každý předmět jen jednou (obouruční drží 2 sloty)
-        if item_id not in seen_items:
-            seen_items.add(item_id)
-            total_def += def_val or 0
-            if isinstance(atk_val, int):
-                total_atk += atk_val
-            elif atk_val:                          # kostkové ATK (např. 4d6)
-                dice_atk.append(str(atk_val))
-            for bemoji, blabel, bval in _item_bonuses(db_item):
-                bonus_totals[(bemoji, blabel)] = bonus_totals.get((bemoji, blabel), 0) + bval
+        # Součty: každá VYKRESLENÁ řádka = jeden fyzický kus (sdílený
+        # obouruční item už jsme přeskočili výše). Dedup podle id by
+        # špatně počítal dvě identické dýky nebo dva stejné prsteny.
+        total_def += def_val or 0
+        if isinstance(atk_val, int):
+            total_atk += atk_val
+        elif atk_val:                          # kostkové ATK (např. 4d6)
+            dice_atk.append(str(atk_val))
+        for bemoji, blabel, bval in _item_bonuses(db_item):
+            bonus_totals[(bemoji, blabel)] = bonus_totals.get((bemoji, blabel), 0) + bval
 
-    embed.add_field(name="⚔️  Výbava",
-                    value="\n".join(equip_lines) or "—", inline=False)
+    if sections["w"]:
+        embed.add_field(name="⚔️  Zbraně",
+                        value="\n".join(sections["w"]), inline=False)
+    if sections["a"]:
+        embed.add_field(name="🛡️  Zbroj",
+                        value="\n".join(sections["a"]), inline=False)
+    if sections["x"]:
+        embed.add_field(name="💍  Doplňky",
+                        value="\n".join(sections["x"]), inline=False)
 
     # ── Souhrn: celkové ATK/DEF + všechny bonusy ──────────────────────────────
     summary = []
@@ -1757,8 +1782,11 @@ class InvPageView(discord.ui.View):
             item_id = equipment.get(slot)
             if not item_id or item_id in seen:
                 continue
-            # obouruční zbraň drží 2 sloty → jen jednou
-            if slot == "hand_r" and equipment.get("hand_l") == item_id:
+            # sdílený obouruční kus přeskoč jen podle both_hands příznaku;
+            # dvě identické dýky (stejné id, 2 kusy) mají stejný detail →
+            # dedup přes seen je pro dropdown v pořádku
+            if slot == "hand_r" and self.profile.get("both_hands") \
+                    and equipment.get("hand_l") == item_id:
                 continue
             seen.add(item_id)
             db_item = self.items_db.get(item_id) or {}
