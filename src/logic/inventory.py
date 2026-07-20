@@ -23,8 +23,8 @@ EQUIPMENT_SLOTS = [
 ]
 
 SLOT_LABELS = {
-    "hand_l":   "Zbraň L",
-    "hand_r":   "Zbraň P",
+    "hand_l":   "Zbraň 1",
+    "hand_r":   "Zbraň 2",
     "helmet":   "Hlava",
     "armor":    "Zbroj",
     "gloves":   "Rukavice",
@@ -1047,7 +1047,7 @@ def _build_equip_embed(profile: dict, member: discord.Member,
             summary.append("  ·  ".join(bonus_bits))
     if summary:
         embed.add_field(name="✨  Celkem z výbavy",
-                        value="\n".join(summary), inline=False)
+                        value="\n".join(f"-# {line}" for line in summary), inline=False)
 
     stor_lines = []
     for skey in _available_storages(profile, items_db):
@@ -1744,6 +1744,53 @@ class InvPageView(discord.ui.View):
         self._rebuild_item_select()
         await interaction.response.edit_message(embed=embed, view=self)
 
+    def _rebuild_equip_select(self):
+        """Dropdown pro rozkliknutí detailu EQUIPNUTÝCH předmětů (jen na Výbavě)."""
+        for item in [c for c in self.children
+                     if getattr(c, "custom_id", "") == "equip_detail_select"]:
+            self.remove_item(item)
+
+        equipment = self.profile.get("equipment", {})
+        options = []
+        seen = set()
+        for slot in _active_slots(self.profile):
+            item_id = equipment.get(slot)
+            if not item_id or item_id in seen:
+                continue
+            # obouruční zbraň drží 2 sloty → jen jednou
+            if slot == "hand_r" and equipment.get("hand_l") == item_id:
+                continue
+            seen.add(item_id)
+            db_item = self.items_db.get(item_id) or {}
+            name    = db_item.get("name", f"[{item_id}]")
+            slabel  = SLOT_LABELS.get(slot, slot)
+            options.append(discord.SelectOption(
+                label=name[:100],
+                value=item_id[:100],
+                description=slabel[:100],
+                emoji=SLOT_EMOJIS.get(slot),
+            ))
+
+        if not options:
+            return
+        select = discord.ui.Select(
+            placeholder="📋 Zobrazit detail nasazeného předmětu…",
+            options=options[:25],
+            custom_id="equip_detail_select",
+            row=1,
+        )
+        select.callback = self._equip_select_callback
+        self.add_item(select)
+
+    async def _equip_select_callback(self, interaction: discord.Interaction):
+        try:
+            item_id = interaction.data["values"][0]
+        except (KeyError, IndexError):
+            await interaction.response.send_message("*Nelze načíst předmět.*", ephemeral=True)
+            return
+        embed = _build_inspect_embed(item_id, self.items_db, self.profile)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     @discord.ui.button(label="◀", style=discord.ButtonStyle.secondary, row=0)
     async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.page = max(0, self.page - 1)
@@ -1767,9 +1814,10 @@ class InvPageView(discord.ui.View):
         self.active = "inventory"
         self.page   = 0
         self._build_storage_buttons()
-        # Odeber item select — na equip přehledu nedává smysl
+        # Na equip přehledu nahraď storage-select za equip-select (rozklik nasazených)
         for item in [c for c in self.children if getattr(c, "custom_id", "") == "item_detail_select"]:
             self.remove_item(item)
+        self._rebuild_equip_select()
         embed = _build_equip_embed(self.profile, self.member, self.items_db)
         await interaction.response.edit_message(embed=embed, view=self)
 
