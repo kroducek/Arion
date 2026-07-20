@@ -357,10 +357,14 @@ def _build_shop_embed(shop: dict, is_open: bool) -> discord.Embed:
 # ── Shop View (tlačítka) ──────────────────────────────────────────────────────
 
 class ShopView(discord.ui.View):
+    MAX_BUTTONS = 25          # tvrdý limit Discordu (5 řad × 5)
+
     def __init__(self, preset_id: str, shop: dict):
         super().__init__(timeout=None)
         self.preset_id = preset_id
         for i, item in enumerate(shop_display_items(shop)):
+            if i >= self.MAX_BUTTONS:
+                break         # radši uříznout než spadnout při otevírání shopu
             tag = "  ✨" if item.get("_unique") else ""
             btn = discord.ui.Button(
                 label=f"{item['emoji']}  {item['name']}  ·  {item['price']} zl.{tag}",
@@ -368,10 +372,10 @@ class ShopView(discord.ui.View):
                        else discord.ButtonStyle.secondary),
                 custom_id=f"gshop_{preset_id}_{i}",
             )
-            btn.callback = self._make_callback(i)
+            btn.callback = self._make_callback(i, item["name"])
             self.add_item(btn)
 
-    def _make_callback(self, item_index: int):
+    def _make_callback(self, item_index: int, expected_name: str):
         preset_id = self.preset_id
         async def callback(interaction: discord.Interaction):
             shops = _load_shops()
@@ -390,6 +394,13 @@ class ShopView(discord.ui.View):
                     "Tento item už neexistuje.", ephemeral=True
                 )
             item    = items[item_index]
+            # Nabídka se mohla mezitím přemíchat (/gshop reload). Kdyby hráč měl
+            # na obrazovce starou verzi, koupil by něco jiného, než vidí.
+            if item.get("name") != expected_name:
+                return await interaction.response.send_message(
+                    "🔄 Nabídka obchodu se mezitím změnila — načti zprávu znovu.",
+                    ephemeral=True
+                )
             price   = item["price"]
             uid     = pkey(interaction.user.id)
             economy = _load_economy()
@@ -433,9 +444,14 @@ class ShopView(discord.ui.View):
                 shop["offer"] = [it for it in shop.get("offer", []) if not it.get("_unique")]
                 _save_shops(shops)
                 try:
-                    await interaction.message.edit(view=ShopView(preset_id, shop))
+                    # překresli embed I tlačítka — jinak by unikát zůstal vypsaný
+                    # v textu, ale nešel koupit (rozbitý dojem)
+                    await interaction.message.edit(
+                        embed=_build_shop_embed(shop, is_open=True),
+                        view=ShopView(preset_id, shop),
+                    )
                 except Exception:
-                    pass
+                    logging.exception("[gshop] překreslení po koupi unikátu selhalo")
 
             await interaction.response.send_message(
                 f"✅ Koupil/a jsi **{item['emoji']} {item['name']}** za **{price}** {COIN}."

@@ -32,14 +32,26 @@ MAX_STAT = 20
 # ══════════════════════════════════════════════════════════════════════════════
 
 from src.utils.json_utils import load_json
+from src.database.characters import pkey
 
 def _load_profile(user_id: int) -> dict:
-    """Bezpečně načte profil hráče."""
+    """Profil AKTIVNÍ postavy (pkey), s fallbackem na starý účtový klíč.
+
+    Zbytek kódu (stats, spirits, perks) klíčuje profily přes pkey = "uid:slot".
+    Kdyby se tu použil holý str(uid), check by u multi-character postav hlásil
+    "nemáš registrovanou postavu".
+    """
     try:
         data = load_json(DATA_FILE, default={})
-        return data.get(str(user_id), {})
     except Exception:
         return {}
+    try:
+        prof = data.get(pkey(user_id))
+        if prof:
+            return prof
+    except Exception:
+        logging.exception(f"[roll] pkey({user_id}) selhal")
+    return data.get(str(user_id), {})
 
 def _get_stat_val(profile: dict, attr: str) -> int:
     if attr in STAT_LABELS:
@@ -64,11 +76,22 @@ def _get_roll_perks(user_id: int, stats: list[str]) -> list[dict]:
     """Vrátí hráčovy perky, které mají alespoň jeden ze statů v roll_tags."""
     try:
         all_perks = load_json(PERKS_FILE, default={})
-        player_data = load_json(PLAYER_PERKS_FILE, default={})
     except Exception:
         return []
-    
-    owned_ids = player_data.get(str(user_id), {}).get("perks", [])
+
+    # perky AKTIVNÍ postavy — owned_perks řeší pkey i starý účtový klíč
+    try:
+        from src.core.dnd.perks import owned_perks
+        owned_ids = owned_perks(user_id)
+    except Exception:
+        logging.exception("[roll] načtení perků selhalo")
+        try:
+            player_data = load_json(PLAYER_PERKS_FILE, default={})
+        except Exception:
+            return []
+        owned_ids = (player_data.get(pkey(user_id), {}).get("perks", [])
+                     or player_data.get(str(user_id), {}).get("perks", []))
+
     seen: set[str] = set()
     result = []
     for pid in owned_ids:
