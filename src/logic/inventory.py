@@ -1039,13 +1039,13 @@ def _build_equip_embed(profile: dict, member: discord.Member,
             bonus_totals[(bemoji, blabel)] = bonus_totals.get((bemoji, blabel), 0) + bval
 
     if sections["w"]:
-        embed.add_field(name="⚔️  Zbraně",
+        embed.add_field(name="⚔️ ┃ ZBRANĚ",
                         value="\n".join(sections["w"]), inline=False)
     if sections["a"]:
-        embed.add_field(name="🛡️  Zbroj",
+        embed.add_field(name="🛡️ ┃ ZBROJ",
                         value="\n".join(sections["a"]), inline=False)
     if sections["x"]:
-        embed.add_field(name="💍  Doplňky",
+        embed.add_field(name="💍 ┃ DOPLŇKY",
                         value="\n".join(sections["x"]), inline=False)
 
     # ── Souhrn: celkové ATK/DEF + všechny bonusy ──────────────────────────────
@@ -1071,7 +1071,7 @@ def _build_equip_embed(profile: dict, member: discord.Member,
         if bonus_bits:
             summary.append("  ·  ".join(bonus_bits))
     if summary:
-        embed.add_field(name="✨  Celkem z výbavy",
+        embed.add_field(name="✨ ┃ CELKEM Z VÝBAVY",
                         value="\n".join(f"-# {line}" for line in summary), inline=False)
 
     stor_lines = []
@@ -1082,7 +1082,7 @@ def _build_equip_embed(profile: dict, member: discord.Member,
         used    = _count_slots(stor, items_db)
         cap_str = "∞" if cap is None else f"{used}/{cap}"
         stor_lines.append(f"{visual['emoji']} **{visual['label']}**  `[{cap_str}]`")
-    embed.add_field(name="🎒  Úložiště",
+    embed.add_field(name="🎒 ┃ ÚLOŽIŠTĚ",
                     value="\n".join(stor_lines) + "\n-# Vyber tlačítkem níže.",
                     inline=False)
 
