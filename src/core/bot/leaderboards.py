@@ -52,10 +52,33 @@ def _medal(i: int) -> str:
     return MEDALS[i] if i < 3 else f"**{i+1}.**"
 
 def _name_for(guild, uid: str) -> str:
-    """uid může být 'id' nebo 'id:slot' — vezmi část před ':'."""
+    """Účtové jméno z Discordu — pro žebříčky klíčované na bare uid."""
     base = uid.split(":")[0]
     member = guild.get_member(int(base)) if guild and base.isdigit() else None
-    return member.display_name if member else f"Hráč {base}"
+    if member:
+        return member.display_name
+    # neznámý účet (není v guildě / smazaný) — zkrácené id, ať to nezabírá řádek
+    short = base[-4:] if base.isdigit() else base
+    return f"Neznámý #{short}"
+
+
+# Cache profilů v rámci jednoho renderu (ať nečteme soubor pro každý řádek)
+def _load_profiles_cache() -> dict:
+    return load_json(PROFILES_FILE, default={})
+
+def _char_name_for(guild, pkey_str: str, profiles: dict | None = None) -> str:
+    """Jméno KONKRÉTNÍ postavy (uid:slot) z jejího profilu.
+
+    Klíč je pkey = 'uid:slot'. Jméno bereme z profile['name'] — jinak by dvě
+    postavy jednoho hráče ukázaly stejné (aktivní) Discord jméno. Fallback:
+    Discord jméno účtu, pak holé id.
+    """
+    profiles = profiles if profiles is not None else _load_profiles_cache()
+    prof = profiles.get(pkey_str) or {}
+    name = prof.get("name")
+    if name:
+        return name
+    return _name_for(guild, pkey_str)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -83,16 +106,17 @@ def _minigame_embed(guild, score_file: str, title: str, color: int,
 
 
 def _gold_embed(guild, currency: str = "gold") -> discord.Embed:
-    """Ekonomika: {uid: balance}. Soubory economy.json / silver.json."""
+    """Ekonomika: {pkey: balance}. Soubory economy.json / silver.json."""
     fname = "economy.json" if currency == "gold" else "silver.json"
     icon  = "🟡" if currency == "gold" else "⚪"
     label = "Zlaťáky" if currency == "gold" else "Stříbrňáky"
     data  = load_json(_data(fname), default={})
+    profiles = _load_profiles_cache()
     ranked = sorted(data.items(), key=lambda x: x[1], reverse=True)[:10]
 
     lines = []
     for i, (uid, bal) in enumerate(ranked):
-        lines.append(f"{_medal(i)} **{_name_for(guild, uid)}** — **{bal}** {icon}")
+        lines.append(f"{_medal(i)} **{_char_name_for(guild, uid, profiles)}** — **{bal}** {icon}")
     embed = discord.Embed(title=f"💰  Bohatství — {label}",
                           description="\n".join(lines) or "*Zatím tu nikdo nic nemá.*",
                           color=0xFFD700)
@@ -100,7 +124,7 @@ def _gold_embed(guild, currency: str = "gold") -> discord.Embed:
 
 
 def _xp_embed(guild) -> discord.Embed:
-    """XP/level žebříček z profiles.json: {pkey: {level, xp}}."""
+    """XP/level žebříček z profiles.json: {pkey: {level, xp, name}}."""
     data = load_json(PROFILES_FILE, default={})
     entries = []
     for uid, p in data.items():
@@ -111,7 +135,7 @@ def _xp_embed(guild) -> discord.Embed:
 
     lines = []
     for i, (uid, level, xp) in enumerate(entries[:10]):
-        lines.append(f"{_medal(i)} **{_name_for(guild, uid)}** — "
+        lines.append(f"{_medal(i)} **{_char_name_for(guild, uid, data)}** — "
                      f"úroveň **{level}**  ·  {xp:,} XP")
     embed = discord.Embed(title="⭐  Zkušenosti — úrovně",
                           description="\n".join(lines) or "*Žádní hráči ještě nemají profil.*",
