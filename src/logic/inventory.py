@@ -1690,8 +1690,10 @@ class InvPageView(discord.ui.View):
 
     def _rebuild_item_select(self):
         """Naplní dropdown itemy z aktuální stránky (sladěno s group-aware stránkováním)."""
-        # Smaž starý select
-        for item in [c for c in self.children if getattr(c, "custom_id", "") == "item_detail_select"]:
+        # Smaž oba typy selectů — item i equip (jinak zůstane viset po přepnutí
+        # z Výbavy do úložiště a interakce spadne kvůli přebývající komponentě).
+        for item in [c for c in self.children
+                     if getattr(c, "custom_id", "") in ("item_detail_select", "equip_detail_select")]:
             self.remove_item(item)
 
         storage    = self.profile.get("storages", {}).get(self.active, [])
@@ -1771,8 +1773,9 @@ class InvPageView(discord.ui.View):
 
     def _rebuild_equip_select(self):
         """Dropdown pro rozkliknutí detailu EQUIPNUTÝCH předmětů (jen na Výbavě)."""
+        # Smaž oba typy selectů, ať se nekříží item a equip dropdown na row=1.
         for item in [c for c in self.children
-                     if getattr(c, "custom_id", "") == "equip_detail_select"]:
+                     if getattr(c, "custom_id", "") in ("item_detail_select", "equip_detail_select")]:
             self.remove_item(item)
 
         equipment = self.profile.get("equipment", {})
@@ -1842,9 +1845,7 @@ class InvPageView(discord.ui.View):
         self.active = "inventory"
         self.page   = 0
         self._build_storage_buttons()
-        # Na equip přehledu nahraď storage-select za equip-select (rozklik nasazených)
-        for item in [c for c in self.children if getattr(c, "custom_id", "") == "item_detail_select"]:
-            self.remove_item(item)
+        # equip dropdown (rozklik nasazených); sám odebere případný item-select
         self._rebuild_equip_select()
         embed = _build_equip_embed(self.profile, self.member, self.items_db)
         await interaction.response.edit_message(embed=embed, view=self)
