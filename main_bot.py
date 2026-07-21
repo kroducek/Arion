@@ -64,9 +64,7 @@ BOT_COGS = [
     "src.core.bot.blackjack",
     "src.core.bot.battleships",
     "src.core.bot.tictactoe",
-  
-    # Labyrinth (balíček)
-    "src.core.bot.labyrinth",
+    "src.core.bot.leaderboards",
     # Utility
     "src.core.bot.countdown",
     "src.core.bot.voice",

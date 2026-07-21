@@ -557,28 +557,6 @@ class GuessCog(commands.Cog):
         embed.add_field(name="Pot",  value=f"{game['pot']} {minigame_coin()}", inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @guess.command(name="leaderboard", description="Žebříček nejlepších hráčů Hádej kdo")
-    async def guess_leaderboard(self, interaction: discord.Interaction):
-        scores = _load_scores()
-        if not scores:
-            await interaction.response.send_message("Žebříček je zatím prázdný.", ephemeral=True)
-            return
-
-        top     = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:10]
-        medals  = ["🥇", "🥈", "🥉"] + ["🔹"] * 7
-        lines   = []
-        for i, (uid, wins) in enumerate(top):
-            member = interaction.guild.get_member(int(uid))
-            name   = member.display_name if member else f"<@{uid}>"
-            lines.append(f"{medals[i]} **{name}** — {wins} výher")
-
-        embed = discord.Embed(
-            title="🔍 Hádej kdo — Žebříček",
-            description="\n".join(lines),
-            color=0x9B59B6
-        )
-        embed.set_footer(text="Top 10 hráčů | počet výher")
-        await interaction.response.send_message(embed=embed)
 
     @guess.command(name="cancel", description="[Admin] Zruší hru a vrátí sázky")
     @app_commands.checks.has_permissions(administrator=True)

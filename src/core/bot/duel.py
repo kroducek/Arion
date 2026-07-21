@@ -2229,21 +2229,6 @@ class DuelCog(commands.Cog):
         embed.set_footer(text="⭐ Aurionis  ·  /duel challenge @hráč pro výzvu")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @duel_group.command(name="leaderboard", description="Žebříček nejlepších duelistů")
-    async def duel_leaderboard(self, interaction: discord.Interaction):
-        if not _load_duel_scores():
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="⚔️  Duel — Žebříček",
-                    description="Zatím žádné duely na tomto serveru.\n*Buď první!*",
-                    color=0x1a1a2e,
-                ).set_footer(text="⭐ Aurionis"),
-            )
-            return
-        await interaction.response.send_message(
-            embed=_duel_leaderboard_embed(interaction.guild, "silver"),
-            view=DuelLeaderboardView(),
-        )
 
 
 async def setup(bot: commands.Bot):

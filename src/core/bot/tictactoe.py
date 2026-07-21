@@ -488,11 +488,6 @@ class TicTacToeCog(commands.Cog):
         self.games.pop(interaction.channel_id, None)
         await interaction.response.send_message("🛑 Hra zrušena, sázky vráceny.", ephemeral=True)
 
-    @group.command(name="top", description="Žebříček piškvorek podle profitu")
-    async def top_cmd(self, interaction: discord.Interaction):
-        await interaction.response.send_message(
-            embed=_leaderboard_embed(interaction.guild, "silver"), view=TTTLeaderboardView())
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(TicTacToeCog(bot))

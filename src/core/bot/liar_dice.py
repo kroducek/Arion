@@ -702,29 +702,6 @@ class LiarDiceCog(commands.Cog):
         del self.active_games[interaction.channel.id]
         await interaction.response.send_message("🛑 Hra zrušena.")
 
-    @app_commands.command(name="liar_leaderboard", description="Žebříček vítězů Kostky lháře")
-    async def cmd_leaderboard(self, interaction: discord.Interaction):
-        scores = _load_scores()
-        if not scores:
-            await interaction.response.send_message("Zatím nikdo nevyhrál.", ephemeral=True)
-            return
-
-        sorted_s = sorted(scores.items(), key=lambda x: x[1], reverse=True)
-        medals   = ["🥇", "🥈", "🥉"]
-        lines    = []
-        for i, (uid, wins) in enumerate(sorted_s[:10]):
-            medal  = medals[i] if i < 3 else f"`{i + 1}.`"
-            member = interaction.guild.get_member(int(uid))
-            name   = member.display_name if member else f"<@{uid}>"
-            w      = "výhra" if wins == 1 else "výher"
-            lines.append(f"{medal} **{name}** — {wins} {w}")
-
-        embed = discord.Embed(
-            title="🏆 Kostka lháře — Žebříček",
-            description="\n".join(lines),
-            color=0xF1C40F,
-        )
-        await interaction.response.send_message(embed=embed)
 
 
 async def setup(bot: commands.Bot):

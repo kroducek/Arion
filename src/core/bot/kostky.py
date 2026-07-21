@@ -1429,24 +1429,6 @@ class Kostky(commands.Cog):
 
     # ── /kostky leaderboard ───────────────────────────────────────────────────
 
-    @kostky_group.command(name="leaderboard", description="Celkové statistiky hráčů — výhry a zisky")
-    async def kostky_leaderboard(self, interaction: discord.Interaction):
-        gid  = interaction.guild_id
-        data = get_all_stats(gid)
-
-        if not data:
-            embed = discord.Embed(
-                title="🏆 Leaderboard Kostek",
-                description="Zatím nikdo nevyhrál žádnou hru na tomto serveru.\n*Buď první!*",
-                color=0xFFD700
-            )
-            embed.set_footer(text="⭐ Aurionis")
-            return await interaction.response.send_message(embed=embed)
-
-        await interaction.response.send_message(
-            embed=_kostky_leaderboard_embed(interaction.guild, gid, "silver"),
-            view=KostkyLeaderboardView(gid),
-        )
 
     # ── /admin-kostky add ─────────────────────────────────────────────────────
 

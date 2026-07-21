@@ -682,15 +682,6 @@ class Economy(commands.Cog):
                 msg += f"\n-# *(Hráč měl jen {current}, odebráno maximum. Použij `minus: Ano` pro dluh.)*"
             await interaction.response.send_message(msg)
 
-    # ── /gleaderboard ─────────────────────────────────────────────────────────
-
-    @app_commands.command(name="gleaderboard", description="Žebříček nejbohatších (přepínání 🟡/⚪)")
-    async def gleaderboard(self, interaction: discord.Interaction):
-        await interaction.response.send_message(
-            embed=build_leaderboard_embed(interaction.guild, "gold"),
-            view=LeaderboardView(),
-        )
-
     # ── /minihry_mena ─────────────────────────────────────────────────────────
 
     @app_commands.command(name="minihry_mena", description="Admin: Přepni měnu miniher (silver/gold)")

@@ -899,17 +899,6 @@ class BlackjackCog(commands.Cog):
         await table.render(None)
         await interaction.response.send_message("🛑 Stůl zrušen, sázky vráceny.", ephemeral=True)
 
-    @group.command(name="top", description="Žebříček Blackjacku podle profitu")
-    async def top_cmd(self, interaction: discord.Interaction):
-        scores = _load_scores()
-        if not scores:
-            await interaction.response.send_message("Zatím nikdo nehrál.", ephemeral=True)
-            return
-        await interaction.response.send_message(
-            embed=_bj_leaderboard_embed(interaction.guild, "silver"),
-            view=BJLeaderboardView(),
-        )
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(BlackjackCog(bot))

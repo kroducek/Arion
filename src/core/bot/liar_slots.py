@@ -641,19 +641,6 @@ class SlotsCog(commands.Cog):
         view = SlotsLobbyView(self, interaction.user, sazka)
         await interaction.response.send_message(embed=view._embed(), view=view)
 
-    @app_commands.command(name="slots_leaderboard", description="Žebříček výher Liar Slots")
-    async def slots_lb(self, interaction: discord.Interaction):
-        scores = load_json(SCORES_FILE, {})
-        if not scores:
-            await interaction.response.send_message("Žádné záznamy.", ephemeral=True)
-            return
-        members = {str(m.id): m.display_name for m in interaction.guild.members}
-        lines = [
-            f"{i}. **{members.get(uid, uid)}** — {w} výher"
-            for i, (uid, w) in enumerate(sorted(scores.items(), key=lambda x: -x[1])[:10], 1)
-        ]
-        e = discord.Embed(title="🎰 Liar Slots — Žebříček", description="\n".join(lines), color=0xFFD700)
-        await interaction.response.send_message(embed=e)
 
     @app_commands.command(name="slots_cancel", description="[Admin] Zruší probíhající Liar Slots")
     async def slots_cancel_cmd(self, interaction: discord.Interaction):
