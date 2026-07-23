@@ -901,39 +901,6 @@ _SEED_PERKS: dict[str, dict] = {
         "cooldown_uses": 0,
         "cooldown_type": None,
     },
-    "dual_wielding_1": {
-        "name": "Boj dvěma zbraněmi I.",
-        "group": "Výzbroj",
-        "passive": True,
-        "unique": False,
-        "learnable": True,
-        "desc": "Potřebný perk pro boj dvěma zbraněmi zároveň.",
-        "subdesc": None,
-        "cooldown_uses": 0,
-        "cooldown_type": None,
-    },
-    "dual_wielding_2": {
-        "name": "Boj dvěma zbraněmi II.",
-        "group": "Výzbroj",
-        "passive": True,
-        "unique": False,
-        "learnable": True,
-        "desc": "Pokročilý boj dvěma zbraněmi. Snížení penalizace k útokům.",
-        "subdesc": None,
-        "cooldown_uses": 0,
-        "cooldown_type": None,
-    },
-    "dual_wielding_3": {
-        "name": "Boj dvěma zbraněmi III.",
-        "group": "Výzbroj",
-        "passive": True,
-        "unique": False,
-        "learnable": True,
-        "desc": "Mistrné ovládání dvou zbraní. Žádná penalizace k útokům.",
-        "subdesc": None,
-        "cooldown_uses": 0,
-        "cooldown_type": None,
-    },
     "archery_1": {
         "unlocks_skill": {"id": "strelba", "name": "Střelba", "gives": None},
         "name": "Lukostřelba I.",
@@ -1035,7 +1002,10 @@ _SEED_PERKS: dict[str, dict] = {
     },
 }
 
-_SYNC_FIELDS = {"name", "group", "passive", "unique", "learnable", "desc", "subdesc", "cooldown_uses", "cooldown_type"}
+_SYNC_FIELDS = {"name", "group", "passive", "unique", "learnable", "desc", "subdesc",
+                "cooldown_uses", "cooldown_type", "sp_cost"}
+# POZOR: stat_bonus sem NEPATŘÍ — je editovatelný přes /perk edit a seed ho nemá,
+# takže by ho migrace při každém startu smazala.
 _LEGACY_IDS  = {"terra", "ignis", "zaklady_bendingu", "vaha_svobody"}
 
 # roll_tags a bonus pro seed perky — aplikují se v migraci
@@ -1294,12 +1264,24 @@ def sp_perk_cost(perk_id: str, perks_db: Optional[dict] = None) -> int:
     except (TypeError, ValueError):
         return 0
 
+def highest_tier_index(chain: tuple[str, str, str], owned: list[str]) -> int:
+    """Index nejvyššího vlastněného tieru v řetězci (-1 = žádný)."""
+    highest = -1
+    for i, pid in enumerate(chain):
+        if pid in owned:
+            highest = i
+    return highest
+
+
 def next_sp_upgrade(chain: tuple[str, str, str], owned: list[str]) -> Optional[str]:
-    """Další tier v řetězci, který si hráč může koupit. None = má už max."""
-    for pid in chain:
-        if pid not in owned:
-            return pid
-    return None
+    """Další tier v řetězci, který si hráč může koupit. None = má už max.
+
+    Nákup vyššího tieru nižší SMAŽE (drží se jen aktuální), takže „první
+    nevlastněný" by hráči s tierem II znovu nabídl tier I. Proto se počítá
+    od NEJVYŠŠÍHO vlastněného.
+    """
+    nxt = highest_tier_index(chain, owned) + 1
+    return chain[nxt] if nxt < len(chain) else None
 
 def _next_tier_id(perk_id: str) -> str | None:
     if perk_id in _NEXT_TIER:
@@ -1345,7 +1327,9 @@ def _migrate_perks():
         else:
             for field in _SYNC_FIELDS:
                 if perks[pid].get(field) != seed.get(field):
-                    perks[pid][field] = seed[field]
+                    # .get — ne seed[field]: perk může mít pole, které seed nemá
+                    # (např. sp_cost), a přímý přístup by spadl na KeyError
+                    perks[pid][field] = seed.get(field, 0 if field == "sp_cost" else None)
                     changed = True
     for pid in perks:
         if not perks[pid].get("roll_tags"):
@@ -2671,14 +2655,17 @@ class PerkUpgradeView(discord.ui.View):
 
         lines: list[str] = []
         for chain in SP_PERK_CHAINS:
-            for pid in chain:
+            nxt_id  = next_sp_upgrade(chain, owned)
+            highest = highest_tier_index(chain, owned)
+            for i, pid in enumerate(chain):
                 perk = db.get(pid) or _SEED_PERKS.get(pid, {})
                 cost = sp_perk_cost(pid, db)
                 name = perk.get("name", pid)
                 sub  = perk.get("subdesc") or perk.get("desc") or ""
-                if pid in owned:
+                # nižší tiery jsou fakticky odemčené (vyšší je nahradil)
+                if i <= highest:
                     lines.append(f"✅ **{name}**")
-                elif pid == next_sp_upgrade(chain, owned):
+                elif pid == nxt_id:
                     lines.append(f"⭐ **{name}** — **{cost} SP**")
                 else:
                     lines.append(f"🔒 ~~{name}~~ — {cost} SP")
