@@ -520,7 +520,20 @@ def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
 
     # ── Atributy (vždy všech 6 — bonus k hodům) ──
     stats = profile.get("stats", {})
-    _ap = [f"{_ATTR_EMOJI.get(k, '')} **{k}** `{stats.get(k, 0)}`" for k in STAT_LABELS]
+    # bonusy z perků se do profilu neukládají (počítají se dynamicky), takže
+    # je musíme přičíst i tady — jinak by hráč viděl 0, ale házel s +1
+    try:
+        from src.core.dnd.perks import perk_bonuses
+        _pb = perk_bonuses(target.id) if getattr(target, "id", None) else {}
+    except Exception:
+        logger.exception("[profile] načtení perk bonusů pro atributy selhalo")
+        _pb = {}
+    _ap = []
+    for k in STAT_LABELS:
+        base  = stats.get(k, 0)
+        bonus = _pb.get(k, 0)
+        shown = f"{base}+{bonus}" if bonus else f"{base}"
+        _ap.append(f"{_ATTR_EMOJI.get(k, '')} **{k}** `{shown}`")
     attr_line = "    ".join(_ap[:3]) + "\n" + "    ".join(_ap[3:])
     embed.add_field(name="\U0001f3af  Atributy  ·  hody", value=attr_line, inline=False)
 
@@ -705,8 +718,15 @@ async def _test_stats_payload(target, profile):
                        if isinstance(c, dict) and c.get("owner_id") == str(target.id))
     except Exception:
         card_cnt = 0
+    try:
+        from src.core.dnd.perks import perk_bonuses
+        _card_pb = perk_bonuses(target.id) if getattr(target, "id", None) else {}
+    except Exception:
+        logger.exception("[profile] perk bonusy pro kartu selhaly")
+        _card_pb = {}
     extras = {
         "def":              total_def,
+        "perk_bonus":       _card_pb,
         "fury_spirit":      spirit_bonus,
         "fury_spirit_name": spirit_name,
         "statuses":         status_names,

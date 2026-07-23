@@ -356,7 +356,9 @@ def render_stats_card(profile, char_name, portrait_bytes=None, extras=None):
 
     _divider(d, 48, W - 48, y + 10, accent=accent)
     d.text((48, y + 30), "Atributy", font=_font(19, serif=True), fill=GREY)
-    d.text((48, y + 58), "    ".join(f"{k} {stats.get(k, 0)}" for k in STAT_LABELS),
+    _pb = _ex.get("perk_bonus") or {}
+    d.text((48, y + 58), "    ".join(
+        f"{k} {stats.get(k, 0) + _pb.get(k, 0)}" for k in STAT_LABELS),
            font=_font(22), fill=(222, 222, 232))
     d.text((W - 48, y + 30), f"AP {profile.get('ap', 0)}", font=_font(24, serif=True), fill=GOLD, anchor="ra")
     d.text((W - 48, y + 58), f"SP {profile.get('sp', 0)}", font=_font(24, serif=True), fill=GOLD, anchor="ra")
