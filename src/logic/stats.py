@@ -18,6 +18,7 @@ logger = logging.getLogger("Stats")
 
 # Maximální počet záznamů v XP logu na hráče (FIFO ring buffer)
 XP_LOG_MAX_PER_USER = 50
+SP_LOG_MAX_PER_USER = 50
 
 STAT_LABELS = ['STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS']
 SKILL_CAP = 10  # max level jednoho skillu (I–X)
@@ -346,6 +347,64 @@ def get_xp_log(user_id: int) -> list[dict]:
     data = _load()
     p    = _profile(data, pkey(user_id))
     return list(reversed(p.get("xp_log", [])))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SP LOG — persistentní log v profiles.json pod klíčem "sp_log"
+# Každý záznam: {"ts": ISO str, "delta": int, "sp_after": int,
+#                "reason": str, "by": str}
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _append_sp_log(p: dict, delta: int, sp_after: int,
+                   reason: str = "", by: str = "") -> None:
+    """Přidá záznam do SP logu hráče (FIFO, max SP_LOG_MAX_PER_USER záznamů)."""
+    entry = {
+        "ts":       datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "delta":    delta,
+        "sp_after": sp_after,
+        "reason":   reason,
+        "by":       by,
+    }
+    log = p.setdefault("sp_log", [])
+    log.append(entry)
+    if len(log) > SP_LOG_MAX_PER_USER:
+        p["sp_log"] = log[-SP_LOG_MAX_PER_USER:]
+
+
+def get_sp_log(user_id: int) -> list[dict]:
+    """Vrátí SP log hráče (od nejnovějšího)."""
+    data = _load()
+    p    = _profile(data, pkey(user_id))
+    return list(reversed(p.get("sp_log", [])))
+
+
+def grant_sp(user_id: int, amount: int, reason: str = "", by: str = "") -> int:
+    """Přidá (nebo odebere) hráči SP a zaloguje to. Vrací nový stav SP.
+
+    SP nikdy neklesne pod 0 — při odebírání se ořízne.
+    """
+    data = _load()
+    key  = pkey(user_id)
+    p    = _profile(data, key)
+    new  = max(0, p.get("sp", 0) + amount)
+    real = new - p.get("sp", 0)          # kolik se reálně změnilo (kvůli ořezu)
+    p["sp"] = new
+    _append_sp_log(p, real, new, reason, by)
+    _save(data)
+    return new
+
+
+def set_sp(user_id: int, amount: int, reason: str = "", by: str = "") -> int:
+    """Nastaví hráči SP na konkrétní hodnotu a zaloguje rozdíl."""
+    data = _load()
+    key  = pkey(user_id)
+    p    = _profile(data, key)
+    new  = max(0, int(amount))
+    delta = new - p.get("sp", 0)
+    p["sp"] = new
+    _append_sp_log(p, delta, new, reason or "ruční úprava", by)
+    _save(data)
+    return new
 
 
 def _bar(cur: int, mx: int, width: int = 10) -> str:
@@ -1087,6 +1146,113 @@ class Stats(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # /sp — správa skill pointů (vše jen pro adminy)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    sp_group = app_commands.Group(name="sp", description="[Admin] Správa skill pointů")
+
+    @sp_group.command(name="give", description="[Admin] Dej hráči SP za výkon v RP.")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(
+        member="Hráč, který SP dostane.",
+        reason="Za co SP dostal (uloží se do logu).",
+        amount="Kolik SP (výchozí 1, záporné odebere).",
+    )
+    async def sp_give(self, interaction: discord.Interaction, member: discord.Member,
+                      reason: str, amount: int = 1):
+        await interaction.response.defer(ephemeral=True)
+        if amount == 0:
+            await interaction.followup.send("Množství nesmí být 0.", ephemeral=True)
+            return
+        try:
+            new = grant_sp(member.id, amount, reason, interaction.user.display_name)
+        except Exception as e:
+            logger.exception(f"[sp_give] {e}")
+            await interaction.followup.send(f"❌ Chyba: {str(e)[:100]}", ephemeral=True)
+            return
+
+        sign = "+" if amount > 0 else ""
+        embed = discord.Embed(
+            title="⚡ Skill pointy",
+            description=(f"{member.mention} dostal **{sign}{amount} SP**\n"
+                         f"-# *{reason}*"),
+            color=0xF1C40F,
+        )
+        embed.add_field(name="Nový stav", value=f"⚡ **{new}** SP", inline=True)
+        embed.add_field(name="Udělil",    value=interaction.user.mention, inline=True)
+        embed.set_footer(text="⭐ Aurionis")
+        # veřejně, ať to hráč i ostatní vidí
+        await interaction.channel.send(embed=embed)
+        await interaction.followup.send(f"✅ Uděleno. {member.display_name} má **{new}** SP.",
+                                        ephemeral=True)
+
+    @sp_group.command(name="log", description="[Admin] Historie SP hráče — kolik, kdy a za co.")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(member="Hráč (výchozí: ty)")
+    async def sp_log_cmd(self, interaction: discord.Interaction,
+                         member: discord.Member = None):
+        await interaction.response.defer(ephemeral=True)
+        target = member or interaction.user
+        try:
+            entries = get_sp_log(target.id)
+        except Exception as e:
+            logger.exception(f"[sp_log] {e}")
+            await interaction.followup.send(f"❌ Chyba: {str(e)[:100]}", ephemeral=True)
+            return
+
+        data    = _load()
+        current = _profile(data, pkey(target.id)).get("sp", 0)
+
+        if not entries:
+            await interaction.followup.send(
+                f"**{target.display_name}** nemá žádné záznamy.\n"
+                f"-# Aktuálně: ⚡ **{current}** SP", ephemeral=True)
+            return
+
+        lines = []
+        for e in entries[:20]:
+            ts    = (e.get("ts", "") or "")[:10]
+            delta = e.get("delta", 0)
+            sign  = "+" if delta > 0 else ""
+            why   = e.get("reason") or "—"
+            by    = e.get("by")
+            by_s  = f"  ·  *{by}*" if by else ""
+            lines.append(f"`{ts}`  **{sign}{delta}** → {e.get('sp_after', '?')} SP{by_s}\n-# {why}")
+
+        embed = discord.Embed(
+            title=f"⚡ SP historie — {target.display_name}",
+            description="\n".join(lines),
+            color=0xF1C40F,
+        )
+        embed.set_footer(text=f"Aktuálně: {current} SP  ·  zobrazeno {min(len(entries), 20)}/{len(entries)}")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @sp_group.command(name="edit", description="[Admin] Nastav hráči SP na konkrétní hodnotu.")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(
+        member="Hráč, kterému se SP nastaví.",
+        amount="Nová hodnota SP.",
+        reason="Proč (volitelné, uloží se do logu).",
+    )
+    async def sp_edit(self, interaction: discord.Interaction, member: discord.Member,
+                      amount: int, reason: str = ""):
+        await interaction.response.defer(ephemeral=True)
+        if amount < 0:
+            await interaction.followup.send("SP nemůže být záporné.", ephemeral=True)
+            return
+        data = _load()
+        before = _profile(data, pkey(member.id)).get("sp", 0)
+        try:
+            new = set_sp(member.id, amount, reason, interaction.user.display_name)
+        except Exception as e:
+            logger.exception(f"[sp_edit] {e}")
+            await interaction.followup.send(f"❌ Chyba: {str(e)[:100]}", ephemeral=True)
+            return
+        await interaction.followup.send(
+            f"✅ **{member.display_name}**: ⚡ {before} → **{new}** SP"
+            + (f"\n-# *{reason}*" if reason else ""), ephemeral=True)
+
     # ── /stats ────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="stats", description="Tvůj quick sheet — stav postavy a tlačítka pro úpravu.")
@@ -1153,7 +1319,7 @@ class Stats(commands.Cog):
 
     # ── /reset-stats ──────────────────────────────────────────────────────────
 
-    @app_commands.command(name="reset-stats", description="[Admin] Vynuluje rozdané staty/skilly a vrátí body dle levelu.")
+    @sp_group.command(name="reset", description="[Admin] Vynuluje rozdané staty/skilly a vrátí body dle levelu.")
     @app_commands.describe(member="Hráč (výchozí: všichni)")
     @app_commands.checks.has_permissions(administrator=True)
     async def reset_stats_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
