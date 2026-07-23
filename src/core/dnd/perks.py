@@ -731,7 +731,8 @@ _SEED_PERKS: dict[str, dict] = {
         "passive": True,
         "unique": False,
         "learnable": False,
-        "sp_cost": 1,
+        "sp_cost": 0,
+        "teacher_only": True,
         "desc": "Otevření slotu druhá pomocná ruka.",
         "subdesc": ("Jednoruční zbraň nyní nemusíš držet v obouch rukách. Ve své druhé ruce "
                     "můžeš držet — dýku, štít, louč, lampu atd."),
@@ -1003,7 +1004,7 @@ _SEED_PERKS: dict[str, dict] = {
 }
 
 _SYNC_FIELDS = {"name", "group", "passive", "unique", "learnable", "desc", "subdesc",
-                "cooldown_uses", "cooldown_type", "sp_cost"}
+                "cooldown_uses", "cooldown_type", "sp_cost", "teacher_only"}
 # POZOR: stat_bonus sem NEPATŘÍ — je editovatelný přes /perk edit a seed ho nemá,
 # takže by ho migrace při každém startu smazala.
 _LEGACY_IDS  = {"terra", "ignis", "zaklady_bendingu", "vaha_svobody"}
@@ -1273,15 +1274,52 @@ def highest_tier_index(chain: tuple[str, str, str], owned: list[str]) -> int:
     return highest
 
 
-def next_sp_upgrade(chain: tuple[str, str, str], owned: list[str]) -> Optional[str]:
-    """Další tier v řetězci, který si hráč může koupit. None = má už max.
+def drop_lower_tiers(player: dict, perk_id: str) -> list[str]:
+    """Odebere hráči nižší tiery téhož řetězce. Vrací, co bylo odebráno.
+
+    Drží se jen AKTUÁLNÍ tier — jakmile hráč získá „Boj se dvěma zbraněmi II.",
+    jednička mu z perků zmizí (ať už ji koupil za SP, nebo naučil od učitele).
+    """
+    removed: list[str] = []
+    perks = player.get("perks", [])
+    for chain in SP_PERK_CHAINS:
+        if perk_id in chain:
+            for lower in chain[:chain.index(perk_id)]:
+                if lower in perks:
+                    perks.remove(lower)
+                    removed.append(lower)
+            break
+    return removed
+
+
+def is_teacher_only(perk_id: str, perks_db: Optional[dict] = None) -> bool:
+    """True = perk nejde koupit za SP, musí ho naučit učitel."""
+    db = perks_db if perks_db is not None else load_perks()
+    p  = db.get(perk_id) or _SEED_PERKS.get(perk_id, {})
+    return bool(p.get("teacher_only"))
+
+
+def next_sp_upgrade(chain: tuple[str, str, str], owned: list[str],
+                    perks_db: Optional[dict] = None) -> Optional[str]:
+    """Další tier v řetězci, který si hráč může koupit za SP. None = nic.
 
     Nákup vyššího tieru nižší SMAŽE (drží se jen aktuální), takže „první
     nevlastněný" by hráči s tierem II znovu nabídl tier I. Proto se počítá
     od NEJVYŠŠÍHO vlastněného.
+
+    Tier označený `teacher_only` (typicky I.) se za SP koupit nedá — musí ho
+    naučit učitel. Dokud ho hráč nemá, není v řetězci co kupovat.
     """
+    db  = perks_db if perks_db is not None else load_perks()
     nxt = highest_tier_index(chain, owned) + 1
-    return chain[nxt] if nxt < len(chain) else None
+    if nxt >= len(chain):
+        return None                       # má maximum
+    pid = chain[nxt]
+    if is_teacher_only(pid, db):
+        return None                       # bránu otevře jen učitel
+    if sp_perk_cost(pid, db) <= 0:
+        return None                       # nekupovatelné za SP
+    return pid
 
 def _next_tier_id(perk_id: str) -> str | None:
     if perk_id in _NEXT_TIER:
@@ -1718,6 +1756,8 @@ class PerksCog(commands.Cog):
             )
             return
         player["perks"].append(perk_id)
+        # vyšší tier nahrazuje nižší — starý perk hráči zmizí ze seznamu
+        _dropped = drop_lower_tiers(player, perk_id)
         save_player_perks(player_data)
         await _check_perk_collector(member, interaction.channel, player["perks"])
         log_action("perk_give", interaction.user.display_name, member.display_name, perk_id)
@@ -1925,6 +1965,8 @@ class PerksCog(commands.Cog):
             )
             return
         player["perks"].append(perk_id)
+        # vyšší tier nahrazuje nižší — starý perk hráči zmizí ze seznamu
+        _dropped = drop_lower_tiers(player, perk_id)
         save_player_perks(player_data)
         await _check_perk_collector(member, interaction.channel, player["perks"])
         log_action("perk_give", interaction.user.display_name, member.display_name, perk_id)
@@ -2635,9 +2677,9 @@ class PerkUpgradeView(discord.ui.View):
         db    = load_perks()
         owned = owned_perks(self.user_id)
         for chain in SP_PERK_CHAINS:
-            nxt = next_sp_upgrade(chain, owned)
+            nxt = next_sp_upgrade(chain, owned, db)
             if not nxt:
-                continue   # má už tier III
+                continue   # má maximum, nebo bránu ještě neotevřel učitel
             perk = db.get(nxt) or _SEED_PERKS.get(nxt, {})
             cost = sp_perk_cost(nxt, db)
             btn  = discord.ui.Button(
@@ -2655,23 +2697,28 @@ class PerkUpgradeView(discord.ui.View):
 
         lines: list[str] = []
         for chain in SP_PERK_CHAINS:
-            nxt_id  = next_sp_upgrade(chain, owned)
             highest = highest_tier_index(chain, owned)
-            for i, pid in enumerate(chain):
+            # Řetěz otevře až učitel — dokud hráč nemá základní tier,
+            # vyšší verze se vůbec nezobrazují.
+            if highest < 0:
+                continue
+            nxt_id = next_sp_upgrade(chain, owned, db)
+            # zobrazujeme JEN tiery nad tím, co hráč má — starší verze zmizí
+            for pid in chain[highest + 1:]:
                 perk = db.get(pid) or _SEED_PERKS.get(pid, {})
                 cost = sp_perk_cost(pid, db)
                 name = perk.get("name", pid)
                 sub  = perk.get("subdesc") or perk.get("desc") or ""
-                # nižší tiery jsou fakticky odemčené (vyšší je nahradil)
-                if i <= highest:
-                    lines.append(f"✅ **{name}**")
-                elif pid == nxt_id:
+                if pid == nxt_id:
                     lines.append(f"⭐ **{name}** — **{cost} SP**")
                 else:
                     lines.append(f"🔒 ~~{name}~~ — {cost} SP")
                 if sub:
                     lines.append(f"-# {sub}")
             lines.append("")
+
+        if not lines:
+            lines = ["-# *Zatím nemáš co vylepšovat — základní perky tě musí naučit učitel.*"]
 
         desc = (f"Máš **{sp}** volných ⚡ SP.\n\n" + "\n".join(lines)).strip()
         if len(desc) > 4096:
@@ -2705,12 +2752,7 @@ class PerkUpgradeView(discord.ui.View):
                     return
 
                 # nižší tier nahradíme vyšším (drží se jen aktuální tier)
-                for chain in SP_PERK_CHAINS:
-                    if perk_id in chain:
-                        for lower in chain[:chain.index(perk_id)]:
-                            if lower in player["perks"]:
-                                player["perks"].remove(lower)
-                        break
+                drop_lower_tiers(player, perk_id)
                 player["perks"].append(perk_id)
                 save_player_perks(player_data)
                 log_action("perk_buy_sp", interaction.user.display_name,
