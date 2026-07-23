@@ -34,6 +34,42 @@ RECRUITMENT_CHOICES = [
     app_commands.Choice(name="🔴 Uzavřená (jen na pozvánku)", value="closed"),
 ]
 
+# ============================================================
+# POŽADAVKY NA GUILDY
+# ============================================================
+
+GUILD_MIN_LEVEL   = 10     # minimální úroveň pro založení i vstup
+GUILD_CREATE_COST = 1000   # cena založení guildy (zlato)
+
+
+def _get_level(user_id: int) -> int:
+    """Úroveň AKTIVNÍ postavy hráče.
+
+    Profily jsou klíčované per-postava (pkey = 'uid:slot'); fallback na starý
+    účtový klíč, ať staré profily nespadnou na 0 a nezablokují je gate.
+    """
+    try:
+        from src.utils.paths import PROFILES as PROFILES_FILE
+        from src.utils.json_utils import load_json
+        from src.database.characters import pkey
+        data = load_json(PROFILES_FILE, default={})
+        prof = data.get(pkey(user_id)) or data.get(str(user_id)) or {}
+        return int(prof.get("level", 0))
+    except Exception:
+        return 0
+
+
+def _level_gate(user_id: int, action: str) -> Optional[discord.Embed]:
+    """Vrátí chybový embed, pokud hráč nemá dost levelů. Jinak None."""
+    lvl = _get_level(user_id)
+    if lvl >= GUILD_MIN_LEVEL:
+        return None
+    return create_error_embed(
+        "❌ Nízká Úroveň",
+        f"Pro {action} potřebuješ **úroveň {GUILD_MIN_LEVEL}**.\n"
+        f"Tvoje úroveň: **{lvl}**  ·  chybí ti **{GUILD_MIN_LEVEL - lvl}**.",
+    )
+
 
 # ============================================================
 # AUTOCOMPLETE HELPERS
@@ -249,6 +285,11 @@ class GuildInviteButton(
                 ),
                 ephemeral=True,
             )
+            return
+
+        gate = _level_gate(self.user_id, "vstup do guildy")
+        if gate:
+            await interaction.response.send_message(embed=gate, ephemeral=True)
             return
 
         if not db.get_guild(self.guild_name):
@@ -633,12 +674,44 @@ class Guilds(commands.Cog):
             )
             return
 
+        # Úroveň
+        gate = _level_gate(user_id, "založení guildy")
+        if gate:
+            await interaction.response.send_message(embed=gate, ephemeral=True)
+            return
+
+        # Zlato — jen zkontroluj, strháváme až po všech ostatních validacích
+        from src.logic.economy import get_balance, spend, coin
+        balance = get_balance(user_id, "gold")
+        if balance < GUILD_CREATE_COST:
+            await interaction.response.send_message(
+                embed=create_error_embed(
+                    "❌ Nedostatek Zlata",
+                    f"Založení guildy stojí **{GUILD_CREATE_COST}** {coin('gold')}.\n"
+                    f"Máš **{balance}**  ·  chybí ti **{GUILD_CREATE_COST - balance}**.",
+                ),
+                ephemeral=True
+            )
+            return
+
         motto = motto or "Společně silnější..."
         recruitment = nabor.value if nabor else "open"
 
-        if not self.guild_db.create_guild(jmeno, user_id, motto, tag=tag, recruitment=recruitment):
+        # Strhni až teď — po všech kontrolách, těsně před založením
+        if not spend(user_id, GUILD_CREATE_COST, "gold"):
             await interaction.response.send_message(
-                embed=create_error_embed("❌ Nepodařilo Se", "Založení guildy selhalo."),
+                embed=create_error_embed("❌ Nedostatek Zlata", "Platba se nezdařila."),
+                ephemeral=True
+            )
+            return
+
+        if not self.guild_db.create_guild(jmeno, user_id, motto, tag=tag, recruitment=recruitment):
+            # založení selhalo → vrať peníze, ať hráč nepřijde o nic
+            from src.logic.economy import add_balance
+            add_balance(user_id, GUILD_CREATE_COST, "gold")
+            await interaction.response.send_message(
+                embed=create_error_embed("❌ Nepodařilo Se",
+                                         "Založení guildy selhalo — zlato vráceno."),
                 ephemeral=True
             )
             return
@@ -654,7 +727,10 @@ class Guilds(commands.Cog):
         if thread_id:
             self.guild_db.set_thread_id(jmeno, thread_id)
 
-        msg = f"Jsi 👑 vůdce. Nábor: {RECRUITMENT_LABELS.get(recruitment)}\nMotto: `{motto}`"
+        msg = (f"Jsi 👑 vůdce. Nábor: {RECRUITMENT_LABELS.get(recruitment)}\n"
+               f"Motto: `{motto}`\n"
+               f"-# Zaplaceno **{GUILD_CREATE_COST}** {coin('gold')} · zůstatek "
+               f"**{get_balance(user_id, 'gold')}**")
         if not thread_id:
             msg += "\n⚠️ Kanál 'campfire' nenalezen — thread nevytvořen."
 
@@ -680,6 +756,11 @@ class Guilds(commands.Cog):
                 embed=create_error_embed("❌ Už Jsi v Guildě", f"Jsi členem **{current}**. Nejdřív ji opusť."),
                 ephemeral=True
             )
+            return
+
+        gate = _level_gate(user_id, "vstup do guildy")
+        if gate:
+            await interaction.response.send_message(embed=gate, ephemeral=True)
             return
 
         guild = self.guild_db.get_guild(jmeno)
@@ -743,6 +824,11 @@ class Guilds(commands.Cog):
                 embed=create_error_embed("❌ Už Jsi v Guildě", f"Jsi členem **{current}**."),
                 ephemeral=True
             )
+            return
+
+        gate = _level_gate(user_id, "vstup do guildy")
+        if gate:
+            await interaction.response.send_message(embed=gate, ephemeral=True)
             return
 
         guild = self.guild_db.get_guild(jmeno)
