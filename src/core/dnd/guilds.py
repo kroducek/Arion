@@ -12,6 +12,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from typing import Optional, List
+import logging
+
+logger = logging.getLogger("Guilds")
 
 from src.database.guild import GuildManager
 from src.utils.embeds import (
@@ -40,6 +43,10 @@ RECRUITMENT_CHOICES = [
 
 GUILD_MIN_LEVEL   = 10     # minimální úroveň pro založení i vstup
 GUILD_CREATE_COST = 1000   # cena založení guildy (zlato)
+
+# Kanál, kam se zakládají guild thready. ID je spolehlivější než jméno —
+# hledání podle jména selže, jakmile má kanál emoji nebo se přejmenuje.
+CAMPFIRE_CHANNEL_ID = 1474446401852149893
 
 
 def _get_level(user_id: int) -> int:
@@ -569,19 +576,41 @@ class Guilds(commands.Cog):
             except Exception:
                 pass
 
-    async def _create_guild_thread(self, interaction, guild_name: str, emoji: Optional[str]) -> Optional[int]:
+    async def _find_campfire(self, interaction) -> Optional[discord.TextChannel]:
+        """Najde campfire kanál — nejdřív podle ID, pak podle jména z configu."""
+        ch = self.bot.get_channel(CAMPFIRE_CHANNEL_ID)
+        if ch is None:
+            try:
+                ch = await self.bot.fetch_channel(CAMPFIRE_CHANNEL_ID)
+            except Exception:
+                ch = None
+        if ch is not None:
+            return ch
+        # záloha: podle jména (kdyby se ID změnilo)
         try:
             channel_name = self.bot.config.get("campfire_channel", "campfire")
             if interaction.guild:
-                channel = discord.utils.get(interaction.guild.text_channels, name=channel_name)
-                if channel:
-                    pref = emoji or ""
-                    tn = f"{pref} guild-{guild_name}".strip() if pref else f"guild-{guild_name}"
-                    thread = await channel.create_thread(name=tn[:100], type=discord.ChannelType.private_thread)
-                    await thread.add_user(interaction.user)
-                    return thread.id
+                return discord.utils.get(interaction.guild.text_channels, name=channel_name)
         except Exception:
-            pass
+            logger.exception("[guilds] hledání campfire podle jména selhalo")
+        return None
+
+    async def _create_guild_thread(self, interaction, guild_name: str, emoji: Optional[str]) -> Optional[int]:
+        channel = await self._find_campfire(interaction)
+        if channel is None:
+            logger.warning(f"[guilds] campfire kanál nenalezen (ID {CAMPFIRE_CHANNEL_ID})")
+            return None
+        try:
+            pref = emoji or ""
+            tn = f"{pref} guild-{guild_name}".strip() if pref else f"guild-{guild_name}"
+            thread = await channel.create_thread(name=tn[:100],
+                                                 type=discord.ChannelType.private_thread)
+            await thread.add_user(interaction.user)
+            return thread.id
+        except discord.Forbidden:
+            logger.warning(f"[guilds] chybí práva na vytvoření threadu v #{channel}")
+        except Exception:
+            logger.exception(f"[guilds] vytvoření threadu pro '{guild_name}' selhalo")
         return None
 
     async def _resolve_member_id(self, interaction, clen: str) -> Optional[int]:
