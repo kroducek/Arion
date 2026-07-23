@@ -8,7 +8,7 @@ import logging
 from datetime import date
 from typing import Optional
 
-from src.utils.paths import PERKS, PLAYER_PERKS, ODHALENI_POOL as ODHALENI_POOL_FILE
+from src.utils.paths import PERKS, PLAYER_PERKS
 from src.database.characters import pkey
 from src.utils.audit import log_action
 from src.utils.json_utils import load_json, save_json
@@ -1061,46 +1061,12 @@ _SEED_BONUS: dict[str, int] = {
 
 # ── Odhalení loot pool ───────────────────────────────────────────────────────
 
-_DEFAULT_ODHALENI_POOL: list[dict] = [
-    {"id": "maly_duch_ohne",     "name": "Malý duch ohně",     "element": "ohen",    "base_fury": 5,  "size": "malý"},
-    {"id": "velky_duch_ohne",    "name": "Velký duch ohně",    "element": "ohen",    "base_fury": 10, "size": "velký"},
-    {"id": "maly_duch_vody",     "name": "Malý duch vody",     "element": "voda",    "base_fury": 5,  "size": "malý"},
-    {"id": "velky_duch_vody",    "name": "Velký duch vody",    "element": "voda",    "base_fury": 10, "size": "velký"},
-    {"id": "maly_duch_zeme",     "name": "Malý duch země",     "element": "zeme",    "base_fury": 5,  "size": "malý"},
-    {"id": "velky_duch_zeme",    "name": "Velký duch země",    "element": "zeme",    "base_fury": 10, "size": "velký"},
-    {"id": "maly_duch_vzduchu",  "name": "Malý duch vzduchu",  "element": "vzduch",  "base_fury": 5,  "size": "malý"},
-    {"id": "velky_duch_vzduchu", "name": "Velký duch vzduchu", "element": "vzduch",  "base_fury": 10, "size": "velký"},
-    {"id": "maly_duch_svetla",   "name": "Malý duch světla",   "element": "svetlo",  "base_fury": 5,  "size": "malý"},
-    {"id": "velky_duch_svetla",  "name": "Velký duch světla",  "element": "svetlo",  "base_fury": 10, "size": "velký"},
-    {"id": "maly_duch_temnoty",  "name": "Malý duch temnoty",  "element": "temnota", "base_fury": 5,  "size": "malý"},
-    {"id": "velky_duch_temnoty", "name": "Velký duch temnoty", "element": "temnota", "base_fury": 10, "size": "velký"},
-]
 
 
-def load_odhaleni_pool() -> list[dict]:
-    """Načte loot pool. Pokud neexistuje, vytvoří výchozí."""
-    try:
-        data = load_json(ODHALENI_POOL_FILE, default=None)
-        if not isinstance(data, list):
-            save_json(ODHALENI_POOL_FILE, _DEFAULT_ODHALENI_POOL)
-            return list(_DEFAULT_ODHALENI_POOL)
-        return data
-    except Exception:
-        return list(_DEFAULT_ODHALENI_POOL)
 
 
-def save_odhaleni_pool(pool: list[dict]) -> None:
-    save_json(ODHALENI_POOL_FILE, pool)
 
 
-def _fury_roll_bonus(roll: int) -> int:
-    """Bonus furioka za 1d20 — přičítá se k base_fury ducha."""
-    if roll == 1:  return 0
-    if roll <= 5:  return 2
-    if roll <= 10: return 5
-    if roll <= 15: return 8
-    if roll <= 19: return 12
-    return 20  # nat20
 
 
 # ── Storage ───────────────────────────────────────────────────────────────────
@@ -1501,17 +1467,19 @@ class PerkListView(discord.ui.View):
 
 
 class OdhaleniRollView(discord.ui.View):
-    """Druhý krok Odhalení — hráč hodí 1d20, duch se přidá do kolekce."""
+    """Odhalení = jeden hod 1d100. Nic víc.
 
-    def __init__(self, uid: str, element: str, spirit_name: str, base_fury: int = 5):
-        super().__init__(timeout=60)
-        self.uid         = uid
-        self.element     = element
-        self.spirit_name = spirit_name
-        self.base_fury   = base_fury
-        self.done        = False
+    Bot ducha NEVYTVÁŘÍ ani needituje profil — výsledek je podklad pro DM,
+    který podle hodu, místa a odehrané scény použije `/duch pridat`.
+    """
 
-    @discord.ui.button(label="🎲 Hodit 1d20", style=discord.ButtonStyle.primary, custom_id="odhaleni_roll")
+    def __init__(self, uid: str):
+        super().__init__(timeout=300)
+        self.uid  = uid
+        self.done = False
+
+    @discord.ui.button(label="Hodit 1d100", emoji="🎲",
+                       style=discord.ButtonStyle.primary, custom_id="odhaleni_roll")
     async def roll_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if str(interaction.user.id) != self.uid:
             await interaction.response.send_message("*Tohle není tvoje aktivace.*", ephemeral=True)
@@ -1521,130 +1489,25 @@ class OdhaleniRollView(discord.ui.View):
         self.done = True
         for item in self.children:
             item.disabled = True
-        await interaction.response.edit_message(view=self)
 
-        roll  = random.randint(1, 20)
-        bonus = _fury_roll_bonus(roll)
-        fury  = self.base_fury + bonus
-        nat20 = (roll == 20)
-        nat1  = (roll == 1)
-
-        # Přidej ducha do profilu
-        from src.utils.json_utils import load_json, save_json as _sj
-        from src.utils.paths import PROFILES as _PF
-        import datetime
-        data    = load_json(_PF, default={})
-        # duch patří AKTIVNÍ postavě (pkey), ne celému účtu (holé uid).
-        # self.uid zůstává holé uid jen pro kontrolu identity výše.
-        try:
-            _pk = pkey(int(self.uid))
-        except Exception:
-            logger.exception(f"[perks] Odhalení: pkey({self.uid}) selhal — fallback na holé uid")
-            _pk = self.uid
-        profile = data.setdefault(_pk, {})
-        spirits = profile.setdefault("spirits", [])
-        try:
-            from src.logic.spirits import rank_xp_threshold as _rxt
-            xp_thresh = _rxt(1)
-        except Exception:
-            xp_thresh = 100
-        spirits.append({
-            "name":         self.spirit_name,
-            "rank":         1,
-            "fury":         fury,
-            "element":      self.element,
-            "description":  "Duch zjevený skrze Furioku: Odhalení.",
-            "xp":           0,
-            "xp_threshold": xp_thresh,
-            "total_xp":     0,
-            "created_at":   datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
-        })
-        _sj(_PF, data)
-
-        try:
-            from src.logic.spirits import ELEMENTS as _EL
-            info  = _EL.get(self.element, {})
-            emoji = info.get("emoji", "👻")
-            color = info.get("color", 0x7B68EE)
-        except Exception:
-            emoji, color = "👻", 0x7B68EE
-
-        nat_line = ""
-        if nat20: nat_line = "\n✨ **NATURAL 20! Duch je výjimečně silný!**"
-        elif nat1: nat_line = "\n💀 **Natural 1 — duch je velmi slabý...**"
+        roll = random.randint(1, 100)
+        if roll == 100:
+            color, flavor = 0xFFD700, "✨ **Stovka!** Závoj se protrhl."
+        elif roll == 1:
+            color, flavor = 0x2C2F33, "💀 **Jednička.** Ticho, nic se neozvalo."
+        else:
+            color, flavor = 0x7B68EE, ""
 
         embed = discord.Embed(
-            title=f"{emoji} {self.spirit_name} byl pohlcen!",
-            description=(
-                f"Hodil/a jsi **{roll}** na 1d20.{nat_line}\n\n"
-                f"🔋 Základní furioka: **{self.base_fury}**\n"
-                f"✨ Bonus za hod: **+{bonus}**\n"
-                f"💥 Celkem: **{fury} furioku**\n\n"
-                f"Duch přidán do tvé kolekce — `/duch-seznam`"
-            ),
+            title="👻 Furioku: Odhalení",
+            description=(f"{interaction.user.mention} hledá stopu ducha…\n\n"
+                         f"# 🎲 {roll}\n" + (f"{flavor}\n" if flavor else "")),
             color=color,
         )
-        await interaction.followup.send(embed=embed)
+        embed.set_footer(text=f"⭐ {ARION_NAME}")
+        await interaction.response.edit_message(embed=embed, view=self)
 
 
-class OdhaleniView(discord.ui.View):
-    """První krok Odhalení — výběr jednoho ze tří duchů z loot poolu."""
-
-    def __init__(self, uid: str, spirits: list[dict]):
-        super().__init__(timeout=60)
-        self.uid    = uid
-        self.chosen = False
-        try:
-            from src.logic.spirits import ELEMENTS as _EL
-        except Exception:
-            _EL = {}
-        for spirit in spirits:
-            element   = spirit["element"]
-            name      = spirit["name"]
-            base_fury = spirit.get("base_fury", 5)
-            size      = spirit.get("size", "")
-            emoji     = _EL.get(element, {}).get("emoji", "👻")
-            btn = discord.ui.Button(
-                label=f"{emoji} {name}",
-                style=discord.ButtonStyle.primary,
-                custom_id=f"odhaleni_{spirit.get('id', element)}",
-            )
-            btn.callback = self._make_callback(element, name, base_fury, size)
-            self.add_item(btn)
-
-    def _make_callback(self, element: str, name: str, base_fury: int, size: str):
-        async def callback(interaction: discord.Interaction):
-            if str(interaction.user.id) != self.uid:
-                await interaction.response.send_message("*Tohle není tvoje aktivace.*", ephemeral=True)
-                return
-            if self.chosen:
-                return
-            self.chosen = True
-            for item in self.children:
-                item.disabled = True
-            await interaction.response.edit_message(view=self)
-            try:
-                from src.logic.spirits import ELEMENTS as _EL
-                info  = _EL.get(element, {})
-                emoji = info.get("emoji", "👻")
-                color = info.get("color", 0x7B68EE)
-            except Exception:
-                emoji, color = "👻", 0x7B68EE
-            size_label = f" *({size})*" if size else ""
-            embed = discord.Embed(
-                title=f"{emoji} Zvolil/a jsi {name}!",
-                description=(
-                    f"Duch **{name}**{size_label} ({element}) přistoupil blíže.\n\n"
-                    f"🔋 Základní furioka: **{base_fury}**\n"
-                    f"Hoď 1d20 — bonus se přičte k základní furioku."
-                ),
-                color=color,
-            )
-            await interaction.followup.send(
-                embed=embed,
-                view=OdhaleniRollView(uid=self.uid, element=element, spirit_name=name, base_fury=base_fury),
-            )
-        return callback
 
 
 # ── Cog ───────────────────────────────────────────────────────────────────────
@@ -2511,36 +2374,21 @@ class PerksCog(commands.Cog):
         used  = cd.get("used", 0) if cd.get("date") == today else 0
 
         # ── Speciální: Furioku: Odhalení ─────────────────────────────────────
+        # Bot řeší JEN hod. Ducha vytvoří DM přes `/duch pridat` podle hodu,
+        # místa a toho, jak hráč scénu zahrál — žádný pool ani stupnice.
         if perk_id == "furioku_odhaleni":
-            pool = load_odhaleni_pool()
-            if len(pool) < 3:
-                await interaction.response.send_message(
-                    "❌ Loot pool má méně než 3 duchy. Přidej přes `/perks odhaleni-add`.", ephemeral=True,
-                )
-                return
-            selections = random.sample(pool, 3)
-
-            try:
-                from src.logic.spirits import ELEMENTS as _EL
-            except Exception:
-                _EL = {}
-            lines = []
-            for s in selections:
-                info       = _EL.get(s["element"], {})
-                size_label = f" *({s['size']})*" if s.get("size") else ""
-                lines.append(f"{info.get('emoji','👻')} **{s['name']}**{size_label} — 🔋 {s['base_fury']} + 1d20 bonus")
-
             embed = discord.Embed(
                 title="👻 Furioku: Odhalení",
                 description=(
-                    "Okolo tvé ruky se zjeví tři duchové.\n"
-                    "Vyber jednoho — hodíš **1d20** a bonus se přičte k základní furioku.\n\n"
-                    + "\n".join(lines)
+                    f"{interaction.user.mention} napíná smysly a hledá stopu ducha…\n\n"
+                    "Hoď **1d100** — čím vyšší hod, tím větší šance na kvalitního ducha."
                 ),
                 color=0x7B68EE,
             )
             embed.set_footer(text=f"⏳ {_cooldown_bar(used, perk.get('cooldown_uses', 2))} dnes  ·  ⭐ {ARION_NAME}")
-            await interaction.response.send_message(embed=embed, view=OdhaleniView(uid=str(interaction.user.id), spirits=selections))
+            await interaction.response.send_message(
+                embed=embed, view=OdhaleniRollView(uid=str(interaction.user.id))
+            )
             return
 
         embed = _perk_announce_embed(interaction.user, perk_id, perk, used)
@@ -2548,86 +2396,7 @@ class PerksCog(commands.Cog):
 
     # ── Autocomplete ──────────────────────────────────────────────────────────
 
-    @perks_group.command(name="odhaleni-add", description="Přidej ducha do loot poolu Odhalení (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(
-        name="Jméno ducha (např. Velký duch bouře)",
-        element="Element ducha",
-        base_fury="Základní furioka (k ní se přičte 1d20 bonus)",
-        size="Velikost / typ (např. malý, velký, legendární)",
-        spirit_id="Unikátní ID (snake_case, např. velky_duch_bure). Výchozí = z názvu.",
-    )
-    @app_commands.choices(element=[
-        app_commands.Choice(name="🔥 Oheň",    value="ohen"),
-        app_commands.Choice(name="💧 Voda",    value="voda"),
-        app_commands.Choice(name="🪨 Země",    value="zeme"),
-        app_commands.Choice(name="🌬️ Vzduch",  value="vzduch"),
-        app_commands.Choice(name="✨ Světlo",  value="svetlo"),
-        app_commands.Choice(name="🌑 Temnota", value="temnota"),
-        app_commands.Choice(name="⚖️ Rovnováha", value="rovnovaha"),
-        app_commands.Choice(name="🌀 Prázdnota", value="prazdnota"),
-        app_commands.Choice(name="💥 Chaos",   value="chaos"),
-    ])
-    async def perks_odhaleni_add(
-        self, interaction: discord.Interaction,
-        name: str, element: str, base_fury: int,
-        size: str = "", spirit_id: str = "",
-    ):
-        if base_fury < 0:
-            await interaction.response.send_message("❌ base_fury musí být ≥ 0.", ephemeral=True)
-            return
 
-        sid  = spirit_id.strip().lower().replace(" ", "_") or name.lower().replace(" ", "_")
-        pool = load_odhaleni_pool()
-
-        if any(s.get("id") == sid for s in pool):
-            await interaction.response.send_message(f"❌ Duch s ID `{sid}` už v poolu je.", ephemeral=True)
-            return
-
-        entry = {"id": sid, "name": name, "element": element, "base_fury": base_fury, "size": size}
-        pool.append(entry)
-        save_odhaleni_pool(pool)
-
-        try:
-            from src.logic.spirits import ELEMENTS as _EL
-            emoji = _EL.get(element, {}).get("emoji", "👻")
-        except Exception:
-            emoji = "👻"
-
-        embed = discord.Embed(
-            title="✅ Duch přidán do loot poolu",
-            description=(
-                f"{emoji} **{name}** (`{sid}`)\n"
-                f"Element: {element}  ·  Základní furioka: **{base_fury}**"
-                + (f"  ·  Velikost: {size}" if size else "")
-                + f"\n\nPool nyní obsahuje **{len(pool)}** duchů."
-            ),
-            color=0x2ECC71,
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @perks_group.command(name="odhaleni-list", description="Zobraz loot pool Odhalení (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def perks_odhaleni_list(self, interaction: discord.Interaction):
-        pool = load_odhaleni_pool()
-        if not pool:
-            await interaction.response.send_message("Pool je prázdný.", ephemeral=True)
-            return
-        try:
-            from src.logic.spirits import ELEMENTS as _EL
-        except Exception:
-            _EL = {}
-        lines = []
-        for s in pool:
-            emoji      = _EL.get(s["element"], {}).get("emoji", "👻")
-            size_label = f" *({s['size']})*" if s.get("size") else ""
-            lines.append(f"{emoji} **{s['name']}**{size_label} — 🔋 {s['base_fury']}  `-# {s['id']}`")
-        embed = discord.Embed(
-            title=f"👻 Loot pool Odhalení — {len(pool)} duchů",
-            description="\n".join(lines),
-            color=0x7B68EE,
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @perk_give.autocomplete("perk_id")
     @perk_edit.autocomplete("perk_id")
