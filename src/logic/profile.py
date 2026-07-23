@@ -1,8 +1,10 @@
 import discord
-import os, hashlib, asyncio
+import os, hashlib, asyncio, logging
 from discord.ext import commands
 from discord import app_commands
 from typing import Optional
+
+logger = logging.getLogger("Profile")
 
 from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, ITEMS as ITEMS_FILE, PLAYER_PERKS, ACHIEVEMENTS, REPUTATION, DATA_DIR
 from src.utils.json_utils import load_json, save_json
@@ -106,7 +108,7 @@ def _mana_bar(current: int, maximum: int, slots: int = 10) -> str:
     filled = round(max(0, min(current, maximum)) / maximum * slots)
     return "🔹" * filled + "▫️" * (slots - filled)
 
-def _compute_total_def(profile: dict, items_db: dict) -> int:
+def _compute_total_def(profile: dict, items_db: dict, user_id: int | None = None) -> int:
     equipment = profile.get("equipment", {})
     seen = set()
     total = 0
@@ -114,6 +116,14 @@ def _compute_total_def(profile: dict, items_db: dict) -> int:
         if item_id and item_id not in seen:
             seen.add(item_id)
             total += items_db.get(item_id, {}).get("def", 0)
+    # DEF z perků (např. „Jako skála" +1). Počítá se dynamicky z vlastněných
+    # perků, aby úprava/odebrání perku nenechala v profilu zaseklý bonus.
+    if user_id is not None:
+        try:
+            from src.core.dnd.perks import perk_bonuses
+            total += perk_bonuses(user_id).get("DEF", 0)
+        except Exception:
+            logger.exception("[profile] načtení perk bonusů pro DEF selhalo")
     return total
 
 # ── Mini-kopie inventory helperů (aby nedošlo k cyklickému importu) ───────────
@@ -453,7 +463,7 @@ def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
     sp = profile.get("sp", 0)
     ap = profile.get("ap", 0)
     cap = get_xp_cap(level)
-    total_def = _compute_total_def(profile, items_db)
+    total_def = _compute_total_def(profile, items_db, getattr(target, 'id', None))
 
     hp_bar = _heart_bar(hp_cur, hp_max)
     hunger_bar = _hunger_bar(hunger_cur, hunger_max)
@@ -664,7 +674,7 @@ async def _test_stats_payload(target, profile):
     # ── extra data pro kartu (DEF, statusy, furioka-duch, sbírka) ──
     try:
         items_db  = _load_items()
-        total_def = _compute_total_def(profile, items_db)
+        total_def = _compute_total_def(profile, items_db, getattr(target, 'id', None))
     except Exception:
         total_def = 0
     try:

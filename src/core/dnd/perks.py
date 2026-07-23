@@ -1213,6 +1213,67 @@ def owned_perks(user_id: int) -> list[str]:
     out += list(pp.get(str(user_id), {}).get("perks", []))
     return out
 
+def parse_stat_bonus(raw: str) -> dict[str, int]:
+    """Parsuje 'STR:2 DEX:1 DEF:1' na {klíč: hodnota}. Stejný formát jako u itemů.
+
+    Bez čísla → 1 (`STR` = `STR:1`). Nevalidní číslo → 1, ať se hodnota nezahodí.
+    Klíče se normalizují na velká písmena (DEF, STR…), skill_id zůstávají malá.
+    """
+    result: dict[str, int] = {}
+    for part in (raw or "").replace(",", " ").split():
+        if ":" in part:
+            k, _, v = part.partition(":")
+        else:
+            k, v = part, "1"
+        k = k.strip()
+        if not k:
+            continue
+        try:
+            val = int(v)
+        except ValueError:
+            val = 1
+        # skill_id (snake_case) nech malé, atributy/DEF velkými
+        result[k if "_" in k else k.upper()] = val
+    return result
+
+
+_BONUS_EMOJI = {
+    "STR": "💪", "DEX": "🏹", "INS": "👁️", "INT": "🧠", "CHA": "💬", "WIS": "🦉",
+    "DEF": "🛡️", "ATK": "⚔️", "TEMNOTA": "⚫", "SVETLO": "☀️", "ROVNOVAHA": "⚖️",
+    "hp_max": "❤️", "mana_max": "🔷",
+}
+
+def format_stat_bonus(sb: dict) -> str:
+    """'DEF:1 DEX:2' → '🛡️ +1 DEF  ·  🏹 +2 DEX' pro hezký výpis v embedu."""
+    if not sb:
+        return "—"
+    parts = []
+    for k, v in sb.items():
+        emoji = _BONUS_EMOJI.get(k, "✨")
+        sign = "+" if v >= 0 else "−"
+        parts.append(f"{emoji} {sign}{abs(v)} {k}")
+    return "  ·  ".join(parts)
+
+
+def perk_bonuses(user_id: int) -> dict[str, int]:
+    """Součet stat_bonus ze VŠECH perků, které hráč vlastní.
+
+    Počítá se DYNAMICKY (nemutujeme profil), protože perk lze editovat
+    (`/perk edit`) i odebrat — uložená mutace by se rozešla s definicí
+    a staty by zůstaly natrvalo rozhozené.
+    """
+    all_perks = load_perks()
+    totals: dict[str, int] = {}
+    for pid in owned_perks(user_id):
+        meta = all_perks.get(pid) or {}
+        for key, val in (meta.get("stat_bonus") or {}).items():
+            try:
+                totals[key] = totals.get(key, 0) + int(val)
+            except (TypeError, ValueError):
+                continue
+    return {k: v for k, v in totals.items() if v}
+
+
 def hand_tier(user_id: int) -> int:
     """Kolikátý tier boje se dvěma zbraněmi hráč má (0 = žádný, 3 = max)."""
     owned = owned_perks(user_id)
@@ -1917,6 +1978,7 @@ class PerksCog(commands.Cog):
         unlock_skill_id="ID skillu, který perk odemyká (snake_case, prázdné = žádný)",
         unlock_skill_name="Název skillu (prázdné = použije jméno perku)",
         unlock_skill_gives="Co skill dává: none / mana / hp (default none)",
+        stat_bonus="Trvalé bonusy ke statům, např. DEF:1 nebo DEX:1 STR:2 (prázdné = žádné).",
     )
     async def perk_add(
         self,
@@ -1934,6 +1996,7 @@ class PerksCog(commands.Cog):
         unlock_skill_id: str = "",
         unlock_skill_name: str = "",
         unlock_skill_gives: str = "none",
+        stat_bonus: str = "",
     ):
         try:
             # Zvaliduj group
@@ -1972,6 +2035,10 @@ class PerksCog(commands.Cog):
                 perks[perk_id]["equip"] = True
             if learnable_bool:
                 perks[perk_id]["learnable"] = True
+
+            sb = parse_stat_bonus(stat_bonus)
+            if sb:
+                perks[perk_id]["stat_bonus"] = sb
 
             usid = unlock_skill_id.strip().lower().replace(" ", "_")
             if usid:
@@ -2217,6 +2284,7 @@ class PerksCog(commands.Cog):
         unlock_skill_id="ID odemykaného skillu (prázdné = beze změny, 'none' = odebrat)",
         unlock_skill_name="Název skillu (jen když měníš unlock_skill_id)",
         unlock_skill_gives="Co skill dává: none / mana / hp",
+        stat_bonus="Bonusy ke statům, např. DEF:1 DEX:1 (prázdné = beze změny, 'none' = smazat).",
     )
     async def perk_edit(
         self,
@@ -2233,6 +2301,7 @@ class PerksCog(commands.Cog):
         unlock_skill_id: str = "",
         unlock_skill_name: str = "",
         unlock_skill_gives: str = "none",
+        stat_bonus: str = "",
     ):
         perks = load_perks()
         if perk_id not in perks:
@@ -2246,6 +2315,14 @@ class PerksCog(commands.Cog):
 
         if name.strip():
             p["name"] = name.strip(); changed.append("název")
+        if stat_bonus.strip():
+            if stat_bonus.strip().lower() in ("none", "-", "0"):
+                p.pop("stat_bonus", None); changed.append("stat_bonus (smazán)")
+            else:
+                sb = parse_stat_bonus(stat_bonus)
+                if sb:
+                    p["stat_bonus"] = sb
+                    changed.append("stat_bonus " + " ".join(f"{k}:{v}" for k, v in sb.items()))
         if description.strip():
             p["desc"] = description.strip(); changed.append("popis")
         if group.strip():
@@ -2367,6 +2444,9 @@ class PerksCog(commands.Cog):
         embed.add_field(name="Typ",       value=passive_line, inline=True)
         embed.add_field(name="⏳ Cooldown", value=cd_line,     inline=True)
         embed.add_field(name="Dostupnost", value=unique_line,  inline=True)
+        if p.get("stat_bonus"):
+            embed.add_field(name="📈 Trvalé bonusy",
+                            value=format_stat_bonus(p["stat_bonus"]), inline=False)
         embed.set_footer(text=f"⭐ {ARION_NAME}  ·  ID: {perk_id}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

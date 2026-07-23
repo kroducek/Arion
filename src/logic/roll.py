@@ -53,9 +53,18 @@ def _load_profile(user_id: int) -> dict:
         logging.exception(f"[roll] pkey({user_id}) selhal")
     return data.get(str(user_id), {})
 
-def _get_stat_val(profile: dict, attr: str) -> int:
+def _get_stat_val(profile: dict, attr: str, user_id: int | None = None) -> int:
     if attr in STAT_LABELS:
-        return profile.get("stats", {}).get(attr, 0)
+        base = profile.get("stats", {}).get(attr, 0)
+        # bonusy z perků (např. „Jako vítr" +1 DEX) — dynamicky, ať sedí
+        # s aktuální definicí perku i po jeho úpravě/odebrání
+        if user_id is not None:
+            try:
+                from src.core.dnd.perks import perk_bonuses
+                base += perk_bonuses(user_id).get(attr, 0)
+            except Exception:
+                logging.exception("[roll] načtení perk bonusů selhalo")
+        return base
     if attr == "HP":
         return profile.get("hp_cur", profile.get("hp_max", 50))
     if attr == "HUNGER":
@@ -253,7 +262,7 @@ class Dice(commands.Cog):
         attr_names = [STAT_NAMES.get(a, a) for a in check_attrs]
         attr_name  = " + ".join(attr_names)
 
-        raw_vals  = [_get_stat_val(profile, a) for a in check_attrs]
+        raw_vals  = [_get_stat_val(profile, a, interaction.user.id) for a in check_attrs]
         stat_val  = math.ceil(sum(raw_vals) / len(raw_vals))  # průměr, zaokrouhleno nahoru
 
         # Patička — HP/HUNGER ukazuje max, staty jen hodnotu
