@@ -1327,6 +1327,7 @@ class Stats(commands.Cog):
             data    = _load()
             targets = [pkey(member.id)] if member else list(data.keys())
             n = 0
+            reset_dropped: dict[str, list[str]] = {}
             for uid in targets:
                 if uid not in data:
                     continue
@@ -1349,14 +1350,29 @@ class Stats(commands.Cog):
                 p["skills"] = {}
                 p["ap"] = tot_ap
                 p["sp"] = tot_sp
+                # Reset shodil požadavky — sundej equip, který je už nesplňuje
+                # (jinak by hráč nosil plášť „Magie 4" s Magií 0 a bral bonusy).
+                try:
+                    from src.logic.inventory import unequip_invalid, _load_items
+                    uid_int = int(uid.split(":")[0]) if ":" in str(uid) else int(uid)
+                    dropped = unequip_invalid(p, _load_items(), uid_int)
+                    if dropped:
+                        reset_dropped[uid] = dropped
+                except Exception:
+                    logger.exception("[sp reset] sundání nevyhovujícího equipu selhalo")
                 n += 1
             _save(data)
             scope = member.mention if member else f"**{n}** hráč(ů)"
-            await interaction.response.send_message(
-                f"♻️ Reset hotov pro {scope}.\nAtributy→1, skilly→0, body vráceny dle levelu "
-                "(rozdej znovu přes /staty).",
-                ephemeral=True,
-            )
+            msg = (f"♻️ Reset hotov pro {scope}.\nAtributy→1, skilly→0, body vráceny dle levelu "
+                   "(rozdej znovu přes /staty).")
+            if reset_dropped:
+                total = sum(len(v) for v in reset_dropped.values())
+                msg += f"\n-# 🔻 Sundáno {total} předmětů, které už nesplňují požadavky."
+                if member:
+                    names = reset_dropped.get(pkey(member.id), [])
+                    if names:
+                        msg += "\n-# " + ", ".join(names)
+            await interaction.response.send_message(msg, ephemeral=True)
         except Exception as e:
             logger.exception(f"[reset_stats] Error: {e}")
             await interaction.response.send_message(

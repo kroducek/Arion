@@ -244,14 +244,17 @@ def _ensure_inv_fields(profile: dict) -> dict:
     for i in range(1, profile["ring_slots"] + 1):
         profile["equipment"].setdefault(f"ring_{i}", None)
     profile["equipment"].setdefault("amulet_1", None)
-    # Migrace both_hands: profily zaequipované PŘED zavedením příznaku.
-    # Obě ruce se stejným id = obouruční zbraň (dual wielding tehdy neexistoval),
-    # takže příznak dopočítáme, ať se ta zbraň neduplikuje / neztratí.
     _eq = profile["equipment"]
+    _hl, _hr = _eq.get("hand_l"), _eq.get("hand_r")
+    # both_hands smí být True JEN když obě ruce drží tentýž item.
+    # Migrace: staré profily bez příznaku (stejné id v obou rukou = obouruční).
     if not profile.get("both_hands"):
-        _hl, _hr = _eq.get("hand_l"), _eq.get("hand_r")
         if _hl and _hl == _hr:
             profile["both_hands"] = True
+    # Sebeoprava: zaseklý příznak (True, ale ruce drží RŮZNÉ zbraně nebo je
+    # jedna prázdná) rozbíjel uvolňování slotu Zbraň 2 — vynuluj ho.
+    elif _hl != _hr or not _hl:
+        profile["both_hands"] = False
     # Migrace: zrušený ammo slot — munice teď žije v Toulci, ukazatel jen zahoď
     profile["equipment"].pop("ammo", None)
     # Migrace: zrušené sloty wrists/headwear — případné itemy vrať do inventáře
@@ -724,6 +727,58 @@ def _hand_slots_needed(db_item: dict, tier: int) -> int:
         return 2
     # jednoruční: bez perku zabere obě ruce
     return 1 if tier >= 1 else 2
+
+
+def unequip_invalid(profile: dict, items_db: dict, user_id: int | None = None) -> list[str]:
+    """Sundá z postavy equip, který už nesplňuje požadavky (requires/perk).
+
+    Volá se po resetu statů/skillů — jinak by hráč nosil plášť „Magie 4"
+    i s Magií 0 a bral z něj bonusy. Vrací názvy sundaných předmětů.
+    Předměty se vrací do inventáře a jejich equip bonusy se odečtou.
+    """
+    _ensure_inv_fields(profile)
+    equipment = profile["equipment"]
+    inventory = profile["inventory"]
+    removed: list[str] = []
+
+    # perky hráče (pro required_perk) — načteme jednou
+    owned: set[str] = set()
+    if user_id is not None:
+        try:
+            from src.core.dnd.perks import owned_perks
+            owned = set(owned_perks(int(user_id)))
+        except Exception:
+            logger.exception("[inv] unequip_invalid: načtení perků selhalo")
+
+    handled = set()
+    for slot in list(_active_slots(profile)):
+        item_id = equipment.get(slot)
+        if not item_id or item_id in handled:
+            continue
+        db_item = items_db.get(item_id) or {}
+
+        # nesplněné statové/skillové požadavky?
+        bad = any(_req_have(profile, s) < n for s, n in (db_item.get("requires") or {}).items())
+        # nesplněný perkový požadavek?
+        rp = db_item.get("required_perk")
+        if rp and user_id is not None and rp not in owned:
+            bad = True
+
+        if not bad:
+            continue
+
+        # sundej ze VŠECH slotů, kde item sedí (obouruční drží 2)
+        handled.add(item_id)
+        twin = "hand_r" if slot == "hand_l" else ("hand_l" if slot == "hand_r" else None)
+        _remove_equip_bonus(profile, db_item.get("equip_bonus", {}))
+        _add_to_inventory(inventory, item_id, 1, items_db)
+        equipment[slot] = None
+        if twin and equipment.get(twin) == item_id:
+            equipment[twin] = None
+            profile["both_hands"] = False
+        removed.append(db_item.get("name", item_id))
+
+    return removed
 
 
 def _equip_item(profile: dict, item_id: str, preferred_slot: str | None,
