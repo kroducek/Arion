@@ -375,6 +375,52 @@ class ShopView(discord.ui.View):
             btn.callback = self._make_callback(i, item["name"])
             self.add_item(btn)
 
+        # Dropdown „📋 Detail předmětu" — jen položky napojené na items DB
+        # (ty mají item_id → dají se prohlédnout stejně jako v inventáři).
+        # Select zabere celou řadu; když jsou tlačítka na 5 řadách (>20 ks),
+        # už se nevejde → detail vynecháme, ať /gshop open nespadne.
+        num_buttons = min(len(shop_display_items(shop)), self.MAX_BUTTONS)
+        if num_buttons <= 20:
+            detail_opts = []
+            seen_ids = set()
+            for item in shop_display_items(shop):
+                iid = item.get("item_id")
+                if not iid or iid in seen_ids:
+                    continue
+                seen_ids.add(iid)
+                detail_opts.append(discord.SelectOption(
+                    label=item["name"][:100],
+                    value=iid[:100],
+                    emoji=item.get("emoji"),
+                    description=f"{item['price']} zl."[:100],
+                ))
+            if detail_opts:
+                sel = discord.ui.Select(
+                    placeholder="📋 Prohlédnout detail předmětu…",
+                    options=detail_opts[:25],
+                    custom_id=f"gshop_detail_{preset_id}",
+                )
+                sel.callback = self._detail_callback
+                self.add_item(sel)
+
+    async def _detail_callback(self, interaction: discord.Interaction):
+        try:
+            item_id = interaction.data["values"][0]
+        except (KeyError, IndexError):
+            await interaction.response.send_message("*Nelze načíst předmět.*", ephemeral=True)
+            return
+        try:
+            from src.logic.inventory import _build_inspect_embed, _load_items
+            embed = _build_inspect_embed(item_id, _load_items())
+        except Exception:
+            logging.exception("[gshop] detail předmětu selhal")
+            embed = None
+        if embed is None:
+            await interaction.response.send_message(
+                "*Tento předmět nemá v databázi detaily.*", ephemeral=True)
+            return
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     def _make_callback(self, item_index: int, expected_name: str):
         preset_id = self.preset_id
         async def callback(interaction: discord.Interaction):
