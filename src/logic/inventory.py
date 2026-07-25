@@ -101,6 +101,7 @@ _KNOWN_ITEM_FIELDS = {
     "hp_bonus", "mana_bonus", "stat_bonus", "equip_bonus", "requires", "required_perk",
     "consumable", "stackable", "storage", "storage_capacity", "storage_emoji",
     "roll_tags", "id", "offhand",
+    "rune_slots", "default_runes",
 }
 
 # Sloty které zabírá full_set item
@@ -522,10 +523,32 @@ def _find_inv_entry(inventory: list, item_key: str) -> dict | None:
             return entry
     return None
 
-def _add_to_inventory(inventory: list, item_id: str, qty: int) -> None:
-    """Přidá nebo navýší registrovaný item v inventáři."""
+def _add_to_inventory(inventory: list, item_id: str, qty: int,
+                      items_db: Optional[dict] = None) -> None:
+    """Přidá nebo navýší registrovaný item v inventáři.
+
+    Pokud má item v DB `default_runes`, každý přidaný kus je dostane jako
+    vlastní instanci (runy sedí na instanci, ne na stacku — jinak by se
+    sdílely). Takové kusy se proto nestackují.
+    """
+    db = items_db if items_db is not None else _load_items()
+    default_runes = (db.get(item_id) or {}).get("default_runes") or []
+
+    if default_runes:
+        # každý kus vlastní instance s předvyrytými runami (max dle slotů)
+        try:
+            from src.core.dnd.blacksmith import item_rune_slots
+            cap = item_rune_slots(item_id, db)
+        except Exception:
+            cap = len(default_runes)
+        runes = list(default_runes)[:cap] if cap > 0 else list(default_runes)
+        for _ in range(qty):
+            inventory.append({"type": "registered", "id": item_id, "qty": 1,
+                              "runes": list(runes)})
+        return
+
     entry = _find_inv_entry(inventory, item_id)
-    if entry and entry["type"] == "registered":
+    if entry and entry["type"] == "registered" and not entry.get("runes"):
         entry["qty"] = entry.get("qty", 1) + qty
     else:
         inventory.append({"type": "registered", "id": item_id, "qty": qty})
@@ -1343,20 +1366,33 @@ def _build_item_detail_embed(entry: dict, items_db: dict) -> discord.Embed:
 
     # Runy vyryté na TÉTO instanci itemu (mimo databázi — viz blacksmith.py)
     runes = entry.get("runes")
-    if isinstance(runes, list) and runes:
+    item_id = entry.get("id")
+    try:
+        from src.core.dnd.blacksmith import item_rune_slots
+        slots = item_rune_slots(item_id, items_db) if item_id else 0
+    except Exception:
+        slots = 0
+    if (isinstance(runes, list) and runes) or slots > 0:
         try:
             from src.core.dnd.blacksmith import load_runes
             reg = load_runes()
         except Exception:
             reg = {}
+        used = runes if isinstance(runes, list) else []
         rune_lines = []
-        for rid in runes:
+        for rid in used:
             r = reg.get(rid, {})
             emoji = r.get("emoji", "🔹")
             nm    = r.get("name", rid)
             dmg   = f"  +{r['bonus_dmg']} dmg" if r.get("bonus_dmg") else ""
             rune_lines.append(f"{emoji} **{nm}**{dmg} — {r.get('desc', '—')}")
-        embed.add_field(name="🔮 Runy", value="\n".join(rune_lines), inline=False)
+        # volné sloty ztlumeně
+        free = max(0, slots - len(used))
+        for _ in range(free):
+            rune_lines.append("-# 🔹 *volný slot*")
+        cap_label = f" [{len(used)}/{slots}]" if slots else ""
+        embed.add_field(name=f"🔮 Runy{cap_label}",
+                        value="\n".join(rune_lines) or "-# *žádné*", inline=False)
 
     return embed
 
@@ -2361,6 +2397,8 @@ class Inventory(commands.Cog):
         offhand="Lze držet v pomocné ruce (štít, louč, lampa, dýka).",
         storage_capacity="Pokud je item úložiště: počet slotů (0 = neúložiště, -1 = neomezeno jako BoH).",
         storage_emoji="Emoji úložiště zobrazené na tlačítku /inv (např. 🎒).",
+        rune_slots="Kolik run zbraň unese (0 = runy nepovoleny; magická hůlka = 1).",
+        default_runes="Runy z výroby, dědí se při lootu/koupi (např. led_1 jed_1).",
     )
     @app_commands.choices(
         category=[app_commands.Choice(name=c, value=c) for c in CATEGORIES],
@@ -2401,6 +2439,8 @@ class Inventory(commands.Cog):
         offhand: bool = False,
         storage_capacity: int = 0,
         storage_emoji: Optional[str] = None,
+        rune_slots: int = 0,
+        default_runes: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -2451,6 +2491,15 @@ class Inventory(commands.Cog):
         if equip_bonus:    item["equip_bonus"]    = equip_bonus
         if required_perk:  item["required_perk"]  = required_perk
         if offhand:        item["offhand"]        = True
+
+        # runové sloty — kolik run zbraň unese (0 = runy nepovoleny)
+        if rune_slots > 0:
+            item["rune_slots"] = int(rune_slots)
+        # předvyryté runy z výroby — zdědí se při lootu/koupi/give
+        if default_runes:
+            dr = [r.strip().lower() for r in default_runes.replace(",", " ").split() if r.strip()]
+            if dr:
+                item["default_runes"] = dr
         # Storage item — capacity 0 = běžný item, -1 = unlimited (BoH styl)
         if storage_capacity != 0:
             storage_def: dict = {"capacity": None if storage_capacity < 0 else storage_capacity}

@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 RUNE_COLOR   = 0x5b8cb0
 STATUS_COLOR = 0x9b59b6
 DM_ROLE_NAME = "DM"
-MAX_RUNES_PER_ITEM = 3
+MAX_RUNES_PER_ITEM = 3   # tvrdý strop; skutečný limit určuje rune_slots zbraně
 
 # Datové soubory drž vedle profiles.json (žádný nový path konstant netřeba)
 _DATA_DIR     = os.path.dirname(PROFILES_FILE)
@@ -237,6 +237,24 @@ def describe_statuses(carrier: dict, registry: Optional[dict] = None) -> str:
 def get_item_runes(entry: dict) -> list[str]:
     r = entry.get("runes")
     return list(r) if isinstance(r, list) else []
+
+
+def item_rune_slots(item_id: str, items_db: Optional[dict] = None) -> int:
+    """Kolik run zbraň unese (rune_slots z DB). Default 0 = runy nepovoleny.
+
+    Strop je MAX_RUNES_PER_ITEM, ať se DM nepřekoná omylem obřím číslem.
+    """
+    if items_db is None:
+        try:
+            from src.logic.inventory import _load_items
+            items_db = _load_items()
+        except Exception:
+            items_db = {}
+    slots = (items_db.get(item_id) or {}).get("rune_slots", 0)
+    try:
+        return max(0, min(int(slots), MAX_RUNES_PER_ITEM))
+    except (TypeError, ValueError):
+        return 0
 
 def weapon_delivered(entry: dict, runes_reg: Optional[dict] = None) -> list[tuple[str, str]]:
     """Co zbraň DORUČÍ při zásahu → [(status_id, zdroj)]. Z run i z nátěru."""
@@ -548,8 +566,16 @@ class BlacksmithCog(commands.Cog):
         entry = store[idx]; existing = get_item_runes(entry)
         if rune in existing:
             await interaction.followup.send("ℹ️ Runa už na zbrani je."); return
-        if len(existing) >= MAX_RUNES_PER_ITEM:
-            await interaction.followup.send(f"❌ Max počet run ({MAX_RUNES_PER_ITEM})."); return
+        # kapacita podle zbraně (rune_slots v DB) — 0 = runy nepovoleny
+        slots = item_rune_slots(item)
+        if slots <= 0:
+            await interaction.followup.send(
+                f"❌ **{item}** nemá runové sloty. Povol je přes `/inv-db edit {item} rune_slots:1`."
+            ); return
+        if len(existing) >= slots:
+            await interaction.followup.send(
+                f"❌ **{item}** má plné runové sloty (🔮 {len(existing)}/{slots})."
+            ); return
         if entry.get("qty", 1) > 1:
             entry["qty"] -= 1
             store.insert(idx + 1, {"type": "registered", "id": item, "qty": 1,
