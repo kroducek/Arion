@@ -371,6 +371,289 @@ class BreedConfirmView(discord.ui.View):
         )
 
 # ══════════════════════════════════════════════════════════════════════════════
+# FURIOKU: ÚTOK / OBRANA  (správa přes /staty → tlačítko Furioku)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Uloženo v profilu:
+#   profile["furioka"] = {
+#       "def_amount": int,   # kolik VLASTNÍ furioku je nasazeno do obrany
+#       "atk_amount": int,   # kolik VLASTNÍ furioku je nasazeno do útoku
+#       "def_spirit": bool,  # je do obrany nasazen equipnutý duch? (vyžaduje Jednotu)
+#       "atk_spirit": bool,  # je do útoku nasazen equipnutý duch?
+#   }
+# Duch smí být nasazen jen do JEDNÉ role naráz (nedá se rozdvojit).
+
+PERK_JEDNOTA = "furioku_jednota"
+PERK_OBRANA  = "furioku_obrana"
+PERK_UTOK    = "furioku_utok"
+
+
+def _furioka(profile: dict) -> dict:
+    f = profile.setdefault("furioka", {})
+    f.setdefault("atk_amount", 0)      # furioku vložená do útoku (plochý +dmg)
+    f.setdefault("def_amount", 0)      # furioku vložená do obrany (pohltí zásah)
+    f.setdefault("use_spirit", False)  # sjednotit ducha? (slije jeho fury do zásoby)
+    # migrace ze starého modelu (duch dumpnutý do role) → jen zapni sjednocení
+    if f.pop("atk_spirit", False) or f.pop("def_spirit", False):
+        f["use_spirit"] = True
+    return f
+
+
+def _owned_perks(user_id: int) -> list[str]:
+    """Perky aktivní postavy — načteno z perks cogu, s bezpečným fallbackem."""
+    try:
+        from src.core.dnd.perks import owned_perks
+        return owned_perks(user_id)
+    except Exception:
+        return []
+
+
+def furioku_pool(profile: dict, user_id: int) -> int:
+    """Kolik furioku má hráč K DISPOZICI pro nasazení.
+
+    S perkem Jednota a zapnutým sjednocením se do zásoby SLIJE fury ducha —
+    duch nedává svou fury jako samostatný bonus, jen zvětší společný zásobník.
+    """
+    f    = _furioka(profile)
+    pool = profile.get("fury_cur", 0)
+    if f["use_spirit"] and PERK_JEDNOTA in _owned_perks(user_id):
+        spirit = get_equipped_spirit(profile)
+        if spirit:
+            pool += spirit.get("fury", 0)
+    return pool
+
+
+def furioka_bonuses(profile: dict, user_id: int) -> tuple[int, int]:
+    """(útočný přídavek k dmg, kolik dmg pohltí obrana). Pro combat.py.
+
+    Útok = plochý bonus k dmg rollu (1d15 + atk).
+    Obrana = štít, který pohlcuje příchozí poškození 1:1 (10 dmg → −10 furioku).
+    Obojí čerpá ze společné zásoby (fury + případně sloučený duch); součet nikdy
+    nepřesáhne, co má hráč reálně k dispozici — a jen když má příslušný perk.
+    """
+    f     = _furioka(profile)
+    perks = _owned_perks(user_id)
+    pool  = furioku_pool(profile, user_id)
+
+    atk = f["atk_amount"] if PERK_UTOK   in perks else 0
+    dfn = f["def_amount"] if PERK_OBRANA in perks else 0
+
+    # součet nasazené furioku nesmí přesáhnout zásobu — útok má přednost, zbytek do obrany
+    if atk > pool:
+        atk = pool
+    if atk + dfn > pool:
+        dfn = max(0, pool - atk)
+    return atk, dfn
+
+
+def furioka_absorb(profile: dict, user_id: int, incoming_dmg: int) -> tuple[int, int]:
+    """Aplikuje obranný štít na příchozí poškození.
+
+    Vrátí (zbylé_poškození, pohlceno). Spotřebovanou furioku ODEČTE:
+    nejdřív z vlastní fury_cur, teprv pak (u sloučeného ducha) z fury ducha.
+    Combat tuhle funkci zavolá při zásahu.
+    """
+    _, dfn = furioka_bonuses(profile, user_id)
+    absorbed = min(dfn, max(0, incoming_dmg))
+    if absorbed <= 0:
+        return incoming_dmg, 0
+
+    f = _furioka(profile)
+    f["def_amount"] = max(0, f["def_amount"] - absorbed)
+
+    # odečti spotřebovanou furioku ze zásoby (vlastní dřív než duchova)
+    rem = absorbed
+    own = profile.get("fury_cur", 0)
+    take_own = min(own, rem)
+    profile["fury_cur"] = own - take_own
+    rem -= take_own
+    if rem > 0 and f["use_spirit"]:
+        spirit = get_equipped_spirit(profile)
+        if spirit:
+            spirit["fury"] = max(0, spirit.get("fury", 0) - rem)
+
+    return incoming_dmg - absorbed, absorbed
+
+
+def _furioka_embed(profile: dict, user_id: int) -> discord.Embed:
+    f      = _furioka(profile)
+    perks  = _owned_perks(user_id)
+    spirit = get_equipped_spirit(profile)
+    pool   = furioku_pool(profile, user_id)
+    fury_cur = profile.get("fury_cur", 0)
+
+    has_jednota = PERK_JEDNOTA in perks
+    has_obrana  = PERK_OBRANA  in perks
+    has_utok    = PERK_UTOK    in perks
+
+    atk, dfn = furioka_bonuses(profile, user_id)
+    volne    = max(0, pool - atk - dfn)
+
+    src = f"{FU_EMO} **{fury_cur}** vlastní"
+    if f["use_spirit"] and has_jednota and spirit:
+        src += f"  +  👻 **{spirit.get('fury',0)}** ({spirit['name']})  =  **{pool}** v zásobě"
+    else:
+        src = f"Zásoba: {FU_EMO} **{pool}**"
+
+    embed = discord.Embed(
+        title=f"{FU_EMO}  Správa furioku",
+        description=(f"{src}\n-# Volně k nasazení: **{volne}**\n"
+                     f"-# Rozděl furioku do útoku a obrany. Se **Jednotou** můžeš "
+                     f"sloučit ducha a využít i jeho furioku."),
+        color=0x8e44ad,
+    )
+    embed.add_field(
+        name="⚔️ Útok",
+        value=(f"{FU_EMO} **{f['atk_amount']}**  →  **+{atk}** k dmg\n-# *1d… zbraň + {atk} furioku*"
+               if has_utok else "🔒 *chybí perk Furioku: Útok*"),
+        inline=True,
+    )
+    embed.add_field(
+        name="🛡️ Obrana",
+        value=(f"{FU_EMO} **{f['def_amount']}**  →  pohltí **{dfn}** dmg\n-# *zásah spotřebuje furioku*"
+               if has_obrana else "🔒 *chybí perk Furioku: Obrana*"),
+        inline=True,
+    )
+
+    if spirit:
+        state = "✅ sloučen" if (f["use_spirit"] and has_jednota) else "nesloučen"
+        embed.add_field(
+            name="👻 Duch",
+            value=(f"**{spirit['name']}** · {rank_label(spirit['rank'])} · "
+                   f"{FU_EMO} {spirit.get('fury',0)}\n-# {state}"
+                   + ("" if has_jednota else "  ·  *vyžaduje perk Jednota*")),
+            inline=False,
+        )
+    else:
+        embed.add_field(name="👻 Duch",
+                        value="*Nemáš equipnutého ducha (`/duch equip`).*", inline=False)
+
+    fu_perks = [p for p in perks if p.startswith("furioku_")]
+    if fu_perks:
+        try:
+            from src.core.dnd.perks import load_perks
+            all_p = load_perks()
+            names = [all_p.get(pid, {}).get("name", pid) for pid in fu_perks]
+        except Exception:
+            names = fu_perks
+        embed.add_field(name="🌀 Tvé furioku perky",
+                        value=", ".join(f"`{n}`" for n in names), inline=False)
+
+    embed.set_footer(text="⭐ Aurionis")
+    return embed
+
+
+class FurioukaView(discord.ui.View):
+    """Rozdělení furioku: +/- do útoku (dmg) a obrany (štít), sloučení ducha."""
+
+    STEP = 5
+
+    def __init__(self, user_id: int):
+        super().__init__(timeout=300)
+        self.user_id = user_id
+
+    def _get(self):
+        data = _load()
+        return data, data.get(pkey(self.user_id))
+
+    async def _guard(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ Toto není tvůj panel.", ephemeral=True)
+            return False
+        return True
+
+    async def _refresh(self, interaction, data, profile):
+        _save(data)
+        await interaction.response.edit_message(
+            embed=_furioka_embed(profile, self.user_id), view=self)
+
+    def _adjust(self, profile: dict, role: str, delta: int) -> str | None:
+        perks = _owned_perks(self.user_id)
+        need  = PERK_UTOK if role == "atk" else PERK_OBRANA
+        if need not in perks:
+            return f"Chybí ti perk **{'Furioku: Útok' if role=='atk' else 'Furioku: Obrana'}**."
+        f   = _furioka(profile)
+        key = f"{role}_amount"
+        new = f[key] + delta
+        if new < 0:
+            return None
+        other = f["def_amount"] if role == "atk" else f["atk_amount"]
+        if new + other > furioku_pool(profile, self.user_id):
+            return "Nemáš tolik furioku v zásobě."
+        f[key] = new
+        return None
+
+    # ── útok ──
+    @discord.ui.button(label="＋5", emoji="⚔️", style=discord.ButtonStyle.danger, row=0)
+    async def atk_plus(self, interaction, _b):
+        if not await self._guard(interaction): return
+        data, profile = self._get()
+        err = self._adjust(profile, "atk", self.STEP)
+        if err: return await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+        await self._refresh(interaction, data, profile)
+
+    @discord.ui.button(label="－5", emoji="⚔️", style=discord.ButtonStyle.secondary, row=0)
+    async def atk_minus(self, interaction, _b):
+        if not await self._guard(interaction): return
+        data, profile = self._get()
+        self._adjust(profile, "atk", -self.STEP)
+        await self._refresh(interaction, data, profile)
+
+    # ── obrana ──
+    @discord.ui.button(label="＋5", emoji="🛡️", style=discord.ButtonStyle.success, row=1)
+    async def def_plus(self, interaction, _b):
+        if not await self._guard(interaction): return
+        data, profile = self._get()
+        err = self._adjust(profile, "def", self.STEP)
+        if err: return await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+        await self._refresh(interaction, data, profile)
+
+    @discord.ui.button(label="－5", emoji="🛡️", style=discord.ButtonStyle.secondary, row=1)
+    async def def_minus(self, interaction, _b):
+        if not await self._guard(interaction): return
+        data, profile = self._get()
+        self._adjust(profile, "def", -self.STEP)
+        await self._refresh(interaction, data, profile)
+
+    # ── sloučit ducha ──
+    @discord.ui.button(label="Sjednotit ducha", emoji="👻", style=discord.ButtonStyle.primary, row=2)
+    async def toggle_spirit(self, interaction, _b):
+        if not await self._guard(interaction): return
+        data, profile = self._get()
+        perks = _owned_perks(self.user_id)
+        if PERK_JEDNOTA not in perks:
+            return await interaction.response.send_message(
+                "❌ Sloučit ducha vyžaduje perk **Furioku: Jednota**.", ephemeral=True)
+        if not get_equipped_spirit(profile):
+            return await interaction.response.send_message(
+                "❌ Nemáš equipnutého ducha.", ephemeral=True)
+        f = _furioka(profile)
+        f["use_spirit"] = not f["use_spirit"]
+        await self._refresh(interaction, data, profile)
+
+    @discord.ui.button(label="Sundat vše", emoji="🔄", style=discord.ButtonStyle.secondary, row=2)
+    async def clear(self, interaction, _b):
+        if not await self._guard(interaction): return
+        data, profile = self._get()
+        f = _furioka(profile)
+        f.update(atk_amount=0, def_amount=0)
+        await self._refresh(interaction, data, profile)
+
+
+async def open_furioka(interaction: discord.Interaction, user_id: int):
+    """Vstupní bod pro /staty tlačítko Furioku."""
+    data = _load()
+    profile = data.get(pkey(user_id))
+    if not profile:
+        await interaction.response.send_message(
+            "Nemáš profil — projdi nejdřív tutoriálem.", ephemeral=True)
+        return
+    await interaction.response.send_message(
+        embed=_furioka_embed(profile, user_id),
+        view=FurioukaView(user_id), ephemeral=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # COG
 # ══════════════════════════════════════════════════════════════════════════════
 
