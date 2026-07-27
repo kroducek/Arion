@@ -1427,11 +1427,13 @@ async def _dm_perk(member: discord.Member, perk: dict, perk_id: str):
 class PerkListView(discord.ui.View):
     """Stránkovaný seznam perků pro /perks list."""
 
-    def __init__(self, pages: list[tuple[str, str, int]], requester_id: int):
+    def __init__(self, pages: list[tuple[str, str, int]], requester_id: int,
+                 title_prefix: str = "📋 Databáze perků"):
         super().__init__(timeout=120)
         self.pages        = pages
         self.idx          = 0
         self.requester_id = requester_id
+        self.title_prefix = title_prefix
         self._refresh_buttons()
 
     def _refresh_buttons(self):
@@ -1443,7 +1445,7 @@ class PerkListView(discord.ui.View):
         # tvrdá pojistka: Discord popis usekne nad 4096 znaků TIŠE — radši ořízneme viditelně
         if len(content) > 4096:
             content = content[:4085].rsplit("\n", 1)[0] + "\n-# …"
-        embed = discord.Embed(title=f"📋 Databáze perků — {group}", description=content, color=color)
+        embed = discord.Embed(title=f"{self.title_prefix} — {group}", description=content, color=color)
         embed.set_footer(text=f"Strana {self.idx + 1}/{len(self.pages)}  ·  ⭐ {ARION_NAME}")
         return embed
 
@@ -1566,42 +1568,56 @@ class PerksCog(commands.Cog):
                 "-# " + "  ·  ".join(sub_parts),
             ]
 
-        # Sestav embed — každá skupina = jeden embed field
+        # Stránkování po KATEGORIÍCH — každá skupina se rozseká na tolik stran,
+        # kolik potřebuje. Řeší dlouhý embed i to, že se dřív perky ořezávaly.
         is_self = target.id == interaction.user.id
-        title   = "Tvoje perky" if is_self else f"Perky — {target.display_name}"
-        color   = 0x7B68EE  # výchozí, přebije se barvou první neprázdné skupiny
+        PAGE_CHAR_BUDGET = 3800
+        PAGE_MAX_PERKS   = 12
 
-        embed = discord.Embed(title=f"🏷️ {title}", color=color)
+        def _paginate(title: str, entries: list[tuple[str, dict]], color: int
+                      ) -> list[tuple[str, str, int]]:
+            out: list[tuple[str, str, int]] = []
+            buf: list[str] = []
+            used = count = 0
+            for pid, p in entries:
+                block = fmt_entry(pid, p)
+                blen  = sum(len(l) + 1 for l in block)
+                if buf and (used + blen > PAGE_CHAR_BUDGET or count >= PAGE_MAX_PERKS):
+                    out.append((title, "\n".join(buf), color))
+                    buf, used, count = [], 0, 0
+                buf.extend(block)
+                used  += blen
+                count += 1
+            if buf:
+                out.append((title, "\n".join(buf), color))
+            if len(out) > 1:
+                out = [(f"{t} ({i+1}/{len(out)})", c, col) for i, (t, c, col) in enumerate(out)]
+            return out
 
-        first_color_set = False
+        pages: list[tuple[str, str, int]] = []
         for grp in GROUP_ORDER:
             entries = grouped.get(grp, [])
-            if not entries:
-                continue
-            if not first_color_set:
-                embed.color = GROUP_COLOR.get(grp, 0x7B68EE)
-                first_color_set = True
-            gemoji   = GROUP_EMOJI.get(grp, "▸")
-            lines: list[str] = []
-            for pid, p in entries:
-                lines.extend(fmt_entry(pid, p))
-            embed.add_field(
-                name=f"{gemoji} {grp}",
-                value="\n".join(lines),
-
-                inline=False,
-            )
-
-        # Perky bez skupiny (fallback)
+            if entries:
+                gemoji = GROUP_EMOJI.get(grp, "▸")
+                color  = GROUP_COLOR.get(grp, 0x7B68EE)
+                pages += _paginate(f"{gemoji} {grp}", entries, color)
         if no_group:
-            lines = []
-            for pid, p in no_group:
-                lines.extend(fmt_entry(pid, p))
-            embed.add_field(name="❓ Ostatní", value="\n".join(lines), inline=False)
+            pages += _paginate("❓ Ostatní", no_group, 0x7B68EE)
 
-
-        embed.set_footer(text=f"Celkem perků: {len(owned)}  ·  /perk use — aktivuj perk  ·  ⭐ {ARION_NAME}")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        title = "Tvoje perky" if is_self else f"Perky — {target.display_name}"
+        # počítej jen REÁLNÉ perky (bez _connections a bez perků smazaných z DB),
+        # jinak footer lže — Kaiser viděl 19, ale zobrazilo se 18
+        real_count = sum(len(v) for v in grouped.values()) + len(no_group)
+        if not pages:
+            msg = ("Nemáš žádné platné perky." if is_self
+                   else f"**{target.display_name}** nemá žádné platné perky.")
+            await interaction.response.send_message(msg, ephemeral=True)
+            return
+        view  = PerkListView(pages, requester_id=interaction.user.id,
+                             title_prefix=f"🏷️ {title}")
+        embed = view.build_embed()
+        embed.set_author(name=f"Celkem perků: {real_count}  ·  /perk use — aktivuj perk")
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @perks_group.command(name="give", description="Přiřaď perk hráči (admin)")
     @app_commands.checks.has_permissions(administrator=True)
