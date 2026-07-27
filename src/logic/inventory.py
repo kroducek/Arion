@@ -538,13 +538,23 @@ def _add_to_inventory(inventory: list, item_id: str, qty: int,
     default_runes = (db.get(item_id) or {}).get("default_runes") or []
 
     if default_runes:
-        # každý kus vlastní instance s předvyrytými runami (max dle slotů)
+        # Runy dědíme jen do počtu slotů zbraně. Když zbraň nemá rune_slots
+        # (cap 0), runu nezdědí — jinak by loot obešel limit, který engrave hlídá.
         try:
             from src.core.dnd.blacksmith import item_rune_slots
             cap = item_rune_slots(item_id, db)
         except Exception:
-            cap = len(default_runes)
-        runes = list(default_runes)[:cap] if cap > 0 else list(default_runes)
+            logger.exception("[inv] item_rune_slots nedostupné, runy nezděděny")
+            cap = 0
+        runes = list(default_runes)[:cap]      # cap 0 → prázdné
+        if not runes:
+            # žádné použitelné sloty → normální stack bez run
+            entry = _find_inv_entry(inventory, item_id)
+            if entry and entry["type"] == "registered" and not entry.get("runes"):
+                entry["qty"] = entry.get("qty", 1) + qty
+            else:
+                inventory.append({"type": "registered", "id": item_id, "qty": qty})
+            return
         for _ in range(qty):
             inventory.append({"type": "registered", "id": item_id, "qty": 1,
                               "runes": list(runes)})
@@ -2596,6 +2606,8 @@ class Inventory(commands.Cog):
         storage_capacity="Úložiště: počet slotů (0 = beze změny, -1 = ∞, 'clear' přes storage_clear).",
         storage_emoji="Emoji úložiště na tlačítku /inv.",
         storage_clear="Odebere storage vlastnost (item přestane být úložiště).",
+        rune_slots="Kolik run zbraň unese (-1 = beze změny, 0 = zrušit sloty).",
+        default_runes="Runy z výroby, dědí se při lootu (např. led_1 jed_1 · 'clear' = odebrat).",
     )
     @app_commands.choices(
         category=[app_commands.Choice(name=c, value=c) for c in CATEGORIES],
@@ -2646,6 +2658,8 @@ class Inventory(commands.Cog):
         storage_capacity: Optional[int] = None,
         storage_emoji: Optional[str] = None,
         storage_clear: bool = False,
+        rune_slots: int = -1,
+        default_runes: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -2727,6 +2741,20 @@ class Inventory(commands.Cog):
                 stor["capacity"] = None if storage_capacity < 0 else storage_capacity
             if storage_emoji is not None:
                 stor["emoji"] = storage_emoji
+        # Runové sloty (-1 = beze změny, 0 = zrušit)
+        if rune_slots >= 0:
+            if rune_slots == 0:
+                item.pop("rune_slots", None)
+            else:
+                item["rune_slots"] = int(rune_slots)
+        # Předvyryté runy (dědí se při lootu/koupi)
+        if default_runes is not None:
+            if default_runes.strip().lower() in ("clear", "-", "none"):
+                item.pop("default_runes", None)
+            else:
+                dr = [r.strip().lower() for r in default_runes.replace(",", " ").split() if r.strip()]
+                if dr:
+                    item["default_runes"] = dr
         _save_items(items_db)
         await interaction.followup.send(
             f"✅ Item **{item['name']}** (`{item_id}`) upraven.")
