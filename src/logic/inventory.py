@@ -2603,9 +2603,8 @@ class Inventory(commands.Cog):
         lore_drop="Narativní hláška při použití (prázdné = beze změny · 'clear' = odebrat).",
         required_perk="Perk nutný pro equipnutí ('clear' = odebrat).",
         offhand="Lze držet v pomocné ruce (štít, louč, lampa, dýka).",
-        storage_capacity="Úložiště: počet slotů (0 = beze změny, -1 = ∞, 'clear' přes storage_clear).",
+        storage_capacity="Úložiště: sloty (0 = beze změny, -1 = ∞, -999 = zrušit úložiště).",
         storage_emoji="Emoji úložiště na tlačítku /inv.",
-        storage_clear="Odebere storage vlastnost (item přestane být úložiště).",
         rune_slots="Kolik run zbraň unese (-1 = beze změny, 0 = zrušit sloty).",
         default_runes="Runy z výroby, dědí se při lootu (např. led_1 jed_1 · 'clear' = odebrat).",
     )
@@ -2657,7 +2656,6 @@ class Inventory(commands.Cog):
         offhand: Optional[bool] = None,
         storage_capacity: Optional[int] = None,
         storage_emoji: Optional[str] = None,
-        storage_clear: bool = False,
         rune_slots: int = -1,
         default_runes: Optional[str] = None,
     ):
@@ -2732,8 +2730,8 @@ class Inventory(commands.Cog):
         if required_perk is not None:
             if required_perk.lower() == "clear": item.pop("required_perk", None)
             else:                                 item["required_perk"] = required_perk
-        # Storage vlastnost
-        if storage_clear:
+        # Storage vlastnost (-999 = zrušit úložiště)
+        if storage_capacity == -999:
             item.pop("storage", None)
         elif storage_capacity is not None or storage_emoji is not None:
             stor = item.setdefault("storage", {"capacity": 0})
