@@ -106,17 +106,43 @@ def _minigame_embed(guild, score_file: str, title: str, color: int,
 
 
 def _gold_embed(guild, currency: str = "gold") -> discord.Embed:
-    """Ekonomika: {pkey: balance}. Soubory economy.json / silver.json."""
+    """Ekonomika: {klíč: balance}. Soubory economy.json / silver.json.
+
+    Gold je klíčované per-postava (pkey 'uid:slot'), silver/stardust per-účet
+    (raw uid). Pokud v silver.json zůstaly staré pkey klíče (pozůstatek po
+    migraci), sečteme je pod účet — jinak by žebříček ukázal jinou částku,
+    než hráč vidí ve `/g`.
+    """
     fname = "economy.json" if currency == "gold" else "silver.json"
     icon  = "🟡" if currency == "gold" else "⚪"
     label = "Zlaťáky" if currency == "gold" else "Stříbrňáky"
     data  = load_json(_data(fname), default={})
     profiles = _load_profiles_cache()
-    ranked = sorted(data.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    if currency == "gold":
+        # per-postava: klíč = pkey, každá postava má vlastní řádek
+        merged = {k: v for k, v in data.items()}
+    else:
+        # per-účet: ber JEN účtový klíč (raw uid). Staré 'uid:slot' pozůstatky
+        # ignoruj — get_balance je taky nevidí, takže by žebříček ukázal jinou
+        # částku, než hráč má ve `/g`.
+        merged = {}
+        for k, v in data.items():
+            if ":" in str(k):
+                continue   # pozůstatek po migraci — přeskoč
+            try:
+                merged[str(k)] = int(v)
+            except (TypeError, ValueError):
+                continue
+
+    ranked = sorted(merged.items(), key=lambda x: x[1], reverse=True)[:10]
 
     lines = []
-    for i, (uid, bal) in enumerate(ranked):
-        lines.append(f"{_medal(i)} **{_char_name_for(guild, uid, profiles)}** — **{bal}** {icon}")
+    for i, (key, bal) in enumerate(ranked):
+        # gold → jméno postavy (pkey); silver → jméno účtu (raw uid)
+        nm = _char_name_for(guild, key, profiles) if currency == "gold" \
+             else _name_for(guild, key)
+        lines.append(f"{_medal(i)} **{nm}** — **{bal}** {icon}")
     embed = discord.Embed(title=f"💰  Bohatství — {label}",
                           description="\n".join(lines) or "*Zatím tu nikdo nic nemá.*",
                           color=0xFFD700)
