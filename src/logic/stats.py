@@ -663,10 +663,13 @@ class StatPointView(discord.ui.View):
 
     SKILLS_PER_PAGE = 15  # 3 řady × 5 (row 3 = akce, row 4 = navigace)
 
-    def __init__(self, user_id: int, mode: str = "ap", page: int = 0):
+    def __init__(self, user_id: int, mode: str = "ap", page: int = 0, draft: dict | None = None):
         super().__init__(timeout=300)
         self.user_id = user_id
         self.mode    = mode if mode in ("ap", "sp") else "ap"
+        # Draft = naplánované body v PAMĚTI (nezapsané do profilu). Klíč = tid,
+        # hodnota = kolik levelů/bodů se přidá. Potvrdí se ✅, zahodí ↩️.
+        self.draft   = dict(draft) if draft else {}
         if self.mode == "ap":
             targets = [(s, s, _SP_EMOJI.get(s, "")) for s in STAT_LABELS]
         else:
@@ -711,6 +714,75 @@ class StatPointView(discord.ui.View):
         fbtn.callback = self._open_furioka
         self.add_item(fbtn)
 
+        # Potvrzovací tlačítka — jen když je co potvrdit (draft neprázdný).
+        # Klikáním se body plánují do draftu; teprve ✅ je zapíše, ↩️ zahodí.
+        if self.draft:
+            cbtn = discord.ui.Button(label="✅ Potvrdit", style=discord.ButtonStyle.success, row=action_row)
+            cbtn.callback = self._confirm_draft
+            self.add_item(cbtn)
+            xbtn = discord.ui.Button(label="↩️ Zrušit", style=discord.ButtonStyle.danger, row=action_row)
+            xbtn.callback = self._cancel_draft
+            self.add_item(xbtn)
+
+    def _draft_cost(self, p: dict) -> tuple[int, list[str]]:
+        """Spočítá cenu draftu a náhledové řádky. Vrací (cena_bodů, řádky).
+
+        AP: 1 bod = 1 AP. SP: cena roste s levelem (sp_cost), počítá se od
+        AKTUÁLNÍHO levelu skillu nahoru přes všechny naplánované levely.
+        """
+        lines: list[str] = []
+        total = 0
+        if self.mode == "ap":
+            for tid, cnt in self.draft.items():
+                if cnt:
+                    total += cnt
+                    base = p.get("stats", {}).get(tid, 0)
+                    lines.append(f"🎯 **{tid}** {base} → **{base + cnt}**  *(+{cnt} AP)*")
+        else:
+            skills = p.get("skills", {})
+            for tid, cnt in self.draft.items():
+                if not cnt:
+                    continue
+                cur = skills.get(tid, 0)
+                cost = sum(sp_cost(cur + i) for i in range(cnt))
+                total += cost
+                nm = next((sk["name"] for sk in available_skills(self.user_id) if sk["id"] == tid), tid)
+                lines.append(f"⚡ **{nm}** {_roman(cur)} → **{_roman(cur + cnt)}**  *(−{cost} SP)*")
+        return total, lines
+
+    async def _confirm_draft(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("❌ Toto není tvůj výběr.", ephemeral=True)
+        applied = 0
+        if self.mode == "ap":
+            for tid, cnt in self.draft.items():
+                for _ in range(cnt):
+                    if spend_ap(self.user_id, tid, 1):
+                        applied += 1
+                    else:
+                        break   # došly AP nebo strop — zbytek draftu propadne
+        else:
+            for tid, cnt in self.draft.items():
+                for _ in range(cnt):
+                    if spend_sp(self.user_id, tid, 1):
+                        applied += 1
+                    else:
+                        break
+        p = _profile(_load(), pkey(self.user_id))
+        view = StatPointView(self.user_id, mode=self.mode, page=getattr(self, "page", 0))
+        embed = view._header(p)
+        embed.description = f"✅ *Zapsáno {applied} změn.*\n\n" + embed.description
+        await interaction.response.edit_message(embed=embed, view=view)
+
+    async def _cancel_draft(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("❌ Toto není tvůj výběr.", ephemeral=True)
+        p = _profile(_load(), pkey(self.user_id))
+        view = StatPointView(self.user_id, mode=self.mode, page=getattr(self, "page", 0))
+        embed = view._header(p)
+        embed.description = "↩️ *Změny zrušeny.*\n\n" + embed.description
+        await interaction.response.edit_message(embed=embed, view=view)
+
     async def _open_furioka(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("❌ Toto není tvůj výběr.", ephemeral=True)
@@ -746,9 +818,16 @@ class StatPointView(discord.ui.View):
             if interaction.user.id != self.user_id:
                 await interaction.response.send_message("❌ Toto není tvůj výběr.", ephemeral=True)
                 return
-            view = StatPointView(self.user_id, mode=self.mode, page=page)
+            # draft se napříč stránkami zachová (plánování víc skillů)
+            view = StatPointView(self.user_id, mode=self.mode, page=page, draft=self.draft)
             p    = _profile(_load(), pkey(self.user_id))
-            await interaction.response.edit_message(embed=view._header(p), view=view)
+            embed = view._header(p)
+            cost, lines = view._draft_cost(p)
+            if lines:
+                unit = "AP" if self.mode == "ap" else "SP"
+                embed.description = (f"📝 **Naplánováno** *(zbývá potvrdit ✅)*\n" +
+                                     "\n".join(lines) + f"\n-# Celkem: **{cost} {unit}**\n\n") + embed.description
+            await interaction.response.edit_message(embed=embed, view=view)
         return cb
 
     def _header(self, p: dict) -> discord.Embed:
@@ -779,6 +858,7 @@ class StatPointView(discord.ui.View):
             return
         new_mode = "sp" if self.mode == "ap" else "ap"
         p    = _profile(_load(), pkey(self.user_id))
+        # přepnutí AP↔SP zahodí draft (nemíchat body různých typů)
         view = StatPointView(self.user_id, mode=new_mode)
         await interaction.response.edit_message(embed=view._header(p), view=view)
 
@@ -788,36 +868,48 @@ class StatPointView(discord.ui.View):
                 if interaction.user.id != self.user_id:
                     await interaction.response.send_message("❌ Toto není tvůj výběr.", ephemeral=True)
                     return
-                if self.mode == "ap":
-                    if not spend_ap(self.user_id, tid, 1):
-                        p = _profile(_load(), pkey(self.user_id))
-                        lvl = p.get("level", 0)
-                        if p.get("ap", 0) <= 0:
-                            msg = "❌ Nemáš žádné volné AP."
-                        else:
-                            msg = f"❌ **{name}** je na stropu (max {attr_cap(lvl)} na lvl {lvl})."
-                        await interaction.response.send_message(msg, ephemeral=True)
-                        return
-                else:
-                    if not spend_sp(self.user_id, tid, 1):
-                        p   = _profile(_load(), pkey(self.user_id))
-                        cur = p.get("skills", {}).get(tid, 0)
-                        if cur >= SKILL_CAP:
-                            msg = f"❌ **{name}** je na maximu (level {SKILL_CAP})."
-                        else:
-                            cost = sp_cost(cur)
-                            msg = (f"❌ Na **{name} {_roman(cur + 1)}** potřebuješ **{cost} SP** "
-                                   f"(máš {p.get('sp', 0)}).")
-                        await interaction.response.send_message(msg, ephemeral=True)
-                        return
+
                 p = _profile(_load(), pkey(self.user_id))
+                planned = self.draft.get(tid, 0)
+
                 if self.mode == "ap":
-                    new_val = p.get("stats", {}).get(tid, 1)
+                    lvl = p.get("level", 0)
+                    # kolik AP už draft spotřebuje celkem
+                    used_ap = sum(self.draft.values())
+                    if p.get("ap", 0) - used_ap <= 0:
+                        return await interaction.response.send_message(
+                            "❌ Nemáš žádné volné AP (vč. naplánovaných).", ephemeral=True)
+                    base = p.get("stats", {}).get(tid, 0)
+                    if base + planned + 1 > attr_cap(lvl):
+                        return await interaction.response.send_message(
+                            f"❌ **{name}** by přesáhl strop (max {attr_cap(lvl)} na lvl {lvl}).",
+                            ephemeral=True)
                 else:
-                    new_val = _roman(p.get("skills", {}).get(tid, 0))
-                view  = StatPointView(self.user_id, mode=self.mode, page=getattr(self, "page", 0))
+                    cur = p.get("skills", {}).get(tid, 0)
+                    if cur + planned + 1 > SKILL_CAP:
+                        return await interaction.response.send_message(
+                            f"❌ **{name}** by přesáhl maximum (level {SKILL_CAP}).", ephemeral=True)
+                    # cena celého draftu + tenhle další level nesmí přesáhnout SP
+                    cost_now, _ = self._draft_cost(p)
+                    next_cost = sp_cost(cur + planned)
+                    if cost_now + next_cost > p.get("sp", 0):
+                        return await interaction.response.send_message(
+                            f"❌ Na další level **{name}** nemáš dost SP "
+                            f"(potřeba {cost_now + next_cost}, máš {p.get('sp', 0)}).",
+                            ephemeral=True)
+
+                # naplánuj do draftu (NIC se nezapisuje do profilu)
+                self.draft[tid] = planned + 1
+
+                view = StatPointView(self.user_id, mode=self.mode,
+                                     page=getattr(self, "page", 0), draft=self.draft)
                 embed = view._header(p)
-                embed.description = f"✅ **{name}** → **{new_val}**\n\n" + embed.description
+                cost, lines = view._draft_cost(p)
+                if lines:
+                    unit = "AP" if self.mode == "ap" else "SP"
+                    preview = "\n".join(lines)
+                    embed.description = (f"📝 **Naplánováno** *(zbývá potvrdit ✅)*\n{preview}\n"
+                                         f"-# Celkem: **{cost} {unit}**\n\n") + embed.description
                 await interaction.response.edit_message(embed=embed, view=view)
             except discord.errors.NotFound:
                 logger.warning(f"[StatPointView] Message not found for user {self.user_id}")
