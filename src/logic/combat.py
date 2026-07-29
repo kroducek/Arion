@@ -1,6 +1,7 @@
 import discord
 import asyncio
 import logging
+import random
 from discord.ext import commands
 from discord import app_commands, ui
 from src.utils.paths import COMBAT_STATE, PROFILES, ITEMS
@@ -222,12 +223,20 @@ def _build_order_embed(title: str, combat: dict, note: str = "") -> discord.Embe
     lines = []
     bs  = _bs()
     reg = bs.load_statuses() if bs else {}
+    init = combat.get("initiative", {})
     for i, name in enumerate(order):
         is_active = locked and (i == idx)
         s = stats.get(name)
         st_str = bs.status_icons(s, reg) if (bs and s) else ""
-        lines.append(_format_actor_line(name, stats, is_active=is_active,
-                                        idx_marker=is_active, status_str=st_str))
+        line = _format_actor_line(name, stats, is_active=is_active,
+                                  idx_marker=is_active, status_str=st_str)
+        # před uzamčením ukaž hozenou iniciativu (nebo že ještě nehodil)
+        if not locked:
+            if name in init:
+                line = f"🎲`{init[name]:>2}`  " + line
+            else:
+                line = "🎲` ?`  " + line
+        lines.append(line)
 
     description = "\n".join(lines) if lines else "*Seznam je prázdný.*"
     if note:
@@ -313,6 +322,49 @@ class EOTView(ui.View):
 
 # ── CombatCog ─────────────────────────────────────────────────────────────────
 
+class InitiativeView(ui.View):
+    """Ephemeral tlačítko pro hod iniciativy. Zapíše číslo do combat['initiative']."""
+
+    def __init__(self, cog, channel_id: int, actor: str):
+        super().__init__(timeout=120)
+        self.cog        = cog
+        self.channel_id = channel_id
+        self.actor      = actor
+
+    @ui.button(label="Hodit iniciativu (1d20)", emoji="🎲", style=discord.ButtonStyle.primary)
+    async def roll(self, interaction: discord.Interaction, button: ui.Button):
+        combat = self.cog.active_combats.get(self.channel_id)
+        if not combat:
+            return await interaction.response.send_message("❌ *Combat už neběží.*", ephemeral=True)
+        if combat.get("locked"):
+            return await interaction.response.send_message(
+                "🔒 *Pořadí je uzavřeno — iniciativa se už neháže.*", ephemeral=True)
+        if self.actor in combat.get("initiative", {}):
+            return await interaction.response.send_message(
+                f"🎲 *Už jsi házel: **{combat['initiative'][self.actor]}**.*", ephemeral=True)
+
+        roll = random.randint(1, 20)
+        combat.setdefault("initiative", {})[self.actor] = roll
+        self.cog._save_state()
+
+        for item in self.children:
+            item.disabled = True
+        crit = "  ✨ **Nat 20!**" if roll == 20 else ("  💀 *Nat 1…*" if roll == 1 else "")
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="🎲  Iniciativa hozena",
+                description=f"# {roll}{crit}\n-# GM tě zařadí přes `/combat_setorder`.",
+                color=discord.Color.gold()),
+            view=self,
+        )
+        # veřejné oznámení do kanálu, ať GM i ostatní vidí hod
+        try:
+            ch = interaction.channel
+            await ch.send(f"🎲 {self.actor} hodil iniciativu: **{roll}**")
+        except Exception:
+            logger.exception("[combat] oznámení iniciativy selhalo")
+
+
 class CombatCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -330,7 +382,11 @@ class CombatCog(commands.Cog):
     def _load_state(self) -> dict:
         try:
             raw = load_json(COMBAT_STATE, default={})
-            return {int(k): v for k, v in raw.items()}
+            state = {int(k): v for k, v in raw.items()}
+            # migrace: staré combaty uložené před iniciativou nemají klíč
+            for combat in state.values():
+                combat.setdefault("initiative", {})
+            return state
         except Exception:
             logging.exception("[combat] Nelze načíst stav")
             return {}
@@ -518,15 +574,16 @@ class CombatCog(commands.Cog):
             "stats":         {},
             "first":         None,
             "active_player": None,
+            "initiative":    {},   # {jméno: hozené číslo} — setorder podle něj seřadí
         }
         self._save_state()
         embed = discord.Embed(
             title="⚔️  Boj začíná!",
             description=(
                 "*Combat byl zahájen v tomto kanálu.*\n\n"
-                "Hráči: `/combat_join`\n"
+                "Hráči: `/combat_join` → hoď si iniciativu\n"
                 "GM přidá NPC: `/combat_add_npc`\n"
-                "GM uzavře pořadí: `/combat_setorder`"
+                "GM uzavře pořadí: `/combat_setorder` *(seřadí dle iniciativy)*"
             ),
             color=discord.Color.red(),
         )
@@ -559,7 +616,6 @@ class CombatCog(commands.Cog):
         # ── Synchronizace stats z profilu ────────────────────────────────────
         synced = _sync_player_from_profile(user, interaction.user.id)
         if synced:
-            # Vždy přepiš aktuální hodnoty (resync při každém joinu)
             combat["stats"][user] = {
                 "hp":     synced["hp"],
                 "max_hp": synced["max_hp"],
@@ -569,26 +625,30 @@ class CombatCog(commands.Cog):
 
         if combat.get("active_player") is None:
             combat["active_player"] = user
-
-        active = combat["active_player"]
         self._save_state()
 
-        if just_joined and active != user:
-            # Informuj ephemeral, ale přidej i stats info
-            stats_info = (
-                f"\n*❤️ `{synced['hp']}/{synced['max_hp']}`  🛡️ `{synced['def']}`  🔥 `{synced['fur']}`*"
-                if synced else ""
-            )
+        already_rolled = user in combat.get("initiative", {})
+        stats_info = (
+            f"\n❤️ `{synced['hp']}/{synced['max_hp']}`  🛡️ `{synced['def']}`  🔥 `{synced['fur']}`"
+            if synced else ""
+        )
+        if already_rolled:
+            init_val = combat["initiative"][user]
             await interaction.response.send_message(
-                f"✅ *Byl jsi přidán do pořadí!*{stats_info}\nPrávě hraje: {active}. Počkej na svůj tah.",
+                f"✅ *Jsi v boji.*{stats_info}\n🎲 Iniciativa: **{init_val}**",
                 ephemeral=True,
             )
-        else:
-            await self._send_order(
-                interaction,
-                "⚡  Hráč přebírá iniciativu!",
-                note=f"{user} se zapojil do boje",
-            )
+            return
+
+        # Hidden embed s tlačítkem na hod iniciativy
+        embed = discord.Embed(
+            title="🎲  Hoď si iniciativu",
+            description=("Klikni a hoď si číslo — podle něj tě GM zařadí do pořadí "
+                         "(nejvyšší jde první)." + stats_info),
+            color=discord.Color.gold(),
+        )
+        await interaction.response.send_message(
+            embed=embed, view=InitiativeView(self, channel_id, user), ephemeral=True)
 
     # ── /combat_add_npc ───────────────────────────────────────────────────────
 
@@ -637,12 +697,15 @@ class CombatCog(commands.Cog):
             "def":    defense,
             "fur":    fury,
         }
+        # NPC si hodí iniciativu automaticky (GM může přepsat /combat_setinit)
+        npc_init = random.randint(1, 20)
+        combat.setdefault("initiative", {})[final_name] = npc_init
         self._save_state()
 
         await self._send_order(
             interaction,
             f"💀  {final_name} vstupuje do boje!",
-            note=f"NPC přidáno — HP {actual_current}/{hp}  DEF {defense}  FUR {fury}",
+            note=f"NPC přidáno — HP {actual_current}/{hp}  DEF {defense}  FUR {fury}  🎲 init {npc_init}",
         )
 
     # ── /combat_add_player_stats ──────────────────────────────────────────────
@@ -774,8 +837,25 @@ class CombatCog(commands.Cog):
         max_hp = stats[name]["max_hp"]
 
         if hp < 0:
-            new_hp     = max(0, old_hp + hp)
-            change_str = f"poškození {hp}"
+            # ── Zásah: nejdřív pohltí DEF, pak furioku (spotřebuje se) ──────────
+            raw_hit  = -hp                       # kolik dmg přišlo
+            dfn      = stats[name].get("def", 0)
+            fur      = stats[name].get("fur", 0)
+
+            after_def = max(0, raw_hit - dfn)    # DEF pohltí napřed
+            absorbed_by_fur = min(fur, after_def)
+            stats[name]["fur"] = fur - absorbed_by_fur   # furioku se spotřebuje
+            final_dmg = after_def - absorbed_by_fur      # zbytek jde do HP
+
+            new_hp = max(0, old_hp - final_dmg)
+
+            parts = [f"zásah {raw_hit}"]
+            if dfn:
+                parts.append(f"−{min(dfn, raw_hit)} DEF")
+            if absorbed_by_fur:
+                parts.append(f"−{absorbed_by_fur} 🔥furioku")
+            parts.append(f"= {final_dmg} do HP")
+            change_str = "  ".join(parts)
         else:
             new_hp     = min(hp, max_hp)
             change_str = f"nastaveno na {new_hp}"
@@ -872,6 +952,32 @@ class CombatCog(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
+    # ── /combat_setinit ───────────────────────────────────────────────────────
+
+    @app_commands.command(name="combat_setinit", description="Admin: nastaví iniciativu aktérovi")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(name="Jméno NPC nebo mention hráče", value="Nová iniciativa")
+    async def combat_setinit(self, interaction: discord.Interaction, name: str, value: int):
+        channel_id = interaction.channel_id
+        if channel_id not in self.active_combats:
+            return await interaction.response.send_message("❌ *Zde neběží combat.*", ephemeral=True)
+        combat = self.active_combats[channel_id]
+        if name not in combat["order"]:
+            return await interaction.response.send_message(
+                f"⚠️ *`{name}` není v boji.*", ephemeral=True)
+        old = combat.get("initiative", {}).get(name)
+        combat.setdefault("initiative", {})[name] = value
+        # když už je pořadí uzamčené, přeřaď za běhu
+        if combat.get("locked"):
+            init = combat["initiative"]
+            active = combat["order"][combat["current_index"]] if combat["order"] else None
+            combat["order"].sort(key=lambda nm: init.get(nm, -1), reverse=True)
+            if active in combat["order"]:
+                combat["current_index"] = combat["order"].index(active)
+        self._save_state()
+        await interaction.response.send_message(
+            f"🎲 *Iniciativa {name}: {old if old is not None else '—'} → **{value}***")
+
     # ── /combat_remove ────────────────────────────────────────────────────────
 
     @app_commands.command(name="combat_remove", description="Odebere někoho z pořadí")
@@ -894,6 +1000,7 @@ class CombatCog(commands.Cog):
         removed_idx = order.index(to_remove)
         order.remove(to_remove)
         combat["stats"].pop(to_remove, None)
+        combat.get("initiative", {}).pop(to_remove, None)
 
         if combat.get("boss", {}).get("name") == to_remove:
             combat.pop("boss", None)
@@ -929,11 +1036,10 @@ class CombatCog(commands.Cog):
 
         combat = self.active_combats[channel_id]
 
-        # Hráč, který se připojil jako první, jde na začátek
-        first = combat.get("first")
-        if first and first in combat["order"] and combat["order"][0] != first:
-            combat["order"].remove(first)
-            combat["order"].insert(0, first)
+        # Seřaď pořadí podle hozené iniciativy (nejvyšší jde první).
+        # Kdo nehodil, spadne na konec (init −1) — GM může dohodit /combat_remove.
+        init = combat.get("initiative", {})
+        combat["order"].sort(key=lambda nm: init.get(nm, -1), reverse=True)
 
         combat["locked"]        = True
         combat["current_index"] = 0
