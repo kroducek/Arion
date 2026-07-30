@@ -57,6 +57,7 @@ def _ensure_player_fields(profile: dict) -> None:
     profile.setdefault("fury_max",   0)
     profile.setdefault("fury_cur",   0)
     profile.setdefault("statuses",   [])   # aktivní statusy (jed/krvácení/…)
+    profile.setdefault("rest_available", True)  # smí použít /rest? (DM povolí přes /rest enable)
     profile.setdefault("vliv_svetlo",    0)
     profile.setdefault("vliv_temnota",   0)
     profile.setdefault("vliv_rovnovaha", 0)
@@ -858,20 +859,27 @@ class RestView(discord.ui.View):
             return await interaction.response.send_message("❌ Tohle není tvůj odpočinek.", ephemeral=True)
         if self.done:
             return
+
+        data    = load_data()
+        profile = data.get(pkey(self.user_id))   # AKTIVNÍ postava (uid:slot)
+        if not profile:
+            return await interaction.response.send_message("❌ Nemáš profil.", ephemeral=True)
+        _ensure_player_fields(profile)
+
+        # Ochrana proti zneužití: rest jde použít jen jednou. Další až po
+        # povolení DM (/rest enable). Kontroluje se PŘED hodem, ať se rest
+        # neutratí zbytečně. Váže se na aktivní postavu, ne na účet.
+        if not profile.get("rest_available", True):
+            return await interaction.response.send_message(
+                "❗️ **Nejsi unavený.** Odpočinout si můžeš až tě DM znovu nechá "
+                "(`/rest enable`).", ephemeral=True)
+
         self.done = True
         for item in self.children:
             item.disabled = True
 
         base = random.randint(1, 20)
         bonus, flavor = random.choice(_REST_OUTCOMES)
-        total = base + bonus   # jen pro popis; heal se řídí pravidly níže
-
-        data    = load_data()
-        profile = data.get(pkey(self.user_id))
-        if not profile:
-            return await interaction.response.edit_message(
-                content="❌ Nemáš profil.", embed=None, view=None)
-        _ensure_player_fields(profile)
 
         # Heal dle hodu: nat1 = nic, nat20 = plný, <10 fail = 25 %, 11+ = 50 %
         if base == 1:
@@ -884,7 +892,19 @@ class RestView(discord.ui.View):
             pct, verdict, color = 0.50, "🛌 Dobrý odpočinek.", 0x2ECC71
 
         heal_lines = _rest_heal(profile, pct) if pct > 0 else []
+        # spotřebuj rest (další až po /rest enable od DM)
+        profile["rest_available"] = False
         save_data(data)
+
+        # Obnov cooldowny perků AKTIVNÍ postavy — po odpočinku jsou zas k dispozici
+        cd_note = ""
+        try:
+            from src.core.dnd.perks import reset_cooldowns
+            n = reset_cooldowns(self.user_id)
+            if n:
+                cd_note = f"\n🔄 Obnoveny cooldowny perků ({n})."
+        except Exception:
+            logger.exception("[rest] reset cooldownů selhal")
 
         sign = f"+{bonus}" if bonus > 0 else (str(bonus) if bonus < 0 else "±0")
         desc = (f"# 🎲 {base}  *({sign} {flavor})*\n"
@@ -893,6 +913,7 @@ class RestView(discord.ui.View):
             desc += "\n" + "\n".join(heal_lines)
         elif pct == 0:
             desc += "\n-# Žádné uzdravení."
+        desc += cd_note
 
         embed = discord.Embed(title="🏕️  Odpočinek", description=desc, color=color)
         embed.set_footer(text=f"Uzdraveno {int(pct*100)} % max  ·  {interaction.user.display_name}")
@@ -908,18 +929,46 @@ class Profile(commands.Cog):
     @app_commands.command(name="rest", description="Odpočinek — hoď si 1d20 a uzdrav se podle výsledku.")
     async def rest(self, interaction: discord.Interaction):
         data    = load_data()
-        profile = data.get(pkey(interaction.user.id))
+        profile = data.get(pkey(interaction.user.id))   # aktivní postava
         if not profile:
             await interaction.response.send_message(
                 "❌ Nemáš profil — projdi nejdřív tutoriálem.", ephemeral=True)
             return
+        _ensure_player_fields(profile)
+        # už odpočíval → nedávej ani tlačítko, rovnou hláška
+        if not profile.get("rest_available", True):
+            await interaction.response.send_message(
+                "❗️ **Nejsi unavený.** Odpočinout si můžeš až tě DM znovu nechá "
+                "(`/rest-enable`).", ephemeral=True)
+            return
         embed = discord.Embed(
             title="🏕️  Odpočinek",
             description=("Ulož se ke spánku a hoď si **1d20**.\n"
-                         "-# Vyšší hod = víc uzdravení (HP, mana, furioku)."),
+                         "-# Vyšší hod = víc uzdravení (HP, mana, furioku) a obnova cooldownů perků."),
             color=0x8e6f47,
         )
         await interaction.response.send_message(embed=embed, view=RestView(interaction.user.id))
+
+    @app_commands.command(name="rest-enable", description="[DM] Povolí hráči znovu použít /rest.")
+    @app_commands.describe(member="Hráč, kterému se odpočinek zase povolí.")
+    async def rest_enable(self, interaction: discord.Interaction, member: discord.Member):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM.")
+            return
+        data    = load_data()
+        profile = data.get(pkey(member.id))   # aktivní postava daného hráče
+        if not profile:
+            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
+            return
+        _ensure_player_fields(profile)
+        if profile.get("rest_available", True):
+            await interaction.followup.send(
+                f"ℹ️ **{member.display_name}** už odpočívat může (nevyčerpal rest).")
+            return
+        profile["rest_available"] = True
+        save_data(data)
+        await interaction.followup.send(f"✅ **{member.display_name}** si zase může dát `/rest`.")
 
     @app_commands.command(name="profile", description="Zobrazí tvůj dobrodružný průkaz.")
     @app_commands.describe(member="Hráč (výchozí: ty).")

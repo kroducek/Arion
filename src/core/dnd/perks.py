@@ -1139,6 +1139,24 @@ SP_PERK_CHAINS: list[tuple[str, str, str]] = [
     ("dual_wielding", "dual_wielding_2", "dual_wielding_3"),
 ]
 
+def reset_cooldowns(user_id: int) -> int:
+    """Vynuluje cooldowny všech perků aktivní postavy. Vrací počet obnovených.
+
+    Volá /rest — po odpočinku má hráč perky zase k dispozici. Řeší pkey i starý
+    účtový klíč (fallback).
+    """
+    data = load_player_perks()
+    count = 0
+    for key in (pkey(user_id), str(user_id)):
+        p = data.get(key)
+        if p and p.get("cooldowns"):
+            count += len(p["cooldowns"])
+            p["cooldowns"] = {}
+    if count:
+        save_player_perks(data)
+    return count
+
+
 def owned_perks(user_id: int) -> list[str]:
     """Perky AKTIVNÍ postavy (pkey), s fallbackem na starý účtový klíč."""
     pp = load_player_perks()
