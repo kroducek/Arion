@@ -669,6 +669,75 @@ class Economy(commands.Cog):
             f"✅ Přidáno **{amount}** {icon} hráči {member.mention}. (Celkem: {new_bal})"
         )
 
+    @app_commands.command(name="dmgold",
+                          description="Admin: Rozdá měnu více hráčům (split rozdělí, jinak každý dostane plnou částku)")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(
+        members="Zmiň hráče (@Enel @Kaiser …) — komu se má dát.",
+        amount="Částka. Se split se rozdělí mezi hráče, bez split ji dostane každý.",
+        split="True = rozdělit částku rovným dílem, False = každý dostane plnou.",
+        mena="Která měna (výchozí: zlaťáky).",
+    )
+    @app_commands.choices(mena=MENA_CHOICES)
+    async def dmgold(
+        self,
+        interaction: discord.Interaction,
+        members: str,
+        amount: int,
+        split: bool = False,
+        mena: app_commands.Choice[str] | None = None,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        currency = mena.value if mena else "gold"
+        icon = coin(currency)
+
+        if amount <= 0:
+            return await interaction.followup.send("Částka musí být větší než 0!")
+
+        # vytáhni zmíněné hráče z textu (mentiony <@id> / <@!id>)
+        import re
+        targets = []
+        seen = set()
+        ids = re.findall(r"<@!?(\d+)>", members or "")
+        guild = interaction.guild
+        for uid in ids:
+            if uid in seen:
+                continue
+            seen.add(uid)
+            mem = guild.get_member(int(uid)) if guild else None
+            if mem and not mem.bot:
+                targets.append(mem)
+
+        if not targets:
+            return await interaction.followup.send(
+                "❌ Nezmínil jsi žádného platného hráče. Použij `@jméno`.")
+
+        # split → rozděl částku (celé číslo), zbytek připadne prvnímu
+        if split:
+            base = amount // len(targets)
+            rem  = amount - base * len(targets)
+            if base <= 0 and rem <= 0:
+                return await interaction.followup.send("❌ Částka je moc malá na rozdělení.")
+            shares = [base + (1 if i < rem else 0) for i in range(len(targets))]
+        else:
+            shares = [amount] * len(targets)
+
+        lines = []
+        for mem, share in zip(targets, shares):
+            if share <= 0:
+                continue
+            new_bal = add_balance(mem.id, share, currency)
+            lines.append(f"{mem.mention} +**{share}** {icon}  *(→ {new_bal})*")
+
+        mode = f"rozděleno {amount} {icon}" if split else f"každý +{amount} {icon}"
+        # veřejné oznámení
+        await interaction.channel.send(
+            embed=discord.Embed(
+                title="💰  Odměna od DM",
+                description=f"-# {mode}\n" + "\n".join(lines),
+                color=0xFFD700))
+        await interaction.followup.send(f"✅ Rozdáno {len(lines)} hráčům.")
+
     @app_commands.command(name="gremove", description="Admin: Odebere měnu hráči (může jít do mínusu)")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(

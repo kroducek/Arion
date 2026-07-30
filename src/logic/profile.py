@@ -1,5 +1,5 @@
 import discord
-import os, hashlib, asyncio, logging
+import os, hashlib, asyncio, logging, random
 from discord.ext import commands
 from discord import app_commands
 from typing import Optional
@@ -813,11 +813,113 @@ class TestProfileView(discord.ui.View):
             "Co chceš na průkazu upravit?", view=EditProfileView(), ephemeral=True)
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# REST — odpočinkový hod: hráč hodí 1d20, náhodný outcome ±, heal dle výsledku
+# ══════════════════════════════════════════════════════════════════════════════
+
+_REST_OUTCOMES = [
+    (+3, "Naprosto blažený spánek."),
+    (+2, "Klidná noc, ráno svěží."),
+    (+1, "Dobrý spánek."),
+    ( 0, "Obyčejná noc."),
+    (-1, "Neklidné převalování."),
+    (-2, "Špatně se ti spalo."),
+    (-3, "Zdála se ti noční můra."),
+]
+
+
+def _rest_heal(profile: dict, pct: float) -> list[str]:
+    """Uzdraví HP, manu a furioku o `pct` z maxima. Vrací řádky pro výpis."""
+    lines = []
+    for key, emoji, label in (("hp", "❤️", "HP"), ("mana", "🔷", "Mana"), ("fury", "🔥", "Furioku")):
+        mx = profile.get(f"{key}_max", 0)
+        if mx <= 0:
+            continue
+        cur = profile.get(f"{key}_cur", 0)
+        heal = int(mx * pct)
+        new = min(mx, cur + heal)
+        profile[f"{key}_cur"] = new
+        if new != cur:
+            lines.append(f"{emoji} {label}: {cur} → **{new}** / {mx}")
+    return lines
+
+
+class RestView(discord.ui.View):
+    """Rest roll — jeden hráč, jedno tlačítko na hod 1d20."""
+
+    def __init__(self, user_id: int):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        self.done    = False
+
+    @discord.ui.button(label="Hodit 1d20", emoji="🎲", style=discord.ButtonStyle.primary)
+    async def roll(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("❌ Tohle není tvůj odpočinek.", ephemeral=True)
+        if self.done:
+            return
+        self.done = True
+        for item in self.children:
+            item.disabled = True
+
+        base = random.randint(1, 20)
+        bonus, flavor = random.choice(_REST_OUTCOMES)
+        total = base + bonus   # jen pro popis; heal se řídí pravidly níže
+
+        data    = load_data()
+        profile = data.get(pkey(self.user_id))
+        if not profile:
+            return await interaction.response.edit_message(
+                content="❌ Nemáš profil.", embed=None, view=None)
+        _ensure_player_fields(profile)
+
+        # Heal dle hodu: nat1 = nic, nat20 = plný, <10 fail = 25 %, 11+ = 50 %
+        if base == 1:
+            pct, verdict, color = 0.0, "💀 **Nat 1** — vůbec ses nevyspal.", 0x2C2F33
+        elif base == 20:
+            pct, verdict, color = 1.0, "✨ **Nat 20** — dokonalý odpočinek!", 0xFFD700
+        elif base <= 10:
+            pct, verdict, color = 0.25, "😴 Mělký spánek — jen částečně sis odpočinul.", 0xE67E22
+        else:
+            pct, verdict, color = 0.50, "🛌 Dobrý odpočinek.", 0x2ECC71
+
+        heal_lines = _rest_heal(profile, pct) if pct > 0 else []
+        save_data(data)
+
+        sign = f"+{bonus}" if bonus > 0 else (str(bonus) if bonus < 0 else "±0")
+        desc = (f"# 🎲 {base}  *({sign} {flavor})*\n"
+                f"{verdict}\n")
+        if heal_lines:
+            desc += "\n" + "\n".join(heal_lines)
+        elif pct == 0:
+            desc += "\n-# Žádné uzdravení."
+
+        embed = discord.Embed(title="🏕️  Odpočinek", description=desc, color=color)
+        embed.set_footer(text=f"Uzdraveno {int(pct*100)} % max  ·  {interaction.user.display_name}")
+        await interaction.response.edit_message(embed=embed, view=self)
+
+
 class Profile(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     # ── /profile ───────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="rest", description="Odpočinek — hoď si 1d20 a uzdrav se podle výsledku.")
+    async def rest(self, interaction: discord.Interaction):
+        data    = load_data()
+        profile = data.get(pkey(interaction.user.id))
+        if not profile:
+            await interaction.response.send_message(
+                "❌ Nemáš profil — projdi nejdřív tutoriálem.", ephemeral=True)
+            return
+        embed = discord.Embed(
+            title="🏕️  Odpočinek",
+            description=("Ulož se ke spánku a hoď si **1d20**.\n"
+                         "-# Vyšší hod = víc uzdravení (HP, mana, furioku)."),
+            color=0x8e6f47,
+        )
+        await interaction.response.send_message(embed=embed, view=RestView(interaction.user.id))
 
     @app_commands.command(name="profile", description="Zobrazí tvůj dobrodružný průkaz.")
     @app_commands.describe(member="Hráč (výchozí: ty).")
@@ -959,26 +1061,40 @@ class Profile(commands.Cog):
                          + ", ".join(f"**{n}**" for n in starving))
         await interaction.followup.send("\n".join(lines))
 
-    # ── /profile-admin-hp ─────────────────────────────────────────────────────
+    # ── /dmset ────────────────────────────────────────────────────────────────
+    # Sjednocuje dřívější profile-admin-hp / -mana / -fury do jednoho příkazu.
 
     @app_commands.command(
-        name="profile-admin-hp",
-        description="[DM] Nastaví nebo upraví HP hráče.",
+        name="dmset",
+        description="[DM] Uprav HP / manu / furioku hráče (heal, damage, set, full).",
     )
     @app_commands.describe(
         member="Hráč.",
-        hp_cur="Aktuální HP (vynech = beze změny).",
-        hp_max="Maximální HP (vynech = beze změny).",
-        damage="Odečti toto množství HP (použij buď damage nebo heal, ne oboje).",
-        heal="Přičti toto množství HP.",
+        zdroj="Co upravit: HP / mana / furioku.",
+        rezim="heal (+), damage (−), set (nastav), full (na max).",
+        hodnota="Množství (pro heal/damage/set). U 'full' se ignoruje.",
+        maximum="Volitelně nastav i maximum (mana/HP/furioku).",
     )
-    async def profile_admin_hp(
+    @app_commands.choices(
+        zdroj=[
+            app_commands.Choice(name="HP",      value="hp"),
+            app_commands.Choice(name="Mana",    value="mana"),
+            app_commands.Choice(name="Furioku", value="fury"),
+        ],
+        rezim=[
+            app_commands.Choice(name="heal (+)",   value="heal"),
+            app_commands.Choice(name="damage (−)", value="damage"),
+            app_commands.Choice(name="set",        value="set"),
+            app_commands.Choice(name="full (max)", value="full"),
+        ],
+    )
+    async def dmset(
         self, interaction: discord.Interaction,
         member: discord.Member,
-        hp_cur: Optional[int] = None,
-        hp_max: Optional[int] = None,
-        damage: Optional[int] = None,
-        heal:   Optional[int] = None,
+        zdroj: app_commands.Choice[str],
+        rezim: app_commands.Choice[str],
+        hodnota: Optional[int] = None,
+        maximum: Optional[int] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -991,119 +1107,47 @@ class Profile(commands.Cog):
         if not profile:
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
             return
-
         _ensure_player_fields(profile)
 
-        if hp_max is not None:
-            profile["hp_max"] = max(1, hp_max)
-        if hp_cur is not None:
-            profile["hp_cur"] = max(0, min(profile["hp_max"], hp_cur))
-        if damage is not None:
-            profile["hp_cur"] = max(0, profile["hp_cur"] - damage)
-        if heal is not None:
-            profile["hp_cur"] = min(profile["hp_max"], profile["hp_cur"] + heal)
+        z = zdroj.value    # hp / mana / fury
+        r = rezim.value    # heal / damage / set / full
+        cur_key, max_key = f"{z}_cur", f"{z}_max"
 
+        if r != "full" and hodnota is None:
+            await interaction.followup.send("❌ Pro heal/damage/set zadej `hodnota`.")
+            return
+
+        # volitelná úprava maxima (HP: min 1, ostatní min 0)
+        if maximum is not None:
+            profile[max_key] = max(1 if z == "hp" else 0, maximum)
+
+        mx  = profile.get(max_key, 0)
+        old = profile.get(cur_key, 0)
+        if r == "heal":
+            new = min(mx, old + hodnota)
+        elif r == "damage":
+            new = max(0, old - hodnota)
+        elif r == "set":
+            new = max(0, min(mx, hodnota))
+        else:  # full
+            new = mx
+        profile[cur_key] = new
         save_data(data)
 
-        bar = _heart_bar(profile["hp_cur"], profile["hp_max"])
+        # hezký výpis se správným barem podle zdroje
+        if z == "hp":
+            bar, emoji, label = _heart_bar(new, mx), "❤️", "HP"
+        elif z == "mana":
+            bar, emoji, label = _mana_bar(new, mx), "🔷", "Mana"
+        else:
+            bar, emoji, label = "", "🔥", "Furioku"
+        bar_str = f"{bar}  " if bar else ""
         await interaction.followup.send(
-            f"✅ **{member.display_name}** — HP aktualizováno.\n"
-            f"{bar}  {profile['hp_cur']}/{profile['hp_max']}"
+            f"✅ **{member.display_name}** — {emoji} {label} aktualizováno.\n"
+            f"{bar_str}**{new}/{mx}**  *(bylo {old})*"
         )
 
-    # ── /profile-admin-mana ───────────────────────────────────────────────────
-
-    @app_commands.command(
-        name="profile-admin-mana",
-        description="[DM] Nastaví nebo upraví manu hráče.",
-    )
-    @app_commands.describe(
-        member="Hráč.",
-        mana_cur="Aktuální mana (vynech = beze změny).",
-        mana_max="Maximální mana (vynech = beze změny).",
-        add="Přičti toto množství many.",
-        remove="Odečti toto množství many.",
-    )
-    async def profile_admin_mana(
-        self, interaction: discord.Interaction,
-        member: discord.Member,
-        mana_cur: Optional[int] = None,
-        mana_max: Optional[int] = None,
-        add:      Optional[int] = None,
-        remove:   Optional[int] = None,
-    ):
-        await interaction.response.defer(ephemeral=True)
-        if not _is_dm(interaction):
-            await interaction.followup.send("❌ Jen DM.")
-            return
-        data    = load_data()
-        uid     = pkey(member.id)
-        profile = data.get(uid)
-        if not profile:
-            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
-            return
-        _ensure_player_fields(profile)
-        if mana_max is not None:
-            profile["mana_max"] = max(1, mana_max)
-        if mana_cur is not None:
-            profile["mana_cur"] = max(0, min(profile["mana_max"], mana_cur))
-        if add is not None:
-            profile["mana_cur"] = min(profile["mana_max"], profile["mana_cur"] + add)
-        if remove is not None:
-            profile["mana_cur"] = max(0, profile["mana_cur"] - remove)
-        save_data(data)
-        bar = _bar(profile["mana_cur"], profile["mana_max"])
-        await interaction.followup.send(
-            f"✅ **{member.display_name}** — mana aktualizována.\n"
-            f"🔷  {bar}  {profile['mana_cur']}/{profile['mana_max']}"
-        )
-
-    # ── /profile-admin-fury ───────────────────────────────────────────────────
-
-    @app_commands.command(
-        name="profile-admin-fury",
-        description="[DM] Nastaví nebo upraví furioku hráče.",
-    )
-    @app_commands.describe(
-        member="Hráč.",
-        fury_cur="Aktuální furioka (vynech = beze změny).",
-        fury_max="Maximální furioka (vynech = beze změny).",
-        add="Přičti toto množství furiok.",
-        remove="Odečti toto množství furiok.",
-    )
-    async def profile_admin_fury(
-        self, interaction: discord.Interaction,
-        member: discord.Member,
-        fury_cur: Optional[int] = None,
-        fury_max: Optional[int] = None,
-        add:      Optional[int] = None,
-        remove:   Optional[int] = None,
-    ):
-        await interaction.response.defer(ephemeral=True)
-        if not _is_dm(interaction):
-            await interaction.followup.send("❌ Jen DM.")
-            return
-        data    = load_data()
-        uid     = pkey(member.id)
-        profile = data.get(uid)
-        if not profile:
-            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
-            return
-        _ensure_player_fields(profile)
-        if fury_max is not None:
-            profile["fury_max"] = max(1, fury_max)
-        if fury_cur is not None:
-            profile["fury_cur"] = max(0, min(profile["fury_max"], fury_cur))
-        if add is not None:
-            profile["fury_cur"] = min(profile["fury_max"], profile["fury_cur"] + add)
-        if remove is not None:
-            profile["fury_cur"] = max(0, profile["fury_cur"] - remove)
-        save_data(data)
-        bar = _bar(profile["fury_cur"], profile["fury_max"])
-        await interaction.followup.send(
-            f"✅ **{member.display_name}** — furioka aktualizována.\n"
-            f"🔥  {bar}  {profile['fury_cur']}/{profile['fury_max']}"
-        )
+    # ── /profile-admin-vliv ───────────────────────────────────────────────────
 
     # ── /profile-admin-vliv ───────────────────────────────────────────────────
 
