@@ -133,14 +133,14 @@ LOADOUTS = {
         "emoji": "🪄",
         "name": "Magická hůlka",
         "desc": "Čaroděj ovládající runovou magii hůlkou",
-        "items": [("zakladni_hulka", 1), ("brasna", 1), ("stredni_lektvar_many", 1)],
+        "items": [("zakladni_hulka", 1), ("brasna", 1), ("stredni_lektvar_mana", 1)],
         "perk": "runes",
     },
     "scrolls": {
         "emoji": "📜",
         "name": "Magické svitky",
         "desc": "Sesilatel kouzel ze svitků",
-        "items": [("svitek_ohnivy_sip", 2), ("svitek_ledovy_blok", 2), ("svitek_slabeho_uzdraveni", 2), ("svitek_jedovy_osten", 2), ("brasna", 1), ("stredni_lektvar_many", 1)],
+        "items": [("svitek_ohnivy_sip", 2), ("svitek_ledovy_blok", 2), ("svitek_slabeho_uzdraveni", 2), ("svitek_jedovy_osten", 2), ("brasna", 1), ("stredni_lektvar_mana", 1)],
         "perk": "runes",
     },
     "two_handed": {
@@ -2773,6 +2773,26 @@ class TutorialWarningView(TutorialView):
 class Onboarding(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._validate_loadouts()
+
+    def _validate_loadouts(self) -> None:
+        """Ověří, že všechna item ID v loadoutech existují v items DB.
+
+        Chytí překlepy (např. 'stredni_lektvar_many' místo '…_mana') hned při
+        startu do logu, místo aby nová postava tiše dostala rozbitý item.
+        """
+        try:
+            items_db = _loadout_items_db()
+            if not items_db:
+                return   # DB ještě nenačtená / prázdná — nekřič zbytečně
+            for lid, loadout in LOADOUTS.items():
+                for item_id, _qty in loadout.get("items", []):
+                    if item_id not in items_db:
+                        logger.warning(
+                            "[onboard] loadout '%s' odkazuje na NEEXISTUJÍCÍ item '%s' "
+                            "— nová postava ho nedostane!", lid, item_id)
+        except Exception:
+            logger.exception("[onboard] validace loadoutů selhala")
 
     @app_commands.command(name="setup-tutorial", description="Spusť úvodní tutorial Aurionisu")
     @app_commands.checks.has_permissions(administrator=True)

@@ -335,17 +335,20 @@ class Seat:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class BetModal(discord.ui.Modal):
-    amount = discord.ui.TextInput(
-        label="Sázka v zlaťácích",
-        placeholder="např. 50",
-        required=True,
-        max_length=9,
-    )
-
     def __init__(self, table: "BlackjackTable", uid: int):
         super().__init__(title="🃏 Tvoje sázka")
         self.table = table
         self.uid = uid
+        # Label podle měny hry — dřív bylo natvrdo „v zlaťácích" i na stříbrném stole
+        cur   = get_minigame_currency()
+        cname = "zlaťácích" if cur == "gold" else "stříbrňácích"
+        self.amount = discord.ui.TextInput(
+            label=f"Sázka v {cname}",
+            placeholder="např. 50",
+            required=True,
+            max_length=9,
+        )
+        self.add_item(self.amount)
 
     async def on_submit(self, interaction: discord.Interaction):
         raw = str(self.amount.value).strip()
