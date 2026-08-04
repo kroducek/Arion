@@ -425,5 +425,54 @@ class RPManage(commands.Cog):
         )
 
 
+    # ── /rp restore ───────────────────────────────────────────────────────────
+
+    @rp.command(name="restore", description="[DM] Vrátí aktuální archivovaný kanál zpět mezi aktivní RP.")
+    async def rp_restore(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM.", ephemeral=True)
+            return
+
+        guild   = interaction.guild
+        channel = interaction.channel
+
+        # Restore je opak remove — pracuje s kanálem podle kategorie, ne podle dat
+        # (remove data místnosti maže, takže tu už žádná nejsou).
+        if channel is None or channel.category_id != ARCHIVE_CATEGORY_ID:
+            await interaction.followup.send(
+                "❌ Tento kanál není v archivu. `/rp restore` použij přímo v archivovaném kanálu.",
+                ephemeral=True)
+            return
+
+        rp_cat = guild.get_channel(RP_CATEGORY_ID)
+        if rp_cat is None:
+            await interaction.followup.send("❌ RP kategorie nenalezena.", ephemeral=True)
+            return
+
+        try:
+            # odeber prefix [ARCHIV] z topicu (přesně to, co remove přidal)
+            topic = channel.topic or ""
+            if topic.startswith("[ARCHIV] "):
+                topic = topic[len("[ARCHIV] "):]
+            elif topic == "[ARCHIV]":
+                topic = ""
+            await channel.edit(
+                category=rp_cat,
+                sync_permissions=True,
+                topic=topic or None,
+            )
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Bot nemá oprávnění přesunout kanál.", ephemeral=True)
+            return
+
+        await interaction.followup.send(
+            f"✅ Kanál {channel.mention} vrácen mezi aktivní RP.\n"
+            "-# Heslo ani členství se neobnovuje — pro nové soukromí založ místnost přes `/rp create`.",
+            ephemeral=True,
+        )
+
+
 async def setup(bot):
     await bot.add_cog(RPManage(bot))
