@@ -55,6 +55,7 @@ def _ensure_player_fields(profile: dict) -> None:
     profile.setdefault("mana_max",   5)
     profile.setdefault("mana_cur",   0)
     profile.setdefault("fury_max",   0)
+    profile.setdefault("fury_max_bonus", 0)   # furioku max z jiných zdrojů než Vlivu
     profile.setdefault("fury_cur",   0)
     profile.setdefault("statuses",   [])   # aktivní statusy (jed/krvácení/…)
     profile.setdefault("rest_available", True)  # smí použít /rest? (DM povolí přes /rest enable)
@@ -344,13 +345,20 @@ class EditProfileView(discord.ui.View):
 # ══════════════════════════════════════════════════════════════════════════════
 # COG
 def _apply_vliv_fury(profile: dict) -> None:
-    """Přepočítá fury_max a fury_cur na základě celkového Vlivu (1 Vliv = 5 max furioku)."""
+    """Přepočítá fury_max a fury_cur z Vlivu + trvalého bonusu.
+
+    fury_max = (celkový Vliv × 5) + fury_max_bonus.
+
+    `fury_max_bonus` je furioku získaná JINAK než Vlivem (odměna, event, DM).
+    Přepočet z Vlivu ji nesmí smazat — proto se drží zvlášť a jen se přičte.
+    """
     total_vliv = (
         profile.get("vliv_svetlo",    0) +
         profile.get("vliv_temnota",   0) +
         profile.get("vliv_rovnovaha", 0)
     )
-    new_max = total_vliv * 5
+    bonus   = profile.get("fury_max_bonus", 0)
+    new_max = total_vliv * 5 + bonus
     old_max = profile.get("fury_max", 0)
     delta   = new_max - old_max
     profile["fury_max"] = new_max
@@ -1109,6 +1117,61 @@ class Profile(commands.Cog):
             lines.append(f"\n🚨 Hladoví (hunger = 0): "
                          + ", ".join(f"**{n}**" for n in starving))
         await interaction.followup.send("\n".join(lines))
+
+    # ── /dmfury ───────────────────────────────────────────────────────────────
+    # Trvalý bonus k furioku MAX mimo Vliv (odměna, event…). Přepočet z Vlivu
+    # ho nesmaže — drží se v fury_max_bonus a přičítá se k Vliv × 5.
+
+    @app_commands.command(
+        name="dmfury",
+        description="[DM] Nastav trvalý bonus k max furioku (mimo Vliv).",
+    )
+    @app_commands.describe(
+        member="Hráč.",
+        rezim="set (nastav), add (přičti), remove (odečti).",
+        hodnota="Kolik furioku bonusu.",
+    )
+    @app_commands.choices(rezim=[
+        app_commands.Choice(name="set",    value="set"),
+        app_commands.Choice(name="add",    value="add"),
+        app_commands.Choice(name="remove", value="remove"),
+    ])
+    async def dmfury(
+        self, interaction: discord.Interaction,
+        member: discord.Member,
+        rezim: app_commands.Choice[str],
+        hodnota: int,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM.")
+            return
+
+        data    = load_data()
+        profile = data.get(pkey(member.id))   # aktivní postava
+        if not profile:
+            await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
+            return
+        _ensure_player_fields(profile)
+
+        old_bonus = profile.get("fury_max_bonus", 0)
+        if rezim.value == "set":
+            new_bonus = max(0, hodnota)
+        elif rezim.value == "add":
+            new_bonus = max(0, old_bonus + hodnota)
+        else:  # remove
+            new_bonus = max(0, old_bonus - hodnota)
+        profile["fury_max_bonus"] = new_bonus
+
+        # přepočítej fury_max (Vliv × 5 + nový bonus) a srovnej fury_cur
+        _apply_vliv_fury(profile)
+        save_data(data)
+
+        await interaction.followup.send(
+            f"✅ **{member.display_name}** — furioku bonus {old_bonus} → **{new_bonus}**.\n"
+            f"🔥 Max furioku teď: **{profile['fury_max']}** "
+            f"*(Vliv + {new_bonus} bonus)*  ·  aktuální {profile['fury_cur']}"
+        )
 
     # ── /dmset ────────────────────────────────────────────────────────────────
     # Sjednocuje dřívější profile-admin-hp / -mana / -fury do jednoho příkazu.
