@@ -102,6 +102,7 @@ _KNOWN_ITEM_FIELDS = {
     "consumable", "stackable", "storage", "storage_capacity", "storage_emoji",
     "roll_tags", "id", "offhand",
     "rune_slots", "default_runes",
+    "image_url",
 }
 
 # Sloty které zabírá full_set item
@@ -1279,6 +1280,11 @@ def _build_inspect_embed(item_id: str, items_db: dict,
         extra.append(f"`{_k}`: {_v}")
     if extra:
         embed.add_field(name="🔧 Další pole", value="\n".join(extra)[:1024], inline=False)
+
+    # Obrázek předmětu (např. mapa) — velký náhled dole v embedu
+    img = item.get("image_url")
+    if img and isinstance(img, str) and img.startswith(("http://", "https://")):
+        embed.set_image(url=img)
 
     embed.set_footer(text=f"ID: {item_id}  ·  slot: {slot_label or '—'}")
     return embed
@@ -2772,6 +2778,46 @@ class Inventory(commands.Cog):
             return
         _save_items(items_db)
         await interaction.followup.send(f"🗑️ Item **{item['name']}** (`{item_id}`) odebrán z databáze.")
+
+    @inv_db.command(name="mapset", description="[DM] Nastaví obrázek předmětu (mapa apod.) — zobrazí se v detailu.")
+    @app_commands.describe(
+        item_id="ID předmětu.",
+        url="Odkaz na obrázek (https://…). Prázdné nebo 'clear' obrázek odebere.",
+    )
+    @app_commands.autocomplete(item_id=_ac_database_item)
+    async def inv_db_mapset(self, interaction: discord.Interaction, item_id: str, url: str = ""):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM může spravovat databázi.")
+            return
+        items_db = _load_items()
+        item = items_db.get(item_id)
+        if not item:
+            await interaction.followup.send(f"❌ Item `{item_id}` neexistuje.")
+            return
+
+        u = url.strip()
+        if u.lower() in ("", "clear", "none", "-"):
+            item.pop("image_url", None)
+            _save_items(items_db)
+            await interaction.followup.send(f"🗑️ Obrázek předmětu **{item['name']}** odebrán.")
+            return
+
+        if not u.startswith(("http://", "https://")):
+            await interaction.followup.send(
+                "❌ URL musí začínat `http://` nebo `https://`.\n"
+                "-# Tip: klikni na obrázek v Discordu → *Kopírovat odkaz*.")
+            return
+
+        item["image_url"] = u
+        _save_items(items_db)
+        # náhled, ať DM vidí, že odkaz opravdu jde
+        embed = discord.Embed(
+            title=f"🗺️  Obrázek nastaven — {item['name']}",
+            description=f"-# Zobrazí se v `/inv-inspect` a v detailu z `/inv`.",
+            color=0x2ECC71)
+        embed.set_image(url=u)
+        await interaction.followup.send(embed=embed)
 
     @inv_db.command(name="find", description="Prohledá databázi itemů.")
     @app_commands.describe(query="Název nebo ID itemu.")
