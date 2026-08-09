@@ -62,6 +62,7 @@ BOT_COGS = [
     "src.core.bot.tarot",
     "src.core.bot.minigames_hub",
     "src.core.bot.blackjack",
+    "src.core.bot.briefcase",
     "src.core.bot.battleships",
     "src.core.bot.tictactoe",
     "src.core.bot.leaderboards",
