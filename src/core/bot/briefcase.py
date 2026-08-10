@@ -36,7 +36,7 @@ logger = logging.getLogger("Briefcase")
 MIN_PLAYERS   = 3
 MAX_PLAYERS   = 8
 MAX_ROUNDS    = 10
-DISCUSS_SECS  = 45          # diskuse u stolu než se objeví akce
+DISCUSS_SECS  = 160         # diskuse u stolu (přeskočí se, když všichni rozhodnou)
 VOTE_SECS     = 45          # délka hlasování, když se spustí
 
 # Násobitel potu podle kola (lineární: kolo × 0.2 navíc). Kolo 1 = 1.2×, kolo 10 = 3.0×.
@@ -280,16 +280,24 @@ class TableView(discord.ui.View):
             return await interaction.response.send_message("*Nejsi v této hře.*", ephemeral=True)
         if game["phase"] != "discuss":
             return await interaction.response.send_message("*Zrovna nejde vyvolat hlasování.*", ephemeral=True)
+        # volba je výlučná — hlas ruší předchozí skip
+        game["call_skip"].discard(uid)
         game["call_vote"].add(uid)
-        need = (len(game["players"]) // 2) + 1
-        have = len(game["call_vote"])
+        need    = (len(game["players"]) // 2) + 1
+        have    = len(game["call_vote"])
+        decided = len(game["call_vote"] | game["call_skip"])
+        total   = len(game["players"])
         if have >= need:
             await interaction.response.send_message("🗳️ *Většina chce hlasovat — spouštím!*", ephemeral=True)
             game["phase"] = "voting"
             game["trigger_vote"].set()
+        elif decided >= total:
+            # všichni rozhodli, ale hlasování nemá většinu → převažuje skip
+            await interaction.response.send_message("🗳️ Zapsáno. *Všichni rozhodli — jde se dál.*", ephemeral=True)
+            game["trigger_skip"].set()
         else:
             await interaction.response.send_message(
-                f"🗳️ Chceš hlasovat ({have}/{need}). Až bude většina, spustí se.", ephemeral=True)
+                f"🗳️ Chceš hlasovat ({have}/{need}). *Rozhodnuto {decided}/{total}.*", ephemeral=True)
 
     @discord.ui.button(label="⏭️ Skip", style=discord.ButtonStyle.secondary, custom_id="bc_skip")
     async def skip_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -301,15 +309,28 @@ class TableView(discord.ui.View):
             return await interaction.response.send_message("*Nejsi v této hře.*", ephemeral=True)
         if game["phase"] != "discuss":
             return await interaction.response.send_message("*Zrovna nejde skipnout.*", ephemeral=True)
+        # volba je výlučná — skip ruší předchozí hlas
+        game["call_vote"].discard(uid)
         game["call_skip"].add(uid)
-        need = (len(game["players"]) // 2) + 1
-        have = len(game["call_skip"])
+        need    = (len(game["players"]) // 2) + 1
+        have    = len(game["call_skip"])
+        decided = len(game["call_vote"] | game["call_skip"])
+        total   = len(game["players"])
         if have >= need:
             await interaction.response.send_message("⏭️ *Většina chce dál — další kolo!*", ephemeral=True)
             game["trigger_skip"].set()
+        elif decided >= total:
+            # všichni rozhodli — když vote nemá většinu, převažuje skip
+            if len(game["call_vote"]) > len(game["call_skip"]):
+                await interaction.response.send_message("⏭️ Zapsáno. *Všichni rozhodli — hlasuje se!*", ephemeral=True)
+                game["phase"] = "voting"
+                game["trigger_vote"].set()
+            else:
+                await interaction.response.send_message("⏭️ Zapsáno. *Všichni rozhodli — jde se dál.*", ephemeral=True)
+                game["trigger_skip"].set()
         else:
             await interaction.response.send_message(
-                f"⏭️ Chceš skip ({have}/{need}). Až bude většina, jde se dál.", ephemeral=True)
+                f"⏭️ Chceš skip ({have}/{need}). *Rozhodnuto {decided}/{total}.*", ephemeral=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
