@@ -1235,10 +1235,36 @@ class Profile(commands.Cog):
 
         mx  = profile.get(max_key, 0)
         old = profile.get(cur_key, 0)
+        mitig_str = ""
         if r == "heal":
             new = min(mx, old + hodnota)
         elif r == "damage":
-            new = max(0, old - hodnota)
+            if z == "hp":
+                # Zásah jako v combatu: DEF pohltí první, pak furioku (spotřebuje se).
+                items_db = _load_items()
+                try:
+                    dfn = _compute_total_def(profile, items_db, member.id)
+                except Exception:
+                    logger.exception("[dmset] výpočet DEF selhal")
+                    dfn = 0
+                fur = profile.get("fury_cur", 0)
+
+                after_def       = max(0, hodnota - dfn)
+                absorbed_by_fur = min(fur, after_def)
+                profile["fury_cur"] = fur - absorbed_by_fur   # furioku se spotřebuje
+                final_dmg = after_def - absorbed_by_fur
+                new = max(0, old - final_dmg)
+
+                parts = [f"zásah {hodnota}"]
+                if dfn:
+                    parts.append(f"−{min(dfn, hodnota)} DEF")
+                if absorbed_by_fur:
+                    parts.append(f"−{absorbed_by_fur} 🔥furioku")
+                parts.append(f"= {final_dmg} do HP")
+                mitig_str = "  ".join(parts)
+            else:
+                # mana/furioku damage = přímý odečet (mitigace nedává smysl)
+                new = max(0, old - hodnota)
         elif r == "set":
             new = max(0, min(mx, hodnota))
         else:  # full
@@ -1254,9 +1280,13 @@ class Profile(commands.Cog):
         else:
             bar, emoji, label = "", "🔥", "Furioku"
         bar_str = f"{bar}  " if bar else ""
+        extra = f"\n-# {mitig_str}" if mitig_str else ""
+        # když se při zásahu spotřebovala furioku, ukaž i to
+        if mitig_str and z == "hp":
+            extra += f"\n-# 🔥 Furioku: {profile.get('fury_cur', 0)}/{profile.get('fury_max', 0)}"
         await interaction.followup.send(
             f"✅ **{member.display_name}** — {emoji} {label} aktualizováno.\n"
-            f"{bar_str}**{new}/{mx}**  *(bylo {old})*"
+            f"{bar_str}**{new}/{mx}**  *(bylo {old})*{extra}"
         )
 
     # ── /profile-admin-vliv ───────────────────────────────────────────────────
