@@ -8,9 +8,11 @@ from datetime import datetime, timedelta
 from discord.ext import commands
 from discord import app_commands
 import asyncio
+from functools import partial
 
 from src.utils.paths import CARDS_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES, FRAMES_INVENTORY, data as _data
 from src.utils.card_image import apply_frame_to_card
+from src.utils.card_render import render_card_showcase
 from src.utils.json_utils import load_json, save_json
 from src.utils.embeds import create_error_embed
 from src.logic.profile import load_data as profile_load, save_data as profile_save
@@ -137,6 +139,60 @@ def get_frame_by_id(frame_id: str):
         if frame.get("id") == frame_id:
             return frame
     return None
+
+
+def _rgb(color: int) -> tuple:
+    """Rozloží celočíselnou barvu embedu na (r, g, b)."""
+    return ((color >> 16) & 255, (color >> 8) & 255, color & 255)
+
+
+def build_showcase_image(card: dict, unique_id: str, owner_name: str = None,
+                         frame_id: str = None, tickets: str = None, image=None):
+    """
+    Vyrenderuje kartu jako jeden obrázek (art + kompaktní detaily).
+    Vrátí BytesIO s PNG, nebo None pokud art karty chybí.
+    """
+    art = image if image is not None else get_card_image_path(card.get("image"))
+    if art is None:
+        return None
+
+    rarity = card.get("rarity", "uncommon")
+    rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
+    quality = card.get("quality", "normal")
+    quality_data = QUALITIES.get(quality, QUALITIES["normal"])
+    collection = card.get("collection")
+    coll_data = COLLECTIONS.get(collection, {}) if collection else {}
+
+    try:
+        date_text = datetime.fromisoformat(card.get("created_at", "")).strftime("%d. %m. %Y")
+    except Exception:
+        date_text = "—"
+
+    rows = [("Tisk", f"#{card.get('print_number', '?')}")]
+    if collection:
+        rows.append(("Kolekce", collection.capitalize()))
+    if owner_name:
+        rows.append(("Vlastník", owner_name))
+    if tickets:
+        rows.append(("Lístky štěstí", tickets))
+    rows.append(("Rámeček", frame_id or "Žádný"))
+    rows.append(("Vytisknuto", date_text))
+
+    footer = coll_data.get("description") or "Aurionis"
+
+    return render_card_showcase(
+        art,
+        card.get("name", "?"),
+        card.get("description", ""),
+        _rgb(rarity_data["color"]),
+        [
+            (rarity.capitalize(), _rgb(rarity_data["color"])),
+            (quality_data["name"], _rgb(quality_data["color"])),
+        ],
+        rows,
+        unique_id,
+        footer=footer,
+    )
 
 
 def roll_rarity() -> str:
@@ -538,43 +594,25 @@ class Cards(commands.Cog):
                 return
 
             loop = asyncio.get_running_loop()
-            image_bytes = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
-            file = discord.File(image_bytes, filename="card.png")
+            art = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
 
-            rarity = card.get("rarity", "uncommon")
-            rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
-            collection = card.get("collection")
-            coll_data = COLLECTIONS.get(collection, {}) if collection else {}
-            qual = card.get("quality", "normal")
-            qual_data = QUALITIES.get(qual, QUALITIES["normal"])
-
-            try:
-                date_text = datetime.fromisoformat(card.get("created_at", "")).strftime("%d. %m. %Y")
-            except Exception:
-                date_text = "—"
-
-            embed = discord.Embed(
-                title=f"{rarity_data['emoji']}  {card.get('name', '?')}",
-                description=f"*{card.get('description', '')}*",
-                color=rarity_data["color"],
+            owner = interaction.guild.get_member(int(card_owner_id)) if card_owner_id and interaction.guild else None
+            showcase = await loop.run_in_executor(
+                None,
+                partial(
+                    build_showcase_image,
+                    card,
+                    unique_id,
+                    owner_name=owner.display_name if owner else None,
+                    frame_id=selected_frame,
+                    image=art,
+                ),
             )
-            if collection and coll_data:
-                embed.add_field(name="📚 Kolekce", value=f"{coll_data.get('emoji', '')} {collection.capitalize()}", inline=True)
-            embed.add_field(name="✨ Rarita",     value=f"{rarity_data['emoji']} {rarity.capitalize()}",   inline=True)
-            embed.add_field(name="💎 Kvalita",    value=f"{qual_data['emoji']} {qual_data['name']}",        inline=True)
-            embed.add_field(name="🖨️ Tisk",      value=f"**#{card.get('print_number', '?')}**",            inline=True)
-            embed.add_field(name="👤 Vlastník",   value=f"<@{card_owner_id}>" if card_owner_id else "—",    inline=True)
-            embed.add_field(name="🖼️ Rámeček",   value=selected_frame or "Žádný",                         inline=True)
-            embed.add_field(name="📅 Vytisknuto", value=date_text,                                          inline=True)
-            embed.add_field(name="🆔 Unikátní ID", value=f"`{unique_id}`",                                  inline=False)
+            if showcase is None:
+                await interaction.followup.send("Obrázek karty nebyl nalezen.", ephemeral=True)
+                return
 
-            footer = "⚜️ Aurionis"
-            if coll_data.get("description"):
-                footer += f"  •  {coll_data['description']}"
-            embed.set_footer(text=footer)
-            embed.set_image(url="attachment://card.png")
-
-            await interaction.followup.send(embed=embed, file=file)
+            await interaction.followup.send(file=discord.File(showcase, filename="card.png"))
         except Exception as e:
             await interaction.followup.send(f"❌ Chyba při zobrazení karty: {e}", ephemeral=True)
 
@@ -1029,27 +1067,20 @@ class Cards(commands.Cog):
             return
 
         unique_id, card = granted
-        rarity = card["rarity"]
-        rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
-        quality_data = QUALITIES.get(card["quality"], QUALITIES["normal"])
-        coll_data = COLLECTIONS.get(card.get("collection"), {})
+        await interaction.response.defer()
 
-        embed = discord.Embed(
-            title=f"🎴 **Získal jsi: {card.get('name')}!**",
-            description=f"*{card.get('description', '')}*",
-            color=rarity_data["color"],
+        showcase = await asyncio.get_running_loop().run_in_executor(
+            None,
+            partial(build_showcase_image, card, unique_id, owner_name=user.display_name),
         )
-        embed.add_field(name="👤 Hráč",     value=user.mention,                                       inline=True)
-        embed.add_field(name="✨ Rarita",   value=f"{rarity_data['emoji']} {rarity.capitalize()}",   inline=True)
-        embed.add_field(name="💎 Kvalita", value=f"{quality_data['emoji']} {quality_data['name']}",  inline=True)
-        if coll_data:
-            embed.add_field(name="📚 Kolekce", value=f"{coll_data.get('emoji', '')} {card.get('collection', 'N/A').capitalize()}", inline=True)
-        embed.add_field(name="🖨️ Tisk",    value=f"**#{card['print_number']}**",                     inline=True)
-        embed.add_field(name="🆔 ID",      value=f"`{unique_id}`",                                  inline=True)
-        embed.set_footer(text="⚜️ Aurionis  •  Karta přidána do tvého inventáře")
-        embed.set_thumbnail(url=user.display_avatar.url)
+        if showcase is None:
+            await interaction.followup.send("Obrázek karty nebyl nalezen.", ephemeral=True)
+            return
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(
+            content=f"🎴 {user.mention} získal **{card.get('name')}**!",
+            file=discord.File(showcase, filename="card.png"),
+        )
 
     @cards_group.command(name="work", description="Přehled výpravy — stav nebo dostupné expedice")
     async def work_hub(self, interaction: discord.Interaction):

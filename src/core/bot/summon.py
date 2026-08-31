@@ -3,15 +3,14 @@
 import asyncio
 import os
 import random
+from functools import partial
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 from src.core.bot.cards import (
-    COLLECTIONS,
-    QUALITIES,
-    RARITIES,
+    build_showcase_image,
     get_card_image_path,
     grant_random_card,
 )
@@ -267,41 +266,29 @@ class Summon(commands.Cog):
             return
 
         unique_id, card = granted
-        await message.edit(**self._reveal(interaction, card, unique_id, tickets))
-
-    def _reveal(self, interaction: discord.Interaction, card: dict, unique_id: str, tickets: int) -> dict:
-        """Sestaví finální embed s vysummonovanou kartou."""
-        rarity = card.get("rarity", "uncommon")
-        rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
-        quality_data = QUALITIES.get(card.get("quality"), QUALITIES["normal"])
-        coll_data = COLLECTIONS.get(card.get("collection"), {})
-
-        embed = discord.Embed(
-            title=f"🎴 Vysummonoval jsi: {card.get('name')}!",
-            description=f"*{card.get('description', '')}*",
-            color=rarity_data["color"],
+        showcase = await asyncio.get_running_loop().run_in_executor(
+            None,
+            partial(
+                build_showcase_image,
+                card,
+                unique_id,
+                owner_name=interaction.user.display_name,
+                tickets=f"{tickets}/{MAX_TICKETS}",
+            ),
         )
-        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-        embed.add_field(name="✨ Rarita",   value=f"{rarity_data['emoji']} {rarity.capitalize()}",                  inline=True)
-        embed.add_field(name="💎 Kvalita", value=f"{quality_data['emoji']} {quality_data['name']}",                inline=True)
-        embed.add_field(name="🎟️ Lístky",  value=f"**{tickets}/{MAX_TICKETS}**",                                   inline=True)
-        if coll_data:
-            embed.add_field(
-                name="📚 Kolekce",
-                value=f"{coll_data.get('emoji', '')} {str(card.get('collection', 'N/A')).capitalize()}",
-                inline=True,
+        if showcase is None:
+            await message.edit(
+                content=f"🎴 {interaction.user.mention} vysummonoval **{card.get('name')}** — obrázek karty chybí.",
+                embed=None,
+                attachments=[],
             )
-        embed.add_field(name="🖨️ Tisk", value=f"**#{card.get('print_number', 1)}**", inline=True)
-        embed.add_field(name="🆔 ID",   value=f"`{unique_id}`",                      inline=True)
-        embed.set_footer(text="⚜️ Aurionis  •  Karta přidána do tvého inventáře")
+            return
 
-        image_path = get_card_image_path(card.get("image"))
-        if not image_path:
-            return {"embed": embed, "attachments": []}
-
-        filename = os.path.basename(image_path)
-        embed.set_image(url=f"attachment://{filename}")
-        return {"embed": embed, "attachments": [discord.File(image_path, filename=filename)]}
+        await message.edit(
+            content=f"🎴 {interaction.user.mention} vysummonoval **{card.get('name')}**!",
+            embed=None,
+            attachments=[discord.File(showcase, filename="card.png")],
+        )
 
 
 async def setup(bot):
