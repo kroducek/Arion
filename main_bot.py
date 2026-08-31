@@ -42,6 +42,7 @@ if _data_dir_override:
     _paths.STORY_SAVE        = _paths.data("story_save.json")
     _paths.CARDS_DATA        = _paths.data("cards_data.json")
     _paths.CARDS_INVENTORY   = _paths.data("cards_inventory.json")
+    _paths.CARDS_CRATES      = _paths.data("cards_crates.json")
     _paths.CARDS_FRAMES      = _paths.data("cards_frames.json")
     _paths.FRAMES_INVENTORY  = _paths.data("frames_inventory.json")
     _paths.SHOP              = _paths.data("shop.json")
@@ -54,6 +55,7 @@ BOT_COGS = [
     # Minihry & karty
     "src.core.bot.duel",
     "src.core.bot.cards",
+    "src.core.bot.summon",
     "src.core.bot.guess",
     "src.core.bot.kostky",
     "src.core.bot.liar_dice",

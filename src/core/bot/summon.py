@@ -1,0 +1,309 @@
+"""Summonovací systém — otevírání beden s kartami."""
+
+import asyncio
+import os
+import random
+
+import discord
+from discord import app_commands
+from discord.ext import commands
+
+from src.core.bot.cards import (
+    COLLECTIONS,
+    QUALITIES,
+    RARITIES,
+    get_card_image_path,
+    grant_random_card,
+)
+from src.utils.json_utils import load_json, save_json
+from src.utils.paths import CARDS_CRATES, CARDS_DATA, CARDS_DIR, CRATES_DIR
+
+# ---------------------------------------------------------------------------
+# Konstanty
+# ---------------------------------------------------------------------------
+
+CRATES = {
+    "basic": {
+        "name": "Základní bedna",
+        "emoji": "📦",
+        "color": 0xC27C0E,
+        "description": "Obyčejná bedna z Aurionisu — uvnitř čeká jedna karta.",
+        "gif": "crate_open.gif",
+    },
+}
+
+STARTER_CRATES = {"basic": 1}
+
+TICKET_EMOJI = "🎟️"
+MAX_TICKETS = 10
+
+# Prodlevy jednotlivých fází animace (sekundy)
+GIF_DURATION = 3.0
+TICKET_STEP = 0.5
+ROLL_DELAYS = [0.35, 0.35, 0.45, 0.55, 0.7, 0.9, 1.1]
+
+
+# ---------------------------------------------------------------------------
+# Pomocné funkce
+# ---------------------------------------------------------------------------
+
+def load_crates() -> dict:
+    """Načte bedny všech hráčů."""
+    return load_json(CARDS_CRATES, default={})
+
+
+def get_crates(uid: str) -> dict:
+    """
+    Vrátí bedny hráče. Hráč, který summon ještě nikdy nepoužil, dostane
+    startovní balíček.
+    """
+    crates = load_crates()
+    if uid not in crates:
+        crates[uid] = dict(STARTER_CRATES)
+        save_json(CARDS_CRATES, crates)
+    return crates[uid]
+
+
+def change_crates(uid: str, crate_id: str, amount: int) -> int:
+    """Přičte (nebo odečte) bedny hráči a vrátí nový počet."""
+    crates = load_crates()
+    owned = crates.setdefault(uid, dict(STARTER_CRATES))
+    owned[crate_id] = max(0, owned.get(crate_id, 0) + amount)
+    save_json(CARDS_CRATES, crates)
+    return owned[crate_id]
+
+
+def get_crate_gif_path(crate_id: str):
+    """Vrátí cestu k animaci bedny, nebo None pokud soubor chybí."""
+    gif = CRATES.get(crate_id, {}).get("gif")
+    if not gif:
+        return None
+    path = os.path.join(CRATES_DIR, gif)
+    return path if os.path.exists(path) else None
+
+
+def get_roll_images(count: int) -> list:
+    """Vybere obrázky karet pro rolovací animaci — nikdy dva stejné za sebou."""
+    paths = [
+        p for p in (
+            get_card_image_path(card.get("image"))
+            for card in load_json(CARDS_DATA, default=[])
+        ) if p
+    ]
+    if not paths and os.path.isdir(CARDS_DIR):
+        paths = [
+            os.path.join(CARDS_DIR, f)
+            for f in sorted(os.listdir(CARDS_DIR))
+            if f.lower().endswith((".png", ".jpg", ".jpeg"))
+        ]
+    if not paths:
+        return []
+
+    frames = []
+    for _ in range(count):
+        choices = [p for p in paths if p != (frames[-1] if frames else None)] or paths
+        frames.append(random.choice(choices))
+    return frames
+
+
+def ticket_bar(current: int, total: int) -> str:
+    """Řádek lístků štěstí — naskákané a zbývající prázdná místa."""
+    return f"{TICKET_EMOJI * current}{'▫️' * (total - current)}"
+
+
+# ---------------------------------------------------------------------------
+# Cog
+# ---------------------------------------------------------------------------
+
+class Summon(commands.Cog):
+    """Otevírání beden s kartami."""
+
+    def __init__(self, bot):
+        self.bot = bot
+        self._opening: set[str] = set()
+
+    summon_group = app_commands.Group(name="summon", description="Summonování karet z beden")
+
+    @summon_group.command(name="crates", description="Přehled tvých beden")
+    async def show_crates(self, interaction: discord.Interaction):
+        """Vypíše bedny v inventáři hráče."""
+        owned = get_crates(str(interaction.user.id))
+
+        embed = discord.Embed(
+            title="📦 Tvé bedny",
+            description="Otevři je příkazem `/summon open`.",
+            color=0xC27C0E,
+        )
+        for crate_id, crate in CRATES.items():
+            embed.add_field(
+                name=f"{crate['emoji']} {crate['name']}",
+                value=f"**{owned.get(crate_id, 0)}×**\n*{crate['description']}*",
+                inline=True,
+            )
+        embed.set_footer(text="⚜️ Aurionis")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @summon_group.command(name="give", description="[ADMIN] Přidat hráči bedny")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(user="Hráč", crate="Typ bedny", count="Počet beden (výchozí: 1)")
+    @app_commands.choices(crate=[
+        app_commands.Choice(name="Základní bedna", value="basic"),
+    ])
+    async def give_crate(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        crate: str = "basic",
+        count: int = 1,
+    ):
+        """[ADMIN] Přidá hráči bedny."""
+        if crate not in CRATES:
+            await interaction.response.send_message("Taková bedna neexistuje.", ephemeral=True)
+            return
+        if not 1 <= count <= 100:
+            await interaction.response.send_message("Počet musí být mezi 1 a 100.", ephemeral=True)
+            return
+
+        total = change_crates(str(user.id), crate, count)
+        await interaction.response.send_message(
+            f"{CRATES[crate]['emoji']} {user.mention} dostal **{count}× {CRATES[crate]['name']}** "
+            f"(celkem: **{total}**)."
+        )
+
+    @summon_group.command(name="open", description="Otevřít bednu a summonovat kartu")
+    @app_commands.describe(crate="Typ bedny (výchozí: základní)")
+    @app_commands.choices(crate=[
+        app_commands.Choice(name="Základní bedna", value="basic"),
+    ])
+    async def open_crate(self, interaction: discord.Interaction, crate: str = "basic"):
+        """Otevře bednu — animace a náhodná karta do inventáře."""
+        uid = str(interaction.user.id)
+        crate_data = CRATES.get(crate)
+        if not crate_data:
+            await interaction.response.send_message("Taková bedna neexistuje.", ephemeral=True)
+            return
+
+        if uid in self._opening:
+            await interaction.response.send_message(
+                "Jednu bednu už otevíráš — počkej, než dopadne.", ephemeral=True
+            )
+            return
+
+        if get_crates(uid).get(crate, 0) < 1:
+            await interaction.response.send_message(
+                f"Nemáš žádnou **{crate_data['name']}**. Zeptej se adminů na `/summon give`.",
+                ephemeral=True,
+            )
+            return
+
+        self._opening.add(uid)
+        change_crates(uid, crate, -1)
+        try:
+            await self._run_opening(interaction, crate, crate_data)
+        except Exception:
+            change_crates(uid, crate, 1)
+            raise
+        finally:
+            self._opening.discard(uid)
+
+    async def _run_opening(self, interaction: discord.Interaction, crate: str, crate_data: dict):
+        """Odehraje animaci otevírání a nakonec přidělí kartu."""
+        await interaction.response.defer()
+
+        embed = discord.Embed(
+            title=f"{crate_data['emoji']} Otevíráš: {crate_data['name']}",
+            description="*Pečeť praská…*",
+            color=crate_data["color"],
+        )
+        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+
+        gif_path = get_crate_gif_path(crate)
+        files = []
+        if gif_path:
+            files.append(discord.File(gif_path, filename="crate_open.gif"))
+            embed.set_image(url="attachment://crate_open.gif")
+
+        message = await interaction.followup.send(embed=embed, files=files, wait=True)
+        await asyncio.sleep(GIF_DURATION)
+
+        tickets = random.randint(1, MAX_TICKETS)
+        for i in range(1, tickets + 1):
+            embed.description = f"*Sbíráš lístky štěstí…*\n\n{ticket_bar(i, MAX_TICKETS)}\n**{i}/{MAX_TICKETS}**"
+            await message.edit(embed=embed)
+            await asyncio.sleep(TICKET_STEP)
+
+        embed.description = (
+            f"*Máš **{tickets}** {'lístek' if tickets == 1 else 'lístky' if tickets < 5 else 'lístků'} štěstí!*\n\n"
+            f"{ticket_bar(tickets, MAX_TICKETS)}"
+        )
+        await message.edit(embed=embed)
+        await asyncio.sleep(0.8)
+
+        for delay, frame in zip(ROLL_DELAYS, get_roll_images(len(ROLL_DELAYS))):
+            roll_embed = discord.Embed(
+                title="🌀 Karty se točí…",
+                description=f"{ticket_bar(tickets, MAX_TICKETS)}",
+                color=crate_data["color"],
+            )
+            roll_embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+            roll_embed.set_image(url=f"attachment://{os.path.basename(frame)}")
+            await message.edit(
+                embed=roll_embed,
+                attachments=[discord.File(frame, filename=os.path.basename(frame))],
+            )
+            await asyncio.sleep(delay)
+
+        granted = grant_random_card(str(interaction.user.id))
+        if not granted:
+            await message.edit(
+                embed=discord.Embed(
+                    title="📦 Bedna je prázdná",
+                    description="Databáze karet neobsahuje žádný vzor — bedna se ti vrátila.",
+                    color=0xE74C3C,
+                ),
+                attachments=[],
+            )
+            change_crates(str(interaction.user.id), crate, 1)
+            return
+
+        unique_id, card = granted
+        await message.edit(**self._reveal(interaction, card, unique_id, tickets))
+
+    def _reveal(self, interaction: discord.Interaction, card: dict, unique_id: str, tickets: int) -> dict:
+        """Sestaví finální embed s vysummonovanou kartou."""
+        rarity = card.get("rarity", "uncommon")
+        rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
+        quality_data = QUALITIES.get(card.get("quality"), QUALITIES["normal"])
+        coll_data = COLLECTIONS.get(card.get("collection"), {})
+
+        embed = discord.Embed(
+            title=f"🎴 Vysummonoval jsi: {card.get('name')}!",
+            description=f"*{card.get('description', '')}*",
+            color=rarity_data["color"],
+        )
+        embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+        embed.add_field(name="✨ Rarita",   value=f"{rarity_data['emoji']} {rarity.capitalize()}",                  inline=True)
+        embed.add_field(name="💎 Kvalita", value=f"{quality_data['emoji']} {quality_data['name']}",                inline=True)
+        embed.add_field(name="🎟️ Lístky",  value=f"**{tickets}/{MAX_TICKETS}**",                                   inline=True)
+        if coll_data:
+            embed.add_field(
+                name="📚 Kolekce",
+                value=f"{coll_data.get('emoji', '')} {str(card.get('collection', 'N/A')).capitalize()}",
+                inline=True,
+            )
+        embed.add_field(name="🖨️ Tisk", value=f"**#{card.get('print_number', 1)}**", inline=True)
+        embed.add_field(name="🆔 ID",   value=f"`{unique_id}`",                      inline=True)
+        embed.set_footer(text="⚜️ Aurionis  •  Karta přidána do tvého inventáře")
+
+        image_path = get_card_image_path(card.get("image"))
+        if not image_path:
+            return {"embed": embed, "attachments": []}
+
+        filename = os.path.basename(image_path)
+        embed.set_image(url=f"attachment://{filename}")
+        return {"embed": embed, "attachments": [discord.File(image_path, filename=filename)]}
+
+
+async def setup(bot):
+    """Registruje cog do bota."""
+    await bot.add_cog(Summon(bot))
