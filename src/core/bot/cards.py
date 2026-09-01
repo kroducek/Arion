@@ -21,7 +21,6 @@ from src.logic.economy import _load_economy as load_economy, _save_economy as sa
 
 CARDS_WORK = _data("cards_work.json")
 CARDS_REBORN_STATE = _data("cards_reborn_state.json")
-CARDS_REBORN_VERSION = 2
 
 # ---------------------------------------------------------------------------
 # Konstanty
@@ -89,12 +88,13 @@ SEED_CARDS = [
 
 
 def ensure_cards_data():
-    """Provede jednorázový Cards Reborn reset a udržuje seed katalog aktuální."""
+    """Provede verzované Cards Reborn migrace a udržuje seed katalog aktuální."""
     state = load_json(CARDS_REBORN_STATE, default={})
-    if state.get("version", 0) < CARDS_REBORN_VERSION:
+    version = state.get("version", 0)
+
+    if version < 1:
         save_json(CARDS_DATA, SEED_CARDS)
         save_json(CARDS_INVENTORY, {})
-        save_json(CARDS_WORK, {})
 
         profiles = profile_load()
         changed = False
@@ -105,8 +105,13 @@ def ensure_cards_data():
         if changed:
             profile_save(profiles)
 
-        save_json(CARDS_REBORN_STATE, {"version": CARDS_REBORN_VERSION})
-        return
+        version = 1
+        save_json(CARDS_REBORN_STATE, {"version": version})
+
+    if version < 2:
+        save_json(CARDS_WORK, {})
+        version = 2
+        save_json(CARDS_REBORN_STATE, {"version": version})
 
     cards = load_json(CARDS_DATA, default=[])
     seeds_by_id = {seed["id"]: seed for seed in SEED_CARDS}
