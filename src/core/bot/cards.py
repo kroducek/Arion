@@ -21,7 +21,7 @@ from src.logic.economy import _load_economy as load_economy, _save_economy as sa
 
 CARDS_WORK = _data("cards_work.json")
 CARDS_REBORN_STATE = _data("cards_reborn_state.json")
-CARDS_REBORN_VERSION = 1
+CARDS_REBORN_VERSION = 2
 
 # ---------------------------------------------------------------------------
 # Konstanty
@@ -94,6 +94,7 @@ def ensure_cards_data():
     if state.get("version", 0) < CARDS_REBORN_VERSION:
         save_json(CARDS_DATA, SEED_CARDS)
         save_json(CARDS_INVENTORY, {})
+        save_json(CARDS_WORK, {})
 
         profiles = profile_load()
         changed = False

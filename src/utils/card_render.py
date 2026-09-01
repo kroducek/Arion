@@ -102,7 +102,7 @@ def render_card_showcase(image, name, description, accent, chips, rows, unique_i
         y += 18
         label_font = _font(19)
         value_font = _font(21, serif=True)
-        for label, value in detail_rows[:3]:
+        for label, value in detail_rows:
             draw.text((PAD, y), label.upper(), font=label_font, fill=(165, 170, 188))
             draw.text(
                 (W - PAD, y),
