@@ -1,33 +1,16 @@
-"""
-Render sběratelské karty jako jeden obrázek (PIL) — kompaktní náhrada
-za roztažené embed fieldy. Staví na stejných blocích jako profilové karty.
-"""
+"""Dynamický render sběratelských karet přímo přes čistý artwork."""
 
 import io
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
-from src.logic.profile_render import (
-    GOLD,
-    GOLD_HARD,
-    GREY,
-    _base,
-    _divider,
-    _font,
-    _portrait,
-    _save,
-    _truncate,
-    _wrap,
-)
+from src.logic.profile_render import _font, _save, _truncate, _wrap
 
-W, H = 900, 620
-CARD_X, CARD_Y, CARD_W, CARD_H = 44, 58, 360, 504
-COL_X = CARD_X + CARD_W + 40
-COL_W = W - 44 - COL_X
+W, H = 1024, 1536
+PAD = 62
 
 
-def _open_image(image) -> Image.Image | None:
-    """Přijme cestu, bajty i BytesIO a vrátí RGBA obrázek (None při chybě)."""
+def _open_image(image):
     if image is None:
         return None
     try:
@@ -38,70 +21,108 @@ def _open_image(image) -> Image.Image | None:
         return None
 
 
-def _chip(d, x, y, text, color, font):
-    """Barevná pilulka s raritou / kvalitou. Vrátí šířku."""
-    w = int(d.textlength(text, font=font)) + 30
-    h = 34
-    light = tuple(min(255, c + 70) for c in color)
-    d.rounded_rectangle([x, y, x + w, y + h], radius=h // 2, fill=(16, 16, 26, 235),
-                        outline=color + (235,), width=2)
-    d.text((x + w // 2, y + h // 2), text, font=font, fill=light, anchor="mm")
-    return w
+def _fit_name(draw, text, max_width):
+    for size in range(70, 39, -2):
+        font = _font(size, serif=True)
+        if draw.textlength(text, font=font) <= max_width:
+            return font
+    return _font(40, serif=True)
+
+
+def _chip(draw, x, y, text, color):
+    font = _font(22)
+    width = int(draw.textlength(text, font=font)) + 34
+    draw.rounded_rectangle(
+        (x, y, x + width, y + 42),
+        radius=21,
+        fill=(12, 14, 22, 210),
+        outline=color + (255,),
+        width=2,
+    )
+    draw.text((x + width // 2, y + 21), text.upper(), font=font, fill=(245, 245, 248), anchor="mm")
+    return width
 
 
 def render_card_showcase(image, name, description, accent, chips, rows, unique_id, footer=None):
-    """
-    Sestaví obrázek karty: velký art vlevo, kompaktní informace vpravo.
-
-    image       — cesta / bajty / BytesIO s artem karty
-    accent      — (r, g, b) barva podle rarity
-    chips       — [(text, (r, g, b)), …] pilulky pod jménem
-    rows        — [(popisek, hodnota), …] řádky detailů
-    """
+    """Vykreslí kompletní vertikální kartu s textem přes artwork."""
     art = _open_image(image)
-    img, d = _base(W, H, accent=accent, tint=accent, bg_portrait=art)
-    _portrait(img, art, CARD_X, CARD_Y, CARD_W, CARD_H, r=18, frame=accent)
-    d = ImageDraw.Draw(img)
+    if art is None:
+        return None
 
-    y = CARD_Y
-    name_font = _font(42, serif=True)
-    d.text((COL_X, y), _truncate(d, name or "?", name_font, COL_W), font=name_font, fill=GOLD)
-    y += 58
+    art = ImageOps.fit(art, (W, H), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+    art = ImageEnhance.Contrast(art).enhance(1.04)
+    canvas = art.copy()
 
-    if description:
-        for line in _wrap(d, description, _font(20, serif=True), COL_W, max_lines=3):
-            d.text((COL_X, y), line, font=_font(20, serif=True), fill=(198, 198, 212))
-            y += 27
-    y += 12
+    shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow)
+    panel_top = 900
+    for y in range(panel_top, H):
+        opacity = int(238 * ((y - panel_top) / (H - panel_top)) ** 0.55)
+        shadow_draw.line((0, y, W, y), fill=(5, 8, 16, opacity))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(10))
+    canvas = Image.alpha_composite(canvas, shadow)
+    draw = ImageDraw.Draw(canvas)
 
-    if chips:
-        chip_font = _font(20)
-        cx = COL_X
-        for text, color in chips:
-            cw = _chip(d, cx, y, text, color, chip_font)
-            cx += cw + 10
-            if cx > W - 44:
-                break
-        y += 52
+    draw.rounded_rectangle(
+        (PAD, 55, PAD + 132, 109),
+        radius=16,
+        fill=(8, 10, 18, 205),
+        outline=accent + (255,),
+        width=3,
+    )
+    print_value = next((value for label, value in rows if label == "Tisk"), "#?")
+    draw.text((PAD + 66, 82), str(print_value), font=_font(27), fill=(255, 255, 255), anchor="mm")
 
-    _divider(d, COL_X, W - 44, y, accent=accent)
-    y += 20
+    y = 1040
+    chip_x = PAD
+    for text, color in chips:
+        chip_x += _chip(draw, chip_x, y, text, color) + 12
 
-    label_font, value_font = _font(19), _font(22, serif=True)
-    for label, value in rows:
-        d.text((COL_X, y + 3), label, font=label_font, fill=GREY)
-        d.text((W - 44, y), _truncate(d, str(value), value_font, COL_W - 150),
-               font=value_font, fill=(228, 228, 238), anchor="ra")
-        y += 36
+    y += 68
+    title_font = _fit_name(draw, name or "?", W - 2 * PAD)
+    draw.text(
+        (PAD, y),
+        _truncate(draw, (name or "?").upper(), title_font, W - 2 * PAD),
+        font=title_font,
+        fill=(255, 245, 218),
+        stroke_width=3,
+        stroke_fill=(10, 10, 15),
+    )
+    y += title_font.size + 18
+
+    description_font = _font(25, serif=True)
+    for line in _wrap(draw, description, description_font, W - 2 * PAD, max_lines=2):
+        draw.text((PAD, y), line, font=description_font, fill=(220, 222, 232))
+        y += 34
+
+    y += 18
+    detail_rows = [(label, value) for label, value in rows if label not in {"Tisk", "Vytisknuto"}]
+    if detail_rows:
+        draw.line((PAD, y, W - PAD, y), fill=accent + (180,), width=2)
+        y += 18
+        label_font = _font(19)
+        value_font = _font(21, serif=True)
+        for label, value in detail_rows[:3]:
+            draw.text((PAD, y), label.upper(), font=label_font, fill=(165, 170, 188))
+            draw.text(
+                (W - PAD, y),
+                _truncate(draw, str(value), value_font, 570),
+                font=value_font,
+                fill=(240, 240, 245),
+                anchor="ra",
+            )
+            y += 32
 
     id_font = _font(20)
-    id_text = f"ID  {unique_id}"
-    id_w = int(d.textlength(id_text, font=id_font)) + 28
-    d.rounded_rectangle([COL_X, H - 118, COL_X + id_w, H - 78], radius=12,
-                        fill=(18, 18, 28, 255), outline=(120, 90, 40, 180), width=1)
-    d.text((COL_X + 14, H - 98), id_text, font=id_font, fill=GOLD_HARD, anchor="lm")
-
+    draw.text((PAD, H - 52), f"ID {unique_id}", font=id_font, fill=(190, 194, 208), anchor="lm")
     if footer:
-        d.text((COL_X, H - 62), _truncate(d, footer, _font(18), COL_W), font=_font(18), fill=GREY)
+        draw.text(
+            (W - PAD, H - 52),
+            _truncate(draw, footer, id_font, 590),
+            font=id_font,
+            fill=(190, 194, 208),
+            anchor="rm",
+        )
 
-    return _save(img)
+    draw.rounded_rectangle((18, 18, W - 18, H - 18), radius=28, outline=accent + (255,), width=8)
+    return _save(canvas)
