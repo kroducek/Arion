@@ -1182,7 +1182,7 @@ class Profile(commands.Cog):
     )
     @app_commands.describe(
         member="Hráč.",
-        zdroj="Co upravit: HP / mana / furioku.",
+        zdroj="Co upravit: HP / mana / furioku / hlad.",
         rezim="heal (+), damage (−), set (nastav), full (na max).",
         hodnota="Množství (pro heal/damage/set). U 'full' se ignoruje.",
         maximum="Volitelně nastav i maximum (mana/HP/furioku).",
@@ -1192,6 +1192,7 @@ class Profile(commands.Cog):
             app_commands.Choice(name="HP",      value="hp"),
             app_commands.Choice(name="Mana",    value="mana"),
             app_commands.Choice(name="Furioku", value="fury"),
+            app_commands.Choice(name="Hlad",    value="hunger"),
         ],
         rezim=[
             app_commands.Choice(name="heal (+)",   value="heal"),
@@ -1277,6 +1278,8 @@ class Profile(commands.Cog):
             bar, emoji, label = _heart_bar(new, mx), "❤️", "HP"
         elif z == "mana":
             bar, emoji, label = _mana_bar(new, mx), "🔷", "Mana"
+        elif z == "hunger":
+            bar, emoji, label = _hunger_bar(new, mx), "🍖", "Hlad"
         else:
             bar, emoji, label = "", "🔥", "Furioku"
         bar_str = f"{bar}  " if bar else ""
