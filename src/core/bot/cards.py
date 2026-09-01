@@ -20,6 +20,8 @@ from src.logic.inventory import _load_profiles as inv_load, _save_profiles as in
 from src.logic.economy import _load_economy as load_economy, _save_economy as save_economy, add_balance
 
 CARDS_WORK = _data("cards_work.json")
+CARDS_REBORN_STATE = _data("cards_reborn_state.json")
+CARDS_REBORN_VERSION = 1
 
 # ---------------------------------------------------------------------------
 # Konstanty
@@ -72,28 +74,45 @@ COLLECTIONS = {
 }
 
 SEED_CARDS = [
-    {"id": 1, "name": "Alice Aurelion", "description": "Mystická postava z Aurionisu s aurou tajemství.",    "image": "unworthy_alice_aurelion.png", "collection": "unworthy"},
-    {"id": 2, "name": "Enel",           "description": "Kdo ví co za tajemství v sobě skrývá.",              "image": "unworthy_enel.png",           "collection": "unworthy"},
-    {"id": 3, "name": "Kaiser Vexx",    "description": "Kdo ví co za tajemství v sobě skrývá.",              "image": "unworthy_kaiser_vexx.png",    "collection": "unworthy"},
-    {"id": 4, "name": "Nyx",            "description": "Vyvolená postava, která promlouvá skrze stíny.",     "image": "chosen_one_nyx.png",          "collection": "chosen"},
-    {"id": 5, "name": "Darrin",         "description": "Hrdina nesoucí břímě vyvoleného.",                   "image": "chosen_one_darrin.png",       "collection": "chosen"},
+    {"id": 1, "name": "Alice Aurelion", "description": "Mystická postava z Aurionisu s aurou tajemství.", "image": "unworthy_alice_aurelion.png", "collection": "unworthy"},
+    {"id": 2, "name": "Enel", "description": "Kdo ví, co za tajemství v sobě skrývá.", "image": "unworthy_enel.png", "collection": "unworthy"},
+    {"id": 3, "name": "Kaiser Vexx", "description": "Kdo ví, co za tajemství v sobě skrývá.", "image": "unworthy_kaiser_vexx.png", "collection": "unworthy"},
+    {"id": 4, "name": "Nyx", "description": "Vyvolená postava, která promlouvá skrze stíny.", "image": "chosen_one_nyx.png", "collection": "chosen"},
+    {"id": 5, "name": "Darrin", "description": "Hrdina nesoucí břímě vyvoleného.", "image": "chosen_one_darrin.png", "collection": "chosen"},
+    {"id": 6, "name": "Karl von Ulrich", "description": "Poutník, jehož minulost odvál severní vítr.", "image": "unworthy_karl_von_ulrich.png", "collection": "unworthy"},
+    {"id": 7, "name": "Arion", "description": "Malý čaroděj s osudem větším než celý Aurionis.", "image": "unworthy_arion.png", "collection": "unworthy"},
 ]
 
 # ---------------------------------------------------------------------------
 # Pomocné funkce
 # ---------------------------------------------------------------------------
 
+
 def ensure_cards_data():
-    """Při startu doplní chybějící seed karty (upsert podle ID)."""
+    """Provede jednorázový Cards Reborn reset a udržuje seed katalog aktuální."""
+    state = load_json(CARDS_REBORN_STATE, default={})
+    if state.get("version", 0) < CARDS_REBORN_VERSION:
+        save_json(CARDS_DATA, SEED_CARDS)
+        save_json(CARDS_INVENTORY, {})
+
+        profiles = profile_load()
+        changed = False
+        for profile in profiles.values():
+            if profile.get("active_card_id") is not None:
+                profile["active_card_id"] = None
+                changed = True
+        if changed:
+            profile_save(profiles)
+
+        save_json(CARDS_REBORN_STATE, {"version": CARDS_REBORN_VERSION})
+        return
+
     cards = load_json(CARDS_DATA, default=[])
-    existing_ids = {c.get("id") for c in cards}
-    added = False
-    for seed in SEED_CARDS:
-        if seed["id"] not in existing_ids:
-            cards.append(seed)
-            added = True
-    if added:
-        save_json(CARDS_DATA, cards)
+    seeds_by_id = {seed["id"]: seed for seed in SEED_CARDS}
+    custom_cards = [card for card in cards if card.get("id") not in seeds_by_id]
+    updated_cards = SEED_CARDS + custom_cards
+    if updated_cards != cards:
+        save_json(CARDS_DATA, updated_cards)
 
 
 def ensure_frames_data():
@@ -952,7 +971,21 @@ class Cards(commands.Cog):
 
             loop = asyncio.get_running_loop()
             selected_frame = card.get("frame")
-            image_bytes = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
+            art = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
+            image_bytes = await loop.run_in_executor(
+                None,
+                partial(
+                    build_showcase_image,
+                    card,
+                    active_card_id,
+                    owner_name=target.display_name,
+                    frame_id=selected_frame,
+                    image=art,
+                ),
+            )
+            if image_bytes is None:
+                await interaction.followup.send("Obrázek karty nebyl nalezen.", ephemeral=True)
+                return
             file = discord.File(image_bytes, filename="card.png")
 
             rarity = card.get("rarity", "uncommon")
