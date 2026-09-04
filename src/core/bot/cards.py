@@ -236,45 +236,87 @@ def build_showcase_image(card: dict, unique_id: str, owner_name: str = None,
         frame_id=frame_id,
     )
  
-def roll_rarity(luck: int = 0) -> str:
-    """Náhodná rarita; více štěstí zvyšuje váhu vyšších rarit."""
-    luck = max(0, min(20, int(luck)))
+def roll_rarity(tickets: int = 0, clovers: int = 0) -> str:
+    """Rarita podle lístků a čtyřlístků štěstí.
 
-    # Základní váhy odpovídají původním šancím:
-    # Legendary 1 / Epic 5 / Rare 10 / Common 20 / Uncommon 64.
-    weights = {
-        "legendary": 1 * (1 + luck * 0.30),
-        "epic": 5 * (1 + luck * 0.15),
-        "rare": 10 * (1 + luck * 0.08),
-        "common": 20 * (1 + luck * 0.04),
-        "uncommon": 64,
+    Lístky zvyšují šanci postupně. Čtyřlístky jsou výrazně silnější bonus.
+    Při 5/5 čtyřlístcích se běžný roll nepoužívá — summon garantuje Legendary.
+    """
+    tickets = max(0, min(10, int(tickets)))
+    clovers = max(0, min(5, int(clovers)))
+
+    # Základ: 1% Legendary / 5% Epic / 10% Rare / 20% Common / 64% Uncommon.
+    # Lístky zvyšují hlavně vyšší rarity. 9/10 dává přibližně 28% na Rare.
+    ticket_bonus = {
+        0: (1, 5, 10, 20, 64),
+        1: (1.2, 5.5, 11, 20.5, 61.8),
+        2: (1.4, 6.0, 12, 21, 59.6),
+        3: (1.7, 6.6, 13.5, 21.5, 57.7),
+        4: (2.0, 7.2, 15, 22, 53.8),
+        5: (2.4, 8.0, 17, 22.5, 50.1),
+        6: (2.8, 8.8, 19, 23, 46.4),
+        7: (3.3, 9.8, 21, 23, 42.9),
+        8: (3.9, 10.8, 24, 23, 38.3),
+        9: (4.6, 12.0, 28, 23, 32.4),
+        10: (5.5, 14.0, 32, 23, 25.5),
     }
+    weights = list(ticket_bonus[tickets])
+
+    # Každý čtyřlístek výrazně posouvá váhy směrem k nejvyšším tierům.
+    # 1–4/5 jsou stále náhodné; 5/5 se řeší jako garantovaný jackpot v summon.py.
+    clover_multiplier = {
+        0: (1.0, 1.0, 1.0, 1.0, 1.0),
+        1: (2.0, 1.7, 1.45, 0.90, 0.65),
+        2: (3.5, 2.6, 1.9, 0.75, 0.40),
+        3: (6.0, 4.0, 2.5, 0.55, 0.20),
+        4: (10.0, 6.0, 3.2, 0.35, 0.08),
+        5: (1.0, 1.0, 1.0, 1.0, 1.0),
+    }
+    weights = [w * m for w, m in zip(weights, clover_multiplier[clovers])]
     return random.choices(
-        list(weights.keys()),
-        weights=list(weights.values()),
+        ["legendary", "epic", "rare", "common", "uncommon"],
+        weights=weights,
         k=1,
     )[0]
 
 
-def roll_quality(luck: int = 0) -> str:
-    """Náhodná kvalita; štěstí zvyšuje váhu lepších kvalit."""
-    luck = max(0, min(20, int(luck)))
+def roll_quality(tickets: int = 0, clovers: int = 0) -> str:
+    """Kvalita podle lístků a čtyřlístků; čtyřlístky silně tlačí kvalitu nahoru."""
+    tickets = max(0, min(10, int(tickets)))
+    clovers = max(0, min(5, int(clovers)))
 
-    # Základní váhy: Shiny 5 / Gold 15 / Normal 50 / Damaged 30.
-    weights = {
-        "shiny": 5 * (1 + luck * 0.10),
-        "gold": 15 * (1 + luck * 0.06),
-        "normal": 50 * (1 + luck * 0.015),
-        "damaged": 30,
+    # Shiny / Gold / Normal / Damaged.
+    ticket_bonus = {
+        0: (5, 15, 50, 30),
+        1: (5.5, 16, 50, 28.5),
+        2: (6, 17, 50, 27),
+        3: (6.5, 18, 49.5, 26),
+        4: (7, 19, 49, 25),
+        5: (8, 20, 48, 24),
+        6: (9, 21, 47, 23),
+        7: (10, 22, 46, 22),
+        8: (11, 23, 45, 21),
+        9: (13, 25, 43, 19),
+        10: (15, 28, 40, 17),
     }
+    weights = list(ticket_bonus[tickets])
+    clover_multiplier = {
+        0: (1.0, 1.0, 1.0, 1.0),
+        1: (2.0, 1.5, 0.85, 0.55),
+        2: (3.5, 2.2, 0.65, 0.30),
+        3: (6.0, 3.5, 0.45, 0.12),
+        4: (10.0, 5.0, 0.25, 0.04),
+        5: (1.0, 1.0, 1.0, 1.0),
+    }
+    weights = [w * m for w, m in zip(weights, clover_multiplier[clovers])]
     return random.choices(
-        list(weights.keys()),
-        weights=list(weights.values()),
+        ["shiny", "gold", "normal", "damaged"],
+        weights=weights,
         k=1,
     )[0]
 
 
-def grant_random_card(owner_id: str, luck: int = 0):
+def grant_random_card(owner_id: str, tickets: int = 0, clovers: int = 0, guaranteed_jackpot: bool = False):
     """
     Vytiskne náhodnou kartu z databáze vzorů do inventáře hráče.
     `luck` pochází z lístků a čtyřlístků v summon animaci.

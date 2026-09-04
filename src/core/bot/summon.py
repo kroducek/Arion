@@ -153,12 +153,13 @@ def add_clover(uid: str) -> int:
     return state["clovers"]
 
 
-def total_luck(tickets: int, clovers: int) -> int:
-    """
-    Přepočítá viditelné štěstí na sílu rollu.
-    Každý lístek = +1 luck, každý čtyřlístek = +2 luck.
-    """
-    return min(20, max(0, tickets + clovers * 2))
+def reset_clovers(uid: str) -> int:
+    """Resetuje čtyřlístkový meter po dosažení 5/5 jackpotu."""
+    luck = load_luck()
+    state = luck.setdefault(uid, {"clovers": 0})
+    state["clovers"] = 0
+    save_json(LUCK_DATA, luck)
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -320,10 +321,9 @@ class Summon(commands.Cog):
             await message.edit(embed=embed)
             await asyncio.sleep(TICKET_STEP)
 
-        # 10/10 lístků se přelije do dlouhodobého čtyřlístkového štěstí.
-        # To je přesně ten dramatický moment po naplnění 1/10.
-        jackpot = tickets == MAX_TICKETS
-        if jackpot:
+        # 10/10 lístků přidá jeden čtyřlístek do dočasného luck metru.
+        # 5/5 je ultimátní jackpot: garantuje Legendary + Shiny a meter se resetuje.
+        if tickets == MAX_TICKETS:
             clovers_after = add_clover(str(interaction.user.id))
             embed.description = (
                 "🍀 **JACKPOT!!!!** 🍀\n\n"
@@ -344,7 +344,7 @@ class Summon(commands.Cog):
             await message.edit(embed=embed)
             await asyncio.sleep(0.8)
 
-        luck_value = total_luck(tickets, clovers_after)
+        guaranteed_jackpot = clovers_after >= MAX_CLOVERS
 
         for delay, frame in zip(ROLL_DELAYS, get_roll_images(len(ROLL_DELAYS))):
             roll_embed = discord.Embed(
@@ -360,7 +360,12 @@ class Summon(commands.Cog):
             )
             await asyncio.sleep(delay)
 
-        granted = grant_random_card(str(interaction.user.id), luck=luck_value)
+        granted = grant_random_card(
+            str(interaction.user.id),
+            tickets=tickets,
+            clovers=clovers_after,
+            guaranteed_jackpot=guaranteed_jackpot,
+        )
         if not granted:
             await message.edit(
                 embed=discord.Embed(
@@ -374,6 +379,9 @@ class Summon(commands.Cog):
             return
 
         unique_id, card = granted
+        if guaranteed_jackpot:
+            reset_clovers(str(interaction.user.id))
+            clovers_after = 0
         showcase = await asyncio.get_running_loop().run_in_executor(
             None,
             partial(
