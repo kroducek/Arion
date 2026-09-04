@@ -11,7 +11,6 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 from functools import partial
-
 from src.utils.paths import CARDS_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES, FRAMES_INVENTORY, data as _data
 from src.utils.card_image import apply_frame_to_card
 from src.utils.card_render import render_card_showcase 
@@ -22,7 +21,7 @@ from src.logic.inventory import _load_profiles as inv_load, _save_profiles as in
 from src.logic.economy import _load_economy as load_economy, _save_economy as save_economy, add_balance
 
 CARDS_WORK = _data("cards_work.json")
-CARDS_REBORN_STATE = _data("cards_reborn_state.json")
+CARDS_REBORN_STATE = _data("cards_reborn_state")
 # ---------------------------------------------------------------------------
 # Konstanty
 # ---------------------------------------------------------------------------
