@@ -96,6 +96,9 @@ SEED_CARDS = [
     {"id": 19, "name": "Hádankář",       "description": "Jeho síla je nezměrná, možná největší na tomto světě…", "image": "hadankar2.png",               "collection": "jesters"},
     {"id": 20, "name": "Hao",       "description": "Nejsilnější vyvolený a rank 1 dobrodruh.", "image": "hao.png",               "collection": "worthy"},
     {"id": 21, "name": "Bojový šašek",       "description": "Šašek jenž vyhledává silné soupeře", "image": "bojovy_sasek.png",               "collection": "jesters"},
+    {"id": 22, "name": "Elegantní šašek",       "description": "Šašek jenž je známý svou touhou hrát hry", "image": "elegantni_sasek.png",               "collection": "jesters"},
+    {"id": 23, "name":"Jason Harvey",       "description": "Říká se, že mu ženy a hádankáři padají k nohám", "image": "jason.png",               "collection": "unworthy"},
+    {"id": 24, "name": "Malý šašek",       "description": "Šašek jenž často asistuje ostatním šaškům", "image": "maly_sasek.png",               "collection": "jesters"},
 ]
 
 # ---------------------------------------------------------------------------
