@@ -90,7 +90,7 @@ SEED_CARDS = [
     {"id": 13, "name": "Freya",       "description": "Heretická čarodějka pocházející z počátku času.", "image": "freya.png",               "collection": "first-beings"},
     {"id": 14, "name": "Marcel",       "description": "Marcel jen vůdcem většiny svobodných upírů.", "image": "marcel.png",               "collection": "first-beings"},
     {"id": 15, "name": "Vládce stínů",       "description": "Jediná cesta k rovnováze je skrze stíny", "image": "gabriel.png",               "collection": "shadows"},
-    {"id": 16, "name": "Alice Aurelion",       "description": "Poslední čistá krev z královského rodu Aurionisu", "image": "alice-queen.png",               "collection": "queen"},
+    {"id": 16, "name": "Alice Aurelion",       "description": "Poslední čistá krev z královského rodu Aurionisu", "image": "alice_queen.png",               "collection": "queen"},
     {"id": 17, "name": "Noxarath",       "description": "Čarodějka smrti a bohyně temnoty.", "image": "noxarath.png",               "collection": "witches"},
     {"id": 18, "name": "Embra",       "description": "Čarodějka hněvu, jenž byla zostuzena", "image": "embra.png",               "collection": "witches"},
     {"id": 19, "name": "Hádankář",       "description": "Jeho síla je nezměrná, možná největší na tomto světě…", "image": "hadankar2.png",               "collection": "jesters"},
