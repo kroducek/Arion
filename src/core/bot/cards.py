@@ -22,7 +22,7 @@ from src.logic.inventory import _load_profiles as inv_load, _save_profiles as in
 from src.logic.economy import _load_economy as load_economy, _save_economy as save_economy, add_balance
 
 CARDS_WORK = _data("cards_work.json")
-CARDS_REBORN_STATE = _data("cards_reborn_state")
+CARDS_REBORN_STATE = _data("cards_reborn_state.json")
 # ---------------------------------------------------------------------------
 # Konstanty
 # ---------------------------------------------------------------------------
