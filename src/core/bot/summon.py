@@ -29,7 +29,8 @@ CRATES = {
         "description": "Obyčejná bedna z Aurionisu — uvnitř čeká jedna karta.",
         "gifs": [
             "crate_open.gif",
-            "crate_open2.gif",
+            "crate_open_2.gif",
+            "crate_open_3.gif",
         ],
     },
 }
@@ -74,6 +75,7 @@ def change_crates(uid: str, crate_id: str, amount: int) -> int:
     save_json(CARDS_CRATES, crates)
     return owned[crate_id]
 
+
 def get_crate_gif_path(crate_id: str):
     """Vrátí cestu k náhodné animaci bedny, nebo None pokud soubor chybí."""
     crate_data = CRATES.get(crate_id, {})
@@ -91,6 +93,7 @@ def get_crate_gif_path(crate_id: str):
     
     path = os.path.join(CRATES_DIR, selected_gif)
     return path if os.path.exists(path) else None
+
 
 def get_roll_images(count: int) -> list:
     """Vybere obrázky karet pro rolovací animaci — nikdy dva stejné za sebou."""
@@ -152,77 +155,25 @@ class Summon(commands.Cog):
             )
         embed.set_footer(text="⚜️ Aurionis")
         await interaction.response.send_message(embed=embed, ephemeral=True)
-        
-# Řádky 156-216 — SMAŽ VŠECHNO A NAHRAĎ TÍMTO:
 
-@summon_group.command(name="give", description="[ADMIN] Přidat bedny více hráčům najednou")
-@app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    users="Hráči oddělení mezerou nebo zatagování",
-    crate="Typ bedny",
-    count="Počet beden na hráče (výchozí: 1)"
-)
-@app_commands.choices(crate=[
-    app_commands.Choice(name="Základní bedna", value="basic"),
-])
-async def give_crate(
-    self,
-    interaction: discord.Interaction,
-    users: str,
-    crate: str = "basic",
-    count: int = 1,
-):
-    """[ADMIN] Přidá bedny více hráčům najednou."""
-    if crate not in CRATES:
-        await interaction.response.send_message("Taková bedna neexistuje.", ephemeral=True)
-        return
-    if not 1 <= count <= 100:
-        await interaction.response.send_message("Počet musí být mezi 1 a 100.", ephemeral=True)
-        return
-
-    # Parsuj uživatele z textu (tagování nebo ID)
-    user_ids = []
-    for mention in users.split():
-        # Pokud je to tag <@ID>
-        if mention.startswith("<@") and mention.endswith(">"):
-            uid = mention.strip("<@!>")
-            user_ids.append(uid)
-        # Pokud je to jen ID
-        elif mention.isdigit():
-            user_ids.append(mention)
-
-    if not user_ids:
-        await interaction.response.send_message(
-            "❌ Žádní hráči nenalezeni. Použij `/summon give @user1 @user2 ... basic 5`",
-            ephemeral=True
-        )
-        return
-
-    results = []
-    for uid in user_ids:
-        total = change_crates(uid, crate, count)
-        try:
-            user = await self.bot.fetch_user(int(uid))
-            user_name = user.name
-        except:
-            user_name = f"ID:{uid}"
-        results.append(f"✅ {user_name} — **{count}×** {CRATES[crate]['name']} (celkem: **{total}**)")
-
-    embed = discord.Embed(
-        title=f"{CRATES[crate]['emoji']} Bedny rozdány",
-        description="\n".join(results),
-        color=CRATES[crate]["color"],
+    @summon_group.command(name="give", description="[ADMIN] Přidat bedny více hráčům najednou")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(
+        users="Hráči oddělení mezerou nebo zatagování",
+        crate="Typ bedny",
+        count="Počet beden na hráče (výchozí: 1)"
     )
-    await interaction.response.send_message(embed=embed)
-    
+    @app_commands.choices(crate=[
+        app_commands.Choice(name="Základní bedna", value="basic"),
+    ])
     async def give_crate(
         self,
         interaction: discord.Interaction,
-        user: discord.Member,
+        users: str,
         crate: str = "basic",
         count: int = 1,
     ):
-        """[ADMIN] Přidá hráči bedny."""
+        """[ADMIN] Přidá bedny více hráčům najednou."""
         if crate not in CRATES:
             await interaction.response.send_message("Taková bedna neexistuje.", ephemeral=True)
             return
@@ -230,11 +181,41 @@ async def give_crate(
             await interaction.response.send_message("Počet musí být mezi 1 a 100.", ephemeral=True)
             return
 
-        total = change_crates(str(user.id), crate, count)
-        await interaction.response.send_message(
-            f"{CRATES[crate]['emoji']} {user.mention} dostal **{count}× {CRATES[crate]['name']}** "
-            f"(celkem: **{total}**)."
+        # Parsuj uživatele z textu (tagování nebo ID)
+        user_ids = []
+        for mention in users.split():
+            # Pokud je to tag <@ID>
+            if mention.startswith("<@") and mention.endswith(">"):
+                uid = mention.strip("<@!>")
+                user_ids.append(uid)
+            # Pokud je to jen ID
+            elif mention.isdigit():
+                user_ids.append(mention)
+
+        if not user_ids:
+            await interaction.response.send_message(
+                "❌ Žádní hráči nenalezeni. Použij `/summon give @user1 @user2 ... basic 5`",
+                ephemeral=True
+            )
+            return
+
+        results = []
+        for uid in user_ids:
+            total = change_crates(uid, crate, count)
+            try:
+                user = await self.bot.fetch_user(int(uid))
+                user_name = user.name
+            except:
+                user_name = f"ID:{uid}"
+            results.append(f"✅ {user_name} — **{count}×** {CRATES[crate]['name']} (celkem: **{total}**)")
+
+        embed = discord.Embed(
+            title=f"{CRATES[crate]['emoji']} Bedny rozdány",
+            description="\n".join(results),
+            color=CRATES[crate]["color"],
         )
+        await interaction.response.send_message(embed=embed)
+
     @summon_group.command(name="open", description="Otevřít bednu a summonovat kartu")
     @app_commands.describe(crate="Typ bedny (výchozí: základní)")
     @app_commands.choices(crate=[
