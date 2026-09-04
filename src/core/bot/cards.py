@@ -599,75 +599,59 @@ class Cards(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
-    @cards_group.command(name="show", description="Zobrazit konkrétní kartu")
-    @app_commands.describe(unique_id="Unikátní ID karty", frame="ID rámečku (volitelné — přepíše uložený)")
-    async def show_card(self, interaction: discord.Interaction, unique_id: str, frame: str = None):
-        """Zobrazí konkrétní kartu s obrázkem."""
-        inv = load_json(CARDS_INVENTORY, default={})
+@cards_group.command(name="show", description="Zobrazit konkrétní kartu")
+@app_commands.describe(unique_id="Unikátní ID karty", frame="ID rámečku (volitelné — přepíše uložený)")
+async def show_card(self, interaction: discord.Interaction, unique_id: str, frame: str = None):
+    """Zobrazí konkrétní kartu s obrázkem — nový formát jako summon."""
+    inv = load_json(CARDS_INVENTORY, default={})
 
-        if unique_id not in inv:
-            await interaction.response.send_message(f"Karta s ID `{unique_id}` neexistuje.", ephemeral=True)
-            return
+    if unique_id not in inv:
+        await interaction.response.send_message(f"Karta s ID `{unique_id}` neexistuje.", ephemeral=True)
+        return
 
-        card = inv[unique_id]
-        card_owner_id = card.get("owner_id")
+    card = inv[unique_id]
+    card_owner_id = card.get("owner_id")
 
-        if card_owner_id and card_owner_id != str(interaction.user.id) and not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message(
-                embed=create_error_embed("❌ Přístup odepřen", "Tato karta ti nepatří."), ephemeral=True
+    if card_owner_id and card_owner_id != str(interaction.user.id) and not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(
+            embed=create_error_embed("❌ Přístup odepřen", "Tato karta ti nepatří."), ephemeral=True
+        )
+        return
+
+    selected_frame = frame or card.get("frame")
+    await interaction.response.defer()
+
+    try:
+        loop = asyncio.get_running_loop()
+        
+        # Vyrenderuj kartu s detaily (nový formát)
+        showcase = await loop.run_in_executor(
+            None,
+            partial(
+                build_showcase_image,
+                card,
+                unique_id,
+                owner_name=None,  # Nezobrazuj jméno vlastníka
+                frame_id=selected_frame,
+            ),
+        )
+        
+        if showcase is None:
+            await interaction.followup.send(
+                f"❌ Obrázek karty s ID `{unique_id}` nebyl nalezen.",
+                ephemeral=True
             )
             return
 
-        selected_frame = frame or card.get("frame")
-        await interaction.response.defer()
-
-        try:
-            image_path = get_card_image_path(card.get("image"))
-            if not image_path:
-                await interaction.followup.send("Obrázek karty nebyl nalezen.", ephemeral=True)
-                return
-
-            loop = asyncio.get_running_loop()
-            image_bytes = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
-            file = discord.File(image_bytes, filename="card.png")
-
-            rarity = card.get("rarity", "uncommon")
-            rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
-            collection = card.get("collection")
-            coll_data = COLLECTIONS.get(collection, {}) if collection else {}
-            qual = card.get("quality", "normal")
-            qual_data = QUALITIES.get(qual, QUALITIES["normal"])
-
-            try:
-                date_text = datetime.fromisoformat(card.get("created_at", "")).strftime("%d. %m. %Y")
-            except Exception:
-                date_text = "—"
-
-            embed = discord.Embed(
-                title=f"{rarity_data['emoji']}  {card.get('name', '?')}",
-                description=f"*{card.get('description', '')}*",
-                color=rarity_data["color"],
-            )
-            if collection and coll_data:
-                embed.add_field(name="📚 Kolekce", value=f"{coll_data.get('emoji', '')} {collection.capitalize()}", inline=True)
-            embed.add_field(name="✨ Rarita",     value=f"{rarity_data['emoji']} {rarity.capitalize()}",   inline=True)
-            embed.add_field(name="💎 Kvalita",    value=f"{qual_data['emoji']} {qual_data['name']}",        inline=True)
-            embed.add_field(name="🖨️ Tisk",      value=f"**#{card.get('print_number', '?')}**",            inline=True)
-            embed.add_field(name="👤 Vlastník",   value=f"<@{card_owner_id}>" if card_owner_id else "—",    inline=True)
-            embed.add_field(name="🖼️ Rámeček",   value=selected_frame or "Žádný",                         inline=True)
-            embed.add_field(name="📅 Vytisknuto", value=date_text,                                          inline=True)
-            embed.add_field(name="🆔 Unikátní ID", value=f"`{unique_id}`",                                  inline=False)
-
-            footer = "⚜️ Aurionis"
-            if coll_data.get("description"):
-                footer += f"  •  {coll_data['description']}"
-            embed.set_footer(text=footer)
-            embed.set_image(url="attachment://card.png")
-
-            await interaction.followup.send(embed=embed, file=file)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Chyba při zobrazení karty: {e}", ephemeral=True)
-
+        # Pošli renderovanou kartu jako obrázek
+        await interaction.followup.send(
+            content=f"🎴 **{card.get('name')}**",
+            file=discord.File(showcase, filename="card.png"),
+        )
+        
+    except Exception as e:
+        await interaction.followup.send(f"❌ Chyba při zobrazení karty: {e}", ephemeral=True)
+        
     @cards_group.command(name="upgrade", description="Nasadit rámeček na kartu")
     @app_commands.describe(unique_id="ID karty", frame="ID rámečku z tvého inventáře")
     async def upgrade_frame(self, interaction: discord.Interaction, unique_id: str, frame: str):
