@@ -1,10 +1,12 @@
 """Dynamický render sběratelských karet přímo přes čistý artwork."""
 
 import io
+import os
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
 from src.logic.profile_render import _font, _save, _truncate, _wrap
+from src.utils.paths import FRAMES_DIR
 
 W, H = 1024, 1536
 PAD = 62
@@ -43,7 +45,35 @@ def _chip(draw, x, y, text, color):
     return width
 
 
-def render_card_showcase(image, name, description, accent, chips, rows, unique_id, footer=None):
+def _apply_frame(canvas, frame_id):
+    """Přiloží rámeček PNG přes kartu — alpha compositing."""
+    if not frame_id:
+        return canvas
+    
+    frame_path = os.path.join(FRAMES_DIR, f"{frame_id}.png")
+    
+    # Zkus bez přípony
+    if not os.path.exists(frame_path):
+        frame_path = os.path.join(FRAMES_DIR, frame_id)
+    
+    if not os.path.exists(frame_path):
+        return canvas
+    
+    try:
+        frame = Image.open(frame_path).convert("RGBA")
+        
+        # Zmenši/zvětši frame aby odpovídal kartě (1024×1536)
+        if frame.size != (W, H):
+            frame = ImageOps.fit(frame, (W, H), method=Image.Resampling.LANCZOS)
+        
+        # Overlay frame na vrch karty
+        canvas = Image.alpha_composite(canvas, frame)
+        return canvas
+    except Exception:
+        return canvas
+
+
+def render_card_showcase(image, name, description, accent, chips, rows, unique_id, footer=None, frame_id=None):
     """Vykreslí kompletní vertikální kartu s textem přes artwork."""
     art = _open_image(image)
     if art is None:
@@ -125,4 +155,8 @@ def render_card_showcase(image, name, description, accent, chips, rows, unique_i
         )
 
     draw.rounded_rectangle((18, 18, W - 18, H - 18), radius=28, outline=accent + (255,), width=8)
+    
+    # Aplikuj rámeček — MUSÍ být na konci, aby byl na vrchu všeho
+    canvas = _apply_frame(canvas, frame_id)
+    
     return _save(canvas)
