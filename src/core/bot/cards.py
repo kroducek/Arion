@@ -67,8 +67,8 @@ COLLECTIONS = {
     "worthy":   {"color": 0x99AAB5, "emoji": "⚔️",  "description": "Hrdinové Aurionisu"},
     "queen":    {"color": 0xFF69B4, "emoji": "👑",  "description": "Královna a její dvůr"},
     "chosen":   {"color": 0xE74C3C, "emoji": "🔥",  "description": "Vyvolení — ti, jenž nesou osud"},
-}
     "jesters":  {"color": 0x9B59B6, "emoji": "🃏",  "description": "Šašci — ti, co nosí pravdu ve lži"},
+}
 SEED_CARDS = [
     {"id": 1, "name": "Alice Aurelion", "description": "Mystická postava z Aurionisu s aurou tajemství.",    "image": "unworthy_alice_aurelion.png", "collection": "unworthy"},
     {"id": 2, "name": "Enel",           "description": "Kdo ví co za tajemství v sobě skrývá.",              "image": "unworthy_enel.png",           "collection": "unworthy"},
