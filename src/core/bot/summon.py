@@ -152,8 +152,8 @@ class Summon(commands.Cog):
             )
         embed.set_footer(text="⚜️ Aurionis")
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # Řádky 145-170 — ZMĚNÍ SE NA:
+        
+# Řádky 156-216 — SMAŽ VŠECHNO A NAHRAĎ TÍMTO:
 
 @summon_group.command(name="give", description="[ADMIN] Přidat bedny více hráčům najednou")
 @app_commands.checks.has_permissions(administrator=True)
@@ -214,8 +214,7 @@ async def give_crate(
         color=CRATES[crate]["color"],
     )
     await interaction.response.send_message(embed=embed)
-        app_commands.Choice(name="Základní bedna", value="basic"),
-    ])
+    
     async def give_crate(
         self,
         interaction: discord.Interaction,
@@ -236,7 +235,6 @@ async def give_crate(
             f"{CRATES[crate]['emoji']} {user.mention} dostal **{count}× {CRATES[crate]['name']}** "
             f"(celkem: **{total}**)."
         )
-
     @summon_group.command(name="open", description="Otevřít bednu a summonovat kartu")
     @app_commands.describe(crate="Typ bedny (výchozí: základní)")
     @app_commands.choices(crate=[
