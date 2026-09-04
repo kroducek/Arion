@@ -8,9 +8,11 @@ from datetime import datetime, timedelta
 from discord.ext import commands
 from discord import app_commands
 import asyncio
+from functools import partial
 
 from src.utils.paths import CARDS_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES, FRAMES_INVENTORY, data as _data
 from src.utils.card_image import apply_frame_to_card
+from src.utils.card_render import render_card_showcase 
 from src.utils.json_utils import load_json, save_json
 from src.utils.embeds import create_error_embed
 from src.logic.profile import load_data as profile_load, save_data as profile_save
@@ -18,7 +20,7 @@ from src.logic.inventory import _load_profiles as inv_load, _save_profiles as in
 from src.logic.economy import _load_economy as load_economy, _save_economy as save_economy, add_balance
 
 CARDS_WORK = _data("cards_work.json")
-
+CARDS_REBORN_STATE = _data("cards_reborn_state")
 # ---------------------------------------------------------------------------
 # Konstanty
 # ---------------------------------------------------------------------------
@@ -86,17 +88,40 @@ SEED_CARDS = [
 # Pomocné funkce
 # ---------------------------------------------------------------------------
 
+
 def ensure_cards_data():
-    """Při startu doplní chybějící seed karty (upsert podle ID)."""
+    """Provede verzované Cards Reborn migrace a udržuje seed katalog aktuální."""
+    state = load_json(CARDS_REBORN_STATE, default={})
+    version = state.get("version", 0)
+ 
+    if version < 1:
+        save_json(CARDS_DATA, SEED_CARDS)
+        save_json(CARDS_INVENTORY, {})
+ 
+        profiles = profile_load()
+        changed = False
+        for profile in profiles.values():
+            if profile.get("active_card_id") is not None:
+                profile["active_card_id"] = None
+                changed = True
+        if changed:
+            profile_save(profiles)
+ 
+        version = 1
+        save_json(CARDS_REBORN_STATE, {"version": version})
+ 
+    if version < 2:
+        save_json(CARDS_WORK, {})
+        version = 2
+        save_json(CARDS_REBORN_STATE, {"version": version})
+ 
     cards = load_json(CARDS_DATA, default=[])
-    existing_ids = {c.get("id") for c in cards}
-    added = False
-    for seed in SEED_CARDS:
-        if seed["id"] not in existing_ids:
-            cards.append(seed)
-            added = True
-    if added:
-        save_json(CARDS_DATA, cards)
+    seeds_by_id = {seed["id"]: seed for seed in SEED_CARDS}
+    custom_cards = [card for card in cards if card.get("id") not in seeds_by_id]
+    updated_cards = SEED_CARDS + custom_cards
+    if updated_cards != cards:
+        save_json(CARDS_DATA, updated_cards)
+
 
 
 def ensure_frames_data():
@@ -113,13 +138,11 @@ def ensure_frames_data():
             }
         ])
 
-
 def generate_unique_id() -> str:
     """Generuje náhodné unikátní ID (8 znaků)."""
     chars = string.ascii_lowercase + string.digits
     return ''.join(random.choices(chars, k=8))
-
-
+ 
 def get_card_by_id(card_id: int):
     """Vrátí šablonu karty podle ID, nebo None."""
     for card in load_json(CARDS_DATA, default=[]):
@@ -134,8 +157,8 @@ def get_card_image_path(image_filename: str):
         return None
     path = os.path.join(CARDS_DIR, image_filename)
     return path if os.path.exists(path) else None
-
-
+ 
+ 
 def get_frame_by_id(frame_id: str):
     """Vrátí data rámečku podle ID, nebo None."""
     for frame in load_json(CARDS_FRAMES, default=[]):
@@ -143,6 +166,113 @@ def get_frame_by_id(frame_id: str):
             return frame
     return None
 
+def _rgb(color: int) -> tuple:
+    """Rozloží celočíselnou barvu embedu na (r, g, b)."""
+    return ((color >> 16) & 255, (color >> 8) & 255, color & 255)
+ 
+def build_showcase_image(card: dict, unique_id: str, owner_name: str = None,
+                         frame_id: str = None, tickets: str = None, image=None):
+    """
+    Vyrenderuje kartu jako jeden obrázek (art + kompaktní detaily).
+    Vrátí BytesIO s PNG, nebo None pokud art karty chybí.
+    """
+    art = image if image is not None else get_card_image_path(card.get("image"))
+    if art is None:
+        return None
+ 
+    rarity = card.get("rarity", "uncommon")
+    rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
+    quality = card.get("quality", "normal")
+    quality_data = QUALITIES.get(quality, QUALITIES["normal"])
+    collection = card.get("collection")
+    coll_data = COLLECTIONS.get(collection, {}) if collection else {}
+ 
+    try:
+        date_text = datetime.fromisoformat(card.get("created_at", "")).strftime("%d. %m. %Y")
+    except Exception:
+        date_text = "—"
+ 
+    rows = [("Tisk", f"#{card.get('print_number', '?')}")]
+    if collection:
+        rows.append(("Kolekce", collection.capitalize()))
+    if owner_name:
+        rows.append(("Vlastník", owner_name))
+    if tickets:
+        rows.append(("Lístky štěstí", tickets))
+    rows.append(("Rámeček", frame_id or "Žádný"))
+    rows.append(("Vytisknuto", date_text))
+ 
+    footer = coll_data.get("description") or "Aurionis"
+ 
+    return render_card_showcase(
+        art,
+        card.get("name", "?"),
+        card.get("description", ""),
+        _rgb(rarity_data["color"]),
+        [
+            (rarity.capitalize(), _rgb(rarity_data["color"])),
+            (quality_data["name"], _rgb(quality_data["color"])),
+        ],
+        rows,
+        unique_id,
+        footer=footer,
+    )
+ 
+def roll_rarity() -> str:
+    """Náhodná rarita podle šancí poolu."""
+    roll = random.random()
+    if roll < 0.01:   return "legendary"
+    elif roll < 0.06: return "epic"
+    elif roll < 0.16: return "rare"
+    elif roll < 0.36: return "common"
+    return "uncommon"
+ 
+def roll_quality() -> str:
+    """Náhodná kvalita podle šancí poolu."""
+    roll = random.random()
+    if roll < 0.05:   return "shiny"
+    elif roll < 0.20: return "gold"
+    elif roll < 0.70: return "normal"
+    return "damaged"
+ 
+def grant_random_card(owner_id: str):
+    """
+    Vytiskne náhodnou kartu z databáze vzorů do inventáře hráče.
+    Vrátí (unique_id, záznam v inventáři) nebo None, pokud je databáze prázdná.
+    """
+    cards_db = load_json(CARDS_DATA, default=[])
+    if not cards_db:
+        return None
+ 
+    card_template = random.choice(cards_db)
+    card_id = card_template.get("id")
+ 
+    inventory = load_json(CARDS_INVENTORY, default={})
+    unique_id = generate_unique_id()
+    while unique_id in inventory:
+        unique_id = generate_unique_id()
+ 
+    print_number = max(
+        (c.get("print_number", 0) for c in inventory.values() if c.get("card_id") == card_id),
+        default=0,
+    ) + 1
+ 
+    entry = {
+        "card_id":      card_id,
+        "name":         card_template.get("name"),
+        "description":  card_template.get("description"),
+        "image":        card_template.get("image"),
+        "collection":   card_template.get("collection"),
+        "rarity":       roll_rarity(),
+        "quality":      roll_quality(),
+        "print_number": print_number,
+        "owner_id":     owner_id,
+        "frame":        None,
+        "created_at":   datetime.now().isoformat(),
+    }
+    inventory[unique_id] = entry
+    save_json(CARDS_INVENTORY, inventory)
+    return unique_id, entry
 
 # ---------------------------------------------------------------------------
 # Cog
@@ -150,10 +280,10 @@ def get_frame_by_id(frame_id: str):
 
 class Cards(commands.Cog):
     """Sběratelský systém karet."""
-
+ 
     def __init__(self, bot):
         self.bot = bot
-
+ 
     cards_group = app_commands.Group(name="cards", description="Sběratelský systém karet")
 
     # -----------------------------------------------------------------------
