@@ -29,8 +29,7 @@ CRATES = {
         "description": "Obyčejná bedna z Aurionisu — uvnitř čeká jedna karta.",
         "gifs": [
             "crate_open.gif",
-            "crate_open_2.gif",
-            "crate_open_3.gif",
+            "crate_open2.gif",
         ],
     },
 }
