@@ -236,53 +236,75 @@ def build_showcase_image(card: dict, unique_id: str, owner_name: str = None,
         frame_id=frame_id,
     )
  
-def roll_rarity() -> str:
-    """Náhodná rarita podle šancí poolu."""
-    roll = random.random()
-    if roll < 0.01:   return "legendary"
-    elif roll < 0.06: return "epic"
-    elif roll < 0.16: return "rare"
-    elif roll < 0.36: return "common"
-    return "uncommon"
- 
-def roll_quality() -> str:
-    """Náhodná kvalita podle šancí poolu."""
-    roll = random.random()
-    if roll < 0.05:   return "shiny"
-    elif roll < 0.20: return "gold"
-    elif roll < 0.70: return "normal"
-    return "damaged"
- 
-def grant_random_card(owner_id: str):
+def roll_rarity(luck: int = 0) -> str:
+    """Náhodná rarita; více štěstí zvyšuje váhu vyšších rarit."""
+    luck = max(0, min(20, int(luck)))
+
+    # Základní váhy odpovídají původním šancím:
+    # Legendary 1 / Epic 5 / Rare 10 / Common 20 / Uncommon 64.
+    weights = {
+        "legendary": 1 * (1 + luck * 0.30),
+        "epic": 5 * (1 + luck * 0.15),
+        "rare": 10 * (1 + luck * 0.08),
+        "common": 20 * (1 + luck * 0.04),
+        "uncommon": 64,
+    }
+    return random.choices(
+        list(weights.keys()),
+        weights=list(weights.values()),
+        k=1,
+    )[0]
+
+
+def roll_quality(luck: int = 0) -> str:
+    """Náhodná kvalita; štěstí zvyšuje váhu lepších kvalit."""
+    luck = max(0, min(20, int(luck)))
+
+    # Základní váhy: Shiny 5 / Gold 15 / Normal 50 / Damaged 30.
+    weights = {
+        "shiny": 5 * (1 + luck * 0.10),
+        "gold": 15 * (1 + luck * 0.06),
+        "normal": 50 * (1 + luck * 0.015),
+        "damaged": 30,
+    }
+    return random.choices(
+        list(weights.keys()),
+        weights=list(weights.values()),
+        k=1,
+    )[0]
+
+
+def grant_random_card(owner_id: str, luck: int = 0):
     """
     Vytiskne náhodnou kartu z databáze vzorů do inventáře hráče.
+    `luck` pochází z lístků a čtyřlístků v summon animaci.
     Vrátí (unique_id, záznam v inventáři) nebo None, pokud je databáze prázdná.
     """
     cards_db = load_json(CARDS_DATA, default=[])
     if not cards_db:
         return None
- 
+
     card_template = random.choice(cards_db)
     card_id = card_template.get("id")
- 
+
     inventory = load_json(CARDS_INVENTORY, default={})
     unique_id = generate_unique_id()
     while unique_id in inventory:
         unique_id = generate_unique_id()
- 
+
     print_number = max(
         (c.get("print_number", 0) for c in inventory.values() if c.get("card_id") == card_id),
         default=0,
     ) + 1
- 
+
     entry = {
         "card_id":      card_id,
         "name":         card_template.get("name"),
         "description":  card_template.get("description"),
         "image":        card_template.get("image"),
         "collection":   card_template.get("collection"),
-        "rarity":       roll_rarity(),
-        "quality":      roll_quality(),
+        "rarity":       roll_rarity(luck),
+        "quality":      roll_quality(luck),
         "print_number": print_number,
         "owner_id":     owner_id,
         "frame":        None,
