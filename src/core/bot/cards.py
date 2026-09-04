@@ -2,6 +2,7 @@
 
 import discord
 import os
+import uuid
 import random
 import string
 from datetime import datetime, timedelta
@@ -316,45 +317,137 @@ def roll_quality(tickets: int = 0, clovers: int = 0) -> str:
     )[0]
 
 
-def grant_random_card(owner_id: str, tickets: int = 0, clovers: int = 0, guaranteed_jackpot: bool = False):
+def grant_random_card(
+    uid: str,
+    *,
+    tickets: int,
+    clovers: int,
+    guaranteed_jackpot: bool = False,
+) -> Optional[Tuple[str, Dict[str, Any]]]:
     """
-    Vytiskne náhodnou kartu z databáze vzorů do inventáře hráče.
-    `luck` pochází z lístků a čtyřlístků v summon animaci.
-    Vrátí (unique_id, záznam v inventáři) nebo None, pokud je databáze prázdná.
+    Přidělí hráči náhodnou kartu a uloží ji do databáze.
+
+    Parametry
+    ----------
+    uid: ``str``
+        Discord ID hráče.
+    tickets: ``int``
+        Počet „lístků štěstí“ získaných při otevření bedny (1‑10).
+    clovers: ``int``
+        Počet nasbíraných čtyřlístků – používáme ho jako **luck**.
+    guaranteed_jackpot: ``bool``, optional
+        Pokud je ``True`` (při 5/5 čtyřlístcích), karta je vždy
+        Legendary + Shiny a po přidělení se meter resetuje.
+
+    Návratová hodnota
+    -----------------
+    ``Tuple[unique_id, card_data]`` nebo ``None`` pokud neexistují žádné karty.
     """
-    cards_db = load_json(CARDS_DATA, default=[])
-    if not cards_db:
+
+    # -----------------------------------------------------------------
+    # 1. Načteme databázi karet
+    # -----------------------------------------------------------------
+    cards_path = os.path.join(os.path.dirname(__file__), "..", "data", "cards.json")
+    try:
+        with open(cards_path, "r", encoding="utf-8") as f:
+            all_cards: list[dict] = json.load(f)
+    except FileNotFoundError:
         return None
 
-    card_template = random.choice(cards_db)
-    card_id = card_template.get("id")
+    if not all_cards:
+        return None
 
-    inventory = load_json(CARDS_INVENTORY, default={})
-    unique_id = generate_unique_id()
-    while unique_id in inventory:
-        unique_id = generate_unique_id()
+    # -----------------------------------------------------------------
+    # 2. Určíme „luck“ – v našem systému je to počet čtyřlístků
+    # -----------------------------------------------------------------
+    luck = clovers
 
-    print_number = max(
-        (c.get("print_number", 0) for c in inventory.values() if c.get("card_id") == card_id),
-        default=0,
-    ) + 1
+    # -----------------------------------------------------------------
+    # 3. Rozhodneme o raritě a shiny‑stavu
+    # -----------------------------------------------------------------
+    if guaranteed_jackpot:
+        rarity = LEGENDARY_RARITY
+        shiny = True
+    else:
+        rarity = roll_rarity(luck)
+        shiny = is_shiny()
 
-    entry = {
-        "card_id":      card_id,
-        "name":         card_template.get("name"),
-        "description":  card_template.get("description"),
-        "image":        card_template.get("image"),
-        "collection":   card_template.get("collection"),
-        "rarity":       roll_rarity(luck),
-        "quality":      roll_quality(luck),
-        "print_number": print_number,
-        "owner_id":     owner_id,
-        "frame":        None,
-        "created_at":   datetime.now().isoformat(),
+    # -----------------------------------------------------------------
+    # 4. Filtrujeme karty podle požadované rarity a shiny‑stavu
+    # -----------------------------------------------------------------
+    eligible = [
+        card for card in all_cards
+        if card.get("rarity", 1) == rarity and (shiny == card.get("shiny", False) or not shiny)
+    ]
+
+    # Pokud žádná karta nevyhovuje, spadneme zpět na nejbližší nižší raritu
+    while not eligible and rarity > 1:
+        rarity -= 1
+        eligible = [
+            card for card in all_cards
+            if card.get("rarity", 1) == rarity and (shiny == card.get("shiny", False) or not shiny)
+        ]
+
+    if not eligible:
+        # Když i po snížení rarity nic nenajdeme – vezmeme náhodnou kartu
+        eligible = all_cards
+
+    # -----------------------------------------------------------------
+    # 5. Výběr karty, generování unikátního ID a úprava metadat
+    # -----------------------------------------------------------------
+    chosen_card = random.choice(eligible).copy()
+    unique_id = str(uuid.uuid4())
+    
+    # Zajistíme, že se do výsledku promítne, zda je karta shiny
+    chosen_card["shiny"] = shiny
+    
+    # -----------------------------------------------------------------
+    # 6. Uložení karty do inventáře hráče
+    # -----------------------------------------------------------------
+    inventory_path = os.path.join(os.path.dirname(__file__), "..", "data", "inventories.json")
+    
+    try:
+        with open(inventory_path, "r", encoding="utf-8") as f:
+            inventories = json.load(f)
+    except FileNotFoundError:
+        inventories = {}
+
+    # Pokud hráč ještě nemá inventář, založíme mu prázdný seznam
+    if uid not in inventories:
+        inventories[uid] = []
+
+    # Ukládáme instanci karty (odkaz na base ID + specifické vlastnosti)
+    card_instance = {
+        "unique_id": unique_id,
+        "base_id": chosen_card.get("id", "unknown"),
+        "shiny": shiny,
+        "obtained_via_jackpot": guaranteed_jackpot
     }
-    inventory[unique_id] = entry
-    save_json(CARDS_INVENTORY, inventory)
-    return unique_id, entry
+    inventories[uid].append(card_instance)
+
+    with open(inventory_path, "w", encoding="utf-8") as f:
+        json.dump(inventories, f, indent=4, ensure_ascii=False)
+
+    # -----------------------------------------------------------------
+    # 7. Resetování čtyřlístků, pokud byl využit jackpot
+    # -----------------------------------------------------------------
+    if guaranteed_jackpot:
+        users_path = os.path.join(os.path.dirname(__file__), "..", "data", "users.json")
+        try:
+            with open(users_path, "r", encoding="utf-8") as f:
+                users = json.load(f)
+            
+            if uid in users:
+                users[uid]["clovers"] = 0  # Reset metru čtyřlístků
+                with open(users_path, "w", encoding="utf-8") as f:
+                    json.dump(users, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            print(f"Chyba při resetování čtyřlístků pro hráče {uid}: {e}")
+
+    # -----------------------------------------------------------------
+    # 8. Návrat výsledku
+    # -----------------------------------------------------------------
+    return unique_id, chosen_card
 
 # ---------------------------------------------------------------------------
 # Cog
