@@ -316,7 +316,6 @@ def roll_quality(tickets: int = 0, clovers: int = 0) -> str:
         k=1,
     )[0]
 
-
 def grant_random_card(
     uid: str,
     *,
@@ -326,34 +325,10 @@ def grant_random_card(
 ) -> Optional[Tuple[str, Dict[str, Any]]]:
     """
     Přidělí hráči náhodnou kartu a uloží ji do databáze.
-
-    Parametry
-    ----------
-    uid: ``str``
-        Discord ID hráče.
-    tickets: ``int``
-        Počet „lístků štěstí“ získaných při otevření bedny (1‑10).
-    clovers: ``int``
-        Počet nasbíraných čtyřlístků – používáme ho jako **luck**.
-    guaranteed_jackpot: ``bool``, optional
-        Pokud je ``True`` (při 5/5 čtyřlístcích), karta je vždy
-        Legendary + Shiny a po přidělení se meter resetuje.
-
-    Návratová hodnota
-    -----------------
-    ``Tuple[unique_id, card_data]`` nebo ``None`` pokud neexistují žádné karty.
     """
 
-    # -----------------------------------------------------------------
-    # 1. Načteme databázi karet
-    # -----------------------------------------------------------------
-    cards_path = os.path.join(os.path.dirname(__file__), "..", "data", "cards.json")
-    try:
-        with open(cards_path, "r", encoding="utf-8") as f:
-            all_cards: list[dict] = json.load(f)
-    except FileNotFoundError:
-        return None
-
+    # 1. Načtení databáze karet přes centrální cestu a helper z utils
+    all_cards = load_json(CARDS_DATA, default=[])
     if not all_cards:
         return None
 
