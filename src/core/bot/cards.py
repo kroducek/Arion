@@ -8,11 +8,9 @@ from datetime import datetime, timedelta
 from discord.ext import commands
 from discord import app_commands
 import asyncio
-from functools import partial
 
 from src.utils.paths import CARDS_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES, FRAMES_INVENTORY, data as _data
 from src.utils.card_image import apply_frame_to_card
-from src.utils.card_render import render_card_showcase
 from src.utils.json_utils import load_json, save_json
 from src.utils.embeds import create_error_embed
 from src.logic.profile import load_data as profile_load, save_data as profile_save
@@ -20,7 +18,6 @@ from src.logic.inventory import _load_profiles as inv_load, _save_profiles as in
 from src.logic.economy import _load_economy as load_economy, _save_economy as save_economy, add_balance
 
 CARDS_WORK = _data("cards_work.json")
-CARDS_REBORN_STATE = _data("cards_reborn_state.json")
 
 # ---------------------------------------------------------------------------
 # Konstanty
@@ -70,55 +67,35 @@ COLLECTIONS = {
     "worthy":   {"color": 0x99AAB5, "emoji": "⚔️",  "description": "Hrdinové Aurionisu"},
     "queen":    {"color": 0xFF69B4, "emoji": "👑",  "description": "Královna a její dvůr"},
     "chosen":   {"color": 0xE74C3C, "emoji": "🔥",  "description": "Vyvolení — ti, jenž nesou osud"},
+    "jesters":  {"color": 0x9B59B6, "emoji": "🃏",  "description": "Šašci — ti, co nosí pravdu ve lži"},
 }
 
 SEED_CARDS = [
-    {"id": 1, "name": "Alice Aurelion", "description": "Mystická postava z Aurionisu s aurou tajemství.", "image": "unworthy_alice_aurelion.png", "collection": "unworthy"},
-    {"id": 2, "name": "Enel", "description": "Kdo ví, co za tajemství v sobě skrývá.", "image": "unworthy_enel.png", "collection": "unworthy"},
-    {"id": 3, "name": "Kaiser Vexx", "description": "Kdo ví, co za tajemství v sobě skrývá.", "image": "unworthy_kaiser_vexx.png", "collection": "unworthy"},
-    {"id": 4, "name": "Nyx", "description": "Vyvolená postava, která promlouvá skrze stíny.", "image": "chosen_one_nyx.png", "collection": "chosen"},
-    {"id": 5, "name": "Darrin", "description": "Hrdina nesoucí břímě vyvoleného.", "image": "chosen_one_darrin.png", "collection": "chosen"},
-    {"id": 6, "name": "Karl von Ulrich", "description": "Poutník, jehož minulost odvál severní vítr.", "image": "unworthy_karl_von_ulrich.png", "collection": "unworthy"},
-    {"id": 7, "name": "Arion", "description": "Malý čaroděj s osudem větším než celý Aurionis.", "image": "unworthy_arion.png", "collection": "unworthy"},
+    {"id": 1, "name": "Alice Aurelion", "description": "Mystická postava z Aurionisu s aurou tajemství.",    "image": "unworthy_alice_aurelion.png", "collection": "unworthy"},
+    {"id": 2, "name": "Enel",           "description": "Kdo ví co za tajemství v sobě skrývá.",              "image": "unworthy_enel.png",           "collection": "unworthy"},
+    {"id": 3, "name": "Kaiser Vexx",    "description": "Kdo ví co za tajemství v sobě skrývá.",              "image": "unworthy_kaiser_vexx.png",    "collection": "unworthy"},
+    {"id": 4, "name": "Nyx",            "description": "Vyvolená postava, která promlouvá skrze stíny.",     "image": "chosen_one_nyx.png",          "collection": "chosen"},
+    {"id": 5, "name": "Darrin",         "description": "Hrdina nesoucí břímě vyvoleného.",                   "image": "chosen_one_darrin.png",       "collection": "chosen"},
+    {"id": 6, "name": "Hádankář",       "description": "Jeho síla je nezměrná, možná největší na tomto světě…", "image": "hadankar.png",           "collection": "jesters"},
+    {"id": 7, "name": "Hádankář",       "description": "Jeho síla je nezměrná, možná největší na tomto světě…", "image": "snajpy_hadankar.png",    "collection": "jesters"},
+    {"id": 8, "name": "Reinhard",       "description": "Nejvyšší paladin, který nikdy neprohrál v souboji.", "image": "reinhard.png",               "collection": "chosen"},
 ]
 
 # ---------------------------------------------------------------------------
 # Pomocné funkce
 # ---------------------------------------------------------------------------
 
-
 def ensure_cards_data():
-    """Provede verzované Cards Reborn migrace a udržuje seed katalog aktuální."""
-    state = load_json(CARDS_REBORN_STATE, default={})
-    version = state.get("version", 0)
-
-    if version < 1:
-        save_json(CARDS_DATA, SEED_CARDS)
-        save_json(CARDS_INVENTORY, {})
-
-        profiles = profile_load()
-        changed = False
-        for profile in profiles.values():
-            if profile.get("active_card_id") is not None:
-                profile["active_card_id"] = None
-                changed = True
-        if changed:
-            profile_save(profiles)
-
-        version = 1
-        save_json(CARDS_REBORN_STATE, {"version": version})
-
-    if version < 2:
-        save_json(CARDS_WORK, {})
-        version = 2
-        save_json(CARDS_REBORN_STATE, {"version": version})
-
+    """Při startu doplní chybějící seed karty (upsert podle ID)."""
     cards = load_json(CARDS_DATA, default=[])
-    seeds_by_id = {seed["id"]: seed for seed in SEED_CARDS}
-    custom_cards = [card for card in cards if card.get("id") not in seeds_by_id]
-    updated_cards = SEED_CARDS + custom_cards
-    if updated_cards != cards:
-        save_json(CARDS_DATA, updated_cards)
+    existing_ids = {c.get("id") for c in cards}
+    added = False
+    for seed in SEED_CARDS:
+        if seed["id"] not in existing_ids:
+            cards.append(seed)
+            added = True
+    if added:
+        save_json(CARDS_DATA, cards)
 
 
 def ensure_frames_data():
@@ -164,119 +141,6 @@ def get_frame_by_id(frame_id: str):
         if frame.get("id") == frame_id:
             return frame
     return None
-
-
-def _rgb(color: int) -> tuple:
-    """Rozloží celočíselnou barvu embedu na (r, g, b)."""
-    return ((color >> 16) & 255, (color >> 8) & 255, color & 255)
-
-
-def build_showcase_image(card: dict, unique_id: str, owner_name: str = None,
-                         frame_id: str = None, tickets: str = None, image=None):
-    """
-    Vyrenderuje kartu jako jeden obrázek (art + kompaktní detaily).
-    Vrátí BytesIO s PNG, nebo None pokud art karty chybí.
-    """
-    art = image if image is not None else get_card_image_path(card.get("image"))
-    if art is None:
-        return None
-
-    rarity = card.get("rarity", "uncommon")
-    rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
-    quality = card.get("quality", "normal")
-    quality_data = QUALITIES.get(quality, QUALITIES["normal"])
-    collection = card.get("collection")
-    coll_data = COLLECTIONS.get(collection, {}) if collection else {}
-
-    try:
-        date_text = datetime.fromisoformat(card.get("created_at", "")).strftime("%d. %m. %Y")
-    except Exception:
-        date_text = "—"
-
-    rows = [("Tisk", f"#{card.get('print_number', '?')}")]
-    if collection:
-        rows.append(("Kolekce", collection.capitalize()))
-    if owner_name:
-        rows.append(("Vlastník", owner_name))
-    if tickets:
-        rows.append(("Lístky štěstí", tickets))
-    rows.append(("Rámeček", frame_id or "Žádný"))
-    rows.append(("Vytisknuto", date_text))
-
-    footer = coll_data.get("description") or "Aurionis"
-
-    return render_card_showcase(
-        art,
-        card.get("name", "?"),
-        card.get("description", ""),
-        _rgb(rarity_data["color"]),
-        [
-            (rarity.capitalize(), _rgb(rarity_data["color"])),
-            (quality_data["name"], _rgb(quality_data["color"])),
-        ],
-        rows,
-        unique_id,
-        footer=footer,
-    )
-
-
-def roll_rarity() -> str:
-    """Náhodná rarita podle šancí poolu."""
-    roll = random.random()
-    if roll < 0.01:   return "legendary"
-    elif roll < 0.06: return "epic"
-    elif roll < 0.16: return "rare"
-    elif roll < 0.36: return "common"
-    return "uncommon"
-
-
-def roll_quality() -> str:
-    """Náhodná kvalita podle šancí poolu."""
-    roll = random.random()
-    if roll < 0.05:   return "shiny"
-    elif roll < 0.20: return "gold"
-    elif roll < 0.70: return "normal"
-    return "damaged"
-
-
-def grant_random_card(owner_id: str):
-    """
-    Vytiskne náhodnou kartu z databáze vzorů do inventáře hráče.
-    Vrátí (unique_id, záznam v inventáři) nebo None, pokud je databáze prázdná.
-    """
-    cards_db = load_json(CARDS_DATA, default=[])
-    if not cards_db:
-        return None
-
-    card_template = random.choice(cards_db)
-    card_id = card_template.get("id")
-
-    inventory = load_json(CARDS_INVENTORY, default={})
-    unique_id = generate_unique_id()
-    while unique_id in inventory:
-        unique_id = generate_unique_id()
-
-    print_number = max(
-        (c.get("print_number", 0) for c in inventory.values() if c.get("card_id") == card_id),
-        default=0,
-    ) + 1
-
-    entry = {
-        "card_id":      card_id,
-        "name":         card_template.get("name"),
-        "description":  card_template.get("description"),
-        "image":        card_template.get("image"),
-        "collection":   card_template.get("collection"),
-        "rarity":       roll_rarity(),
-        "quality":      roll_quality(),
-        "print_number": print_number,
-        "owner_id":     owner_id,
-        "frame":        None,
-        "created_at":   datetime.now().isoformat(),
-    }
-    inventory[unique_id] = entry
-    save_json(CARDS_INVENTORY, inventory)
-    return unique_id, entry
 
 
 # ---------------------------------------------------------------------------
@@ -619,25 +483,43 @@ class Cards(commands.Cog):
                 return
 
             loop = asyncio.get_running_loop()
-            art = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
+            image_bytes = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
+            file = discord.File(image_bytes, filename="card.png")
 
-            owner = interaction.guild.get_member(int(card_owner_id)) if card_owner_id and interaction.guild else None
-            showcase = await loop.run_in_executor(
-                None,
-                partial(
-                    build_showcase_image,
-                    card,
-                    unique_id,
-                    owner_name=owner.display_name if owner else None,
-                    frame_id=selected_frame,
-                    image=art,
-                ),
+            rarity = card.get("rarity", "uncommon")
+            rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
+            collection = card.get("collection")
+            coll_data = COLLECTIONS.get(collection, {}) if collection else {}
+            qual = card.get("quality", "normal")
+            qual_data = QUALITIES.get(qual, QUALITIES["normal"])
+
+            try:
+                date_text = datetime.fromisoformat(card.get("created_at", "")).strftime("%d. %m. %Y")
+            except Exception:
+                date_text = "—"
+
+            embed = discord.Embed(
+                title=f"{rarity_data['emoji']}  {card.get('name', '?')}",
+                description=f"*{card.get('description', '')}*",
+                color=rarity_data["color"],
             )
-            if showcase is None:
-                await interaction.followup.send("Obrázek karty nebyl nalezen.", ephemeral=True)
-                return
+            if collection and coll_data:
+                embed.add_field(name="📚 Kolekce", value=f"{coll_data.get('emoji', '')} {collection.capitalize()}", inline=True)
+            embed.add_field(name="✨ Rarita",     value=f"{rarity_data['emoji']} {rarity.capitalize()}",   inline=True)
+            embed.add_field(name="💎 Kvalita",    value=f"{qual_data['emoji']} {qual_data['name']}",        inline=True)
+            embed.add_field(name="🖨️ Tisk",      value=f"**#{card.get('print_number', '?')}**",            inline=True)
+            embed.add_field(name="👤 Vlastník",   value=f"<@{card_owner_id}>" if card_owner_id else "—",    inline=True)
+            embed.add_field(name="🖼️ Rámeček",   value=selected_frame or "Žádný",                         inline=True)
+            embed.add_field(name="📅 Vytisknuto", value=date_text,                                          inline=True)
+            embed.add_field(name="🆔 Unikátní ID", value=f"`{unique_id}`",                                  inline=False)
 
-            await interaction.followup.send(file=discord.File(showcase, filename="card.png"))
+            footer = "⚜️ Aurionis"
+            if coll_data.get("description"):
+                footer += f"  •  {coll_data['description']}"
+            embed.set_footer(text=footer)
+            embed.set_image(url="attachment://card.png")
+
+            await interaction.followup.send(embed=embed, file=file)
         except Exception as e:
             await interaction.followup.send(f"❌ Chyba při zobrazení karty: {e}", ephemeral=True)
 
@@ -977,21 +859,7 @@ class Cards(commands.Cog):
 
             loop = asyncio.get_running_loop()
             selected_frame = card.get("frame")
-            art = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
-            image_bytes = await loop.run_in_executor(
-                None,
-                partial(
-                    build_showcase_image,
-                    card,
-                    active_card_id,
-                    owner_name=target.display_name,
-                    frame_id=selected_frame,
-                    image=art,
-                ),
-            )
-            if image_bytes is None:
-                await interaction.followup.send("Obrázek karty nebyl nalezen.", ephemeral=True)
-                return
+            image_bytes = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
             file = discord.File(image_bytes, filename="card.png")
 
             rarity = card.get("rarity", "uncommon")
@@ -1100,26 +968,79 @@ class Cards(commands.Cog):
     @app_commands.describe(user="Hráč, kterému chceš kartu dát")
     async def pool_card(self, interaction: discord.Interaction, user: discord.Member):
         """[ADMIN] Dá hráči jednu náhodnou kartu z dostupného pool."""
-        granted = grant_random_card(str(user.id))
-        if not granted:
+        uid = str(user.id)
+        cards_db = load_json(CARDS_DATA, default=[])
+        
+        if not cards_db:
             await interaction.response.send_message("Databáze karet je prázdná!", ephemeral=True)
             return
 
-        unique_id, card = granted
-        await interaction.response.defer()
+        # Random rarity podle procent
+        rarity_roll = random.random()
+        if rarity_roll < 0.01:      rarity = "legendary"
+        elif rarity_roll < 0.06:    rarity = "epic"
+        elif rarity_roll < 0.16:    rarity = "rare"
+        elif rarity_roll < 0.36:    rarity = "common"
+        else:                       rarity = "uncommon"
 
-        showcase = await asyncio.get_running_loop().run_in_executor(
-            None,
-            partial(build_showcase_image, card, unique_id, owner_name=user.display_name),
-        )
-        if showcase is None:
-            await interaction.followup.send("Obrázek karty nebyl nalezen.", ephemeral=True)
-            return
+        # Random kvalita
+        quality_roll = random.random()
+        if quality_roll < 0.05:     quality = "shiny"
+        elif quality_roll < 0.20:   quality = "gold"
+        elif quality_roll < 0.70:   quality = "normal"
+        else:                       quality = "damaged"
 
-        await interaction.followup.send(
-            content=f"🎴 {user.mention} získal **{card.get('name')}**!",
-            file=discord.File(showcase, filename="card.png"),
+        # Random karta z DB
+        card_template = random.choice(cards_db)
+        card_id = card_template.get("id")
+
+        # Přidej do inventáře
+        inventory = load_json(CARDS_INVENTORY, default={})
+        unique_id = generate_unique_id()
+        while unique_id in inventory:
+            unique_id = generate_unique_id()
+
+        max_print = max(
+            (c.get("print_number", 0) for c in inventory.values() if c.get("card_id") == card_id),
+            default=0,
+        ) + 1
+
+        inventory[unique_id] = {
+            "card_id":      card_id,
+            "name":         card_template.get("name"),
+            "description":  card_template.get("description"),
+            "image":        card_template.get("image"),
+            "collection":   card_template.get("collection"),
+            "rarity":       rarity,
+            "quality":      quality,
+            "print_number": max_print,
+            "owner_id":     uid,
+            "frame":        None,
+            "created_at":   datetime.now().isoformat(),
+        }
+        save_json(CARDS_INVENTORY, inventory)
+
+        # Veřejný embed
+        rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
+        quality_data = QUALITIES.get(quality, QUALITIES["normal"])
+        coll_data = COLLECTIONS.get(card_template.get("collection"), {})
+
+        embed = discord.Embed(
+            title=f"🎴 **Získal jsi: {card_template.get('name')}!**",
+            description=f"*{card_template.get('description', '')}*",
+            color=rarity_data["color"],
         )
+        embed.add_field(name="👤 Hráč",     value=user.mention,                                       inline=True)
+        embed.add_field(name="✨ Rarita",   value=f"{rarity_data['emoji']} {rarity.capitalize()}",   inline=True)
+        embed.add_field(name="💎 Kvalita", value=f"{quality_data['emoji']} {quality_data['name']}",  inline=True)
+        if coll_data:
+            embed.add_field(name="📚 Kolekce", value=f"{coll_data.get('emoji', '')} {card_template.get('collection', 'N/A').capitalize()}", inline=True)
+        embed.add_field(name="🖨️ Tisk",    value=f"**#{max_print}**",                                inline=True)
+        embed.add_field(name="🆔 ID",      value=f"`{unique_id}`",                                  inline=True)
+        embed.set_footer(text="⚜️ Aurionis  •  Karta přidána do tvého inventáře")
+        embed.set_thumbnail(url=user.display_avatar.url)
+
+        await interaction.response.send_message(embed=embed)
 
     @cards_group.command(name="work", description="Přehled výpravy — stav nebo dostupné expedice")
     async def work_hub(self, interaction: discord.Interaction):
