@@ -171,8 +171,8 @@ def get_card_image_path(image_filename: str):
         return None
     path = os.path.join(CARDS_DIR, image_filename)
     return path if os.path.exists(path) else None
- 
- 
+  
+  
 def get_frame_by_id(frame_id: str):
     """Vrátí data rámečku podle ID, nebo None."""
     for frame in load_json(CARDS_FRAMES, default=[]):
@@ -599,59 +599,59 @@ class Cards(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
 
-@cards_group.command(name="show", description="Zobrazit konkrétní kartu")
-@app_commands.describe(unique_id="Unikátní ID karty", frame="ID rámečku (volitelné — přepíše uložený)")
-async def show_card(self, interaction: discord.Interaction, unique_id: str, frame: str = None):
-    """Zobrazí konkrétní kartu s obrázkem — nový formát jako summon."""
-    inv = load_json(CARDS_INVENTORY, default={})
+    @cards_group.command(name="show", description="Zobrazit konkrétní kartu")
+    @app_commands.describe(unique_id="Unikátní ID karty", frame="ID rámečku (volitelné — přepíše uložený)")
+    async def show_card(self, interaction: discord.Interaction, unique_id: str, frame: str = None):
+        """Zobrazí konkrétní kartu — nový formát s rendeovanou kartou."""
+        inv = load_json(CARDS_INVENTORY, default={})
 
-    if unique_id not in inv:
-        await interaction.response.send_message(f"Karta s ID `{unique_id}` neexistuje.", ephemeral=True)
-        return
+        if unique_id not in inv:
+            await interaction.response.send_message(f"Karta s ID `{unique_id}` neexistuje.", ephemeral=True)
+            return
 
-    card = inv[unique_id]
-    card_owner_id = card.get("owner_id")
+        card = inv[unique_id]
+        card_owner_id = card.get("owner_id")
 
-    if card_owner_id and card_owner_id != str(interaction.user.id) and not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message(
-            embed=create_error_embed("❌ Přístup odepřen", "Tato karta ti nepatří."), ephemeral=True
-        )
-        return
-
-    selected_frame = frame or card.get("frame")
-    await interaction.response.defer()
-
-    try:
-        loop = asyncio.get_running_loop()
-        
-        # Vyrenderuj kartu s detaily (nový formát)
-        showcase = await loop.run_in_executor(
-            None,
-            partial(
-                build_showcase_image,
-                card,
-                unique_id,
-                owner_name=None,  # Nezobrazuj jméno vlastníka
-                frame_id=selected_frame,
-            ),
-        )
-        
-        if showcase is None:
-            await interaction.followup.send(
-                f"❌ Obrázek karty s ID `{unique_id}` nebyl nalezen.",
-                ephemeral=True
+        if card_owner_id and card_owner_id != str(interaction.user.id) and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                embed=create_error_embed("❌ Přístup odepřen", "Tato karta ti nepatří."), ephemeral=True
             )
             return
 
-        # Pošli renderovanou kartu jako obrázek
-        await interaction.followup.send(
-            content=f"🎴 **{card.get('name')}**",
-            file=discord.File(showcase, filename="card.png"),
-        )
-        
-    except Exception as e:
-        await interaction.followup.send(f"❌ Chyba při zobrazení karty: {e}", ephemeral=True)
-        
+        selected_frame = frame or card.get("frame")
+        await interaction.response.defer()
+
+        try:
+            loop = asyncio.get_running_loop()
+            
+            # Vyrenderuj kartu s detaily (nový formát jako summon)
+            showcase = await loop.run_in_executor(
+                None,
+                partial(
+                    build_showcase_image,
+                    card,
+                    unique_id,
+                    owner_name=None,
+                    frame_id=selected_frame,
+                ),
+            )
+            
+            if showcase is None:
+                await interaction.followup.send(
+                    f"❌ Obrázek karty s ID `{unique_id}` nebyl nalezen.",
+                    ephemeral=True
+                )
+                return
+
+            # Pošli renderovanou kartu jako obrázek
+            await interaction.followup.send(
+                content=f"🎴 **{card.get('name')}**",
+                file=discord.File(showcase, filename="card.png"),
+            )
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ Chyba při zobrazení karty: {e}", ephemeral=True)
+
     @cards_group.command(name="upgrade", description="Nasadit rámeček na kartu")
     @app_commands.describe(unique_id="ID karty", frame="ID rámečku z tvého inventáře")
     async def upgrade_frame(self, interaction: discord.Interaction, unique_id: str, frame: str):
