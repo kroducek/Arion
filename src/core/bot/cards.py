@@ -72,6 +72,7 @@ COLLECTIONS = {
     "jesters":  {"color": 0x9B59B6, "emoji": "🃏",  "description": "Šašci — ti, co nosí pravdu ve lži"},
     "first-beings":  {"color": 0x9B59B6, "emoji": "⚜️",  "description": "Původní - ti, jenž tu jsou od počátku"},
     "shadows":  {"color": 0x9B59B6, "emoji": "👤",  "description": "Stíny - Neunikneš stínům v tvém srdci"},
+    "witches":  {"color": 0x9B59B6, "emoji": "♦️",  "description": "Hříšné čarodějky patřící pod Sedm smrtelných hříchů"},
 }
 SEED_CARDS = [
     {"id": 1, "name": "Alice Aurelion", "description": "Mystická postava z Aurionisu s aurou tajemství.",    "image": "unworthy_alice_aurelion.png", "collection": "unworthy"},
@@ -89,6 +90,9 @@ SEED_CARDS = [
     {"id": 13, "name": "Freya",       "description": "Heretická čarodějka pocházející z počátku času.", "image": "freya.png",               "collection": "first-beings"},
     {"id": 14, "name": "Marcel",       "description": "Marcel jen vůdcem většiny svobodných upírů.", "image": "marcel.png",               "collection": "first-beings"},
     {"id": 15, "name": "Vládce stínů",       "description": "Jediná cesta k rovnováze je skrze stíny", "image": "gabriel.png",               "collection": "shadows"},
+    {"id": 16, "name": "Alice Aurelion",       "description": "Poslední čistá krev z královského rodu Aurionisu", "image": "alice-queen.png",               "collection": "queen"},
+    {"id": 17, "name": "Noxarath",       "description": "Čarodějka smrti a bohyně temnoty.", "image": "noxarath.png",               "collection": "witches"},
+    {"id": 18, "name": "Embra",       "description": "Čarodějka hněvu, jenž byla zostuzena", "image": "embra.png",               "collection": "witches"},
 ]
 
 # ---------------------------------------------------------------------------
