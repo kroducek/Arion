@@ -78,7 +78,7 @@ SEED_CARDS = [
     {"id": 6, "name": "Karl von Ulrich", "description": "Poutník, jehož minulost odvál severní vítr.", "image": "unworthy_karl_von_ulrich.png", "collection": "unworthy"},
     {"id": 7, "name": "Arion", "description": "Malý čaroděj s osudem větším než celý Aurionis.", "image": "unworthy_arion.png", "collection": "unworthy"},
     {"id": 8, "name": "Hádankář",       "description": "Jeho síla je nezměrná, možná největší na tomto světě…", "image": "hadankar.png",           "collection": "jesters"},
-   {"id": 9, "name": "Hádankář",       "description": "Jeho síla je nezměrná, možná největší na tomto světě…", "image": "snajpy_hadankar.png",    "collection": "jesters"},
+    {"id": 9, "name": "Hádankář",       "description": "Jeho síla je nezměrná, možná největší na tomto světě…", "image": "snajpy_hadankar.png",    "collection": "jesters"},
     {"id": 10, "name": "Reinhard",       "description": "Nejvyšší paladin, který nikdy neprohrál v souboji.", "image": "reinhard.png",               "collection": "chosen"},
 ]
 
