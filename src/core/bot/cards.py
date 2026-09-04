@@ -230,6 +230,7 @@ def build_showcase_image(card: dict, unique_id: str, owner_name: str = None,
         rows,
         unique_id,
         footer=footer,
+        frame_id=frame_id,
     )
  
 def roll_rarity() -> str:
@@ -981,44 +982,37 @@ class Cards(commands.Cog):
         await interaction.response.defer()
 
         try:
-            image_path = get_card_image_path(card.get("image"))
-            if not image_path:
+            loop = asyncio.get_running_loop()
+            
+            # Vyrenderuj kartu s detaily (nový formát)
+            showcase = await loop.run_in_executor(
+                None,
+                partial(
+                    build_showcase_image,
+                    card,
+                    active_card_id,
+                    owner_name=None,
+                    frame_id=card.get("frame"),
+                ),
+            )
+            
+            if showcase is None:
                 await interaction.followup.send("Obrázek karty nebyl nalezen.", ephemeral=True)
                 return
 
-            loop = asyncio.get_running_loop()
-            selected_frame = card.get("frame")
-            image_bytes = await loop.run_in_executor(None, apply_frame_to_card, image_path, selected_frame)
-            file = discord.File(image_bytes, filename="card.png")
-
             rarity = card.get("rarity", "uncommon")
             rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
-            collection = card.get("collection")
-            coll_data = COLLECTIONS.get(collection, {}) if collection else {}
-            qual = card.get("quality", "normal")
-            qual_data = QUALITIES.get(qual, QUALITIES["normal"])
 
             embed = discord.Embed(
                 title=f"🃏 Profilová karta — {target.display_name}",
-                description=f"{rarity_data['emoji']} **{card.get('name', '?')}**\n*{card.get('description', '')}*",
+                description=f"{rarity_data['emoji']} **{card.get('name', '?')}**",
                 color=rarity_data["color"],
             )
-            embed.add_field(name="✨ Rarita",  value=f"{rarity_data['emoji']} {rarity.capitalize()}",         inline=True)
-            embed.add_field(name="💎 Kvalita", value=f"{qual_data['emoji']} {qual_data['name']}",              inline=True)
-            embed.add_field(name="🖨️ Tisk",   value=f"**#{card.get('print_number', '?')}**",                  inline=True)
-            if coll_data:
-                embed.add_field(name="📚 Kolekce", value=f"{coll_data.get('emoji', '')} {collection.capitalize()}", inline=True)
-            embed.add_field(name="🖼️ Rámeček", value=selected_frame or "Žádný",                               inline=True)
-            embed.add_field(name="🆔 Karta ID", value=f"`{active_card_id}`",                                   inline=True)
-
-            footer = "⚜️ Aurionis"
-            if coll_data.get("description"):
-                footer += f"  •  {coll_data['description']}"
-            embed.set_footer(text=footer)
             embed.set_thumbnail(url=target.display_avatar.url)
             embed.set_image(url="attachment://card.png")
+            embed.set_footer(text="⚜️ Aurionis")
 
-            await interaction.followup.send(embed=embed, file=file)
+            await interaction.followup.send(embed=embed, file=discord.File(showcase, filename="card.png"))
         except Exception as e:
             await interaction.followup.send(f"❌ Chyba při zobrazení karty: {e}", ephemeral=True)
 
