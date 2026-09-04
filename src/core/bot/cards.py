@@ -70,6 +70,8 @@ COLLECTIONS = {
     "queen":    {"color": 0xFF69B4, "emoji": "👑",  "description": "Královna a její dvůr"},
     "chosen":   {"color": 0xE74C3C, "emoji": "🔥",  "description": "Vyvolení — ti, jenž nesou osud"},
     "jesters":  {"color": 0x9B59B6, "emoji": "🃏",  "description": "Šašci — ti, co nosí pravdu ve lži"},
+    "first-beings":  {"color": 0x9B59B6, "emoji": "⚜️",  "description": "Původní - ti, jenž tu jsou od počátku"},
+    "shadows":  {"color": 0x9B59B6, "emoji": "👤",  "description": "Stíny - Neunikneš stínům v tvém srdci"},
 }
 SEED_CARDS = [
     {"id": 1, "name": "Alice Aurelion", "description": "Mystická postava z Aurionisu s aurou tajemství.",    "image": "unworthy_alice_aurelion.png", "collection": "unworthy"},
@@ -82,6 +84,11 @@ SEED_CARDS = [
     {"id": 8, "name": "Hádankář",       "description": "Jeho síla je nezměrná, možná největší na tomto světě…", "image": "hadankar.png",           "collection": "jesters"},
     {"id": 9, "name": "Hádankář",       "description": "Jeho síla je nezměrná, možná největší na tomto světě…", "image": "snajpy_hadankar.png",    "collection": "jesters"},
     {"id": 10, "name": "Reinhard",       "description": "Nejvyšší paladin, který nikdy neprohrál v souboji.", "image": "reinhard.png",               "collection": "chosen"},
+    {"id": 11, "name": "Klaus",       "description": "Krutý temný rytíř samozvankyně.", "image": "klaus.png",               "collection": "first-beings"},
+    {"id": 12, "name": "Vlad",       "description": "Mocný upíří lord z Valgherijské pevnosti.", "image": "vlad.png",               "collection": "first-beings"},
+    {"id": 13, "name": "Freya",       "description": "Heretická čarodějka pocházející z počátku času.", "image": "freya.png",               "collection": "first-beings"},
+    {"id": 14, "name": "Marcel",       "description": "Marcel jen vůdcem většiny svobodných upírů.", "image": "marcel.png",               "collection": "first-beings"},
+    {"id": 15, "name": "Vládce stínů",       "description": "Jediná cesta k rovnováze je skrze stíny", "image": "gabriel.png",               "collection": "shadows"},
 ]
 
 # ---------------------------------------------------------------------------
