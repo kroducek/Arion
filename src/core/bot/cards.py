@@ -67,18 +67,19 @@ COLLECTIONS = {
     "worthy":   {"color": 0x99AAB5, "emoji": "⚔️",  "description": "Hrdinové Aurionisu"},
     "queen":    {"color": 0xFF69B4, "emoji": "👑",  "description": "Královna a její dvůr"},
     "chosen":   {"color": 0xE74C3C, "emoji": "🔥",  "description": "Vyvolení — ti, jenž nesou osud"},
-    "jesters":  {"color": 0x9B59B6, "emoji": "🃏",  "description": "Šašci — ti, co nosí pravdu ve lži"},
 }
-
+    "jesters":  {"color": 0x9B59B6, "emoji": "🃏",  "description": "Šašci — ti, co nosí pravdu ve lži"},
 SEED_CARDS = [
     {"id": 1, "name": "Alice Aurelion", "description": "Mystická postava z Aurionisu s aurou tajemství.",    "image": "unworthy_alice_aurelion.png", "collection": "unworthy"},
     {"id": 2, "name": "Enel",           "description": "Kdo ví co za tajemství v sobě skrývá.",              "image": "unworthy_enel.png",           "collection": "unworthy"},
     {"id": 3, "name": "Kaiser Vexx",    "description": "Kdo ví co za tajemství v sobě skrývá.",              "image": "unworthy_kaiser_vexx.png",    "collection": "unworthy"},
     {"id": 4, "name": "Nyx",            "description": "Vyvolená postava, která promlouvá skrze stíny.",     "image": "chosen_one_nyx.png",          "collection": "chosen"},
     {"id": 5, "name": "Darrin",         "description": "Hrdina nesoucí břímě vyvoleného.",                   "image": "chosen_one_darrin.png",       "collection": "chosen"},
-    {"id": 6, "name": "Hádankář",       "description": "Jeho síla je nezměrná, možná největší na tomto světě…", "image": "hadankar.png",           "collection": "jesters"},
-    {"id": 7, "name": "Hádankář",       "description": "Jeho síla je nezměrná, možná největší na tomto světě…", "image": "snajpy_hadankar.png",    "collection": "jesters"},
-    {"id": 8, "name": "Reinhard",       "description": "Nejvyšší paladin, který nikdy neprohrál v souboji.", "image": "reinhard.png",               "collection": "chosen"},
+    {"id": 6, "name": "Karl von Ulrich", "description": "Poutník, jehož minulost odvál severní vítr.", "image": "unworthy_karl_von_ulrich.png", "collection": "unworthy"},
+    {"id": 7, "name": "Arion", "description": "Malý čaroděj s osudem větším než celý Aurionis.", "image": "unworthy_arion.png", "collection": "unworthy"},
+    {"id": 8, "name": "Hádankář",       "description": "Jeho síla je nezměrná, možná největší na tomto světě…", "image": "hadankar.png",           "collection": "jesters"},
+   {"id": 9, "name": "Hádankář",       "description": "Jeho síla je nezměrná, možná největší na tomto světě…", "image": "snajpy_hadankar.png",    "collection": "jesters"},
+    {"id": 10, "name": "Reinhard",       "description": "Nejvyšší paladin, který nikdy neprohrál v souboji.", "image": "reinhard.png",               "collection": "chosen"},
 ]
 
 # ---------------------------------------------------------------------------
