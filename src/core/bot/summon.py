@@ -27,7 +27,10 @@ CRATES = {
         "emoji": "📦",
         "color": 0xC27C0E,
         "description": "Obyčejná bedna z Aurionisu — uvnitř čeká jedna karta.",
-        "gif": "crate_open.gif",
+        "gifs": [
+            "crate_open.gif",
+            "crate_open2.gif",
+        ],
     },
 }
 
@@ -71,15 +74,23 @@ def change_crates(uid: str, crate_id: str, amount: int) -> int:
     save_json(CARDS_CRATES, crates)
     return owned[crate_id]
 
-
 def get_crate_gif_path(crate_id: str):
-    """Vrátí cestu k animaci bedny, nebo None pokud soubor chybí."""
-    gif = CRATES.get(crate_id, {}).get("gif")
-    if not gif:
+    """Vrátí cestu k náhodné animaci bedny, nebo None pokud soubor chybí."""
+    crate_data = CRATES.get(crate_id, {})
+    
+    # Zkus nejdřív "gifs" (pole)
+    gifs = crate_data.get("gifs", [])
+    if gifs:
+        selected_gif = random.choice(gifs)
+    else:
+        # Fallback na starý formát "gif" (single string)
+        selected_gif = crate_data.get("gif")
+    
+    if not selected_gif:
         return None
-    path = os.path.join(CRATES_DIR, gif)
+    
+    path = os.path.join(CRATES_DIR, selected_gif)
     return path if os.path.exists(path) else None
-
 
 def get_roll_images(count: int) -> list:
     """Vybere obrázky karet pro rolovací animaci — nikdy dva stejné za sebou."""
