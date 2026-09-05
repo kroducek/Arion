@@ -34,9 +34,6 @@ RARITIES = {
     "legendary": {"color": 0xFFD700, "emoji": "🟡"},
 }
 
-# Pořadí rarit od nejběžnější po nejvzácnější — používá se ve fallbacku
-# grant_random_card, když pro vylosovanou raritu neexistuje žádná karta.
-RARITY_ORDER = ["uncommon", "common", "rare", "epic", "legendary"]
 LEGENDARY_RARITY = "legendary"
 
 QUALITIES = {
@@ -338,76 +335,57 @@ def grant_random_card(
         return None
 
     # -----------------------------------------------------------------
-    # 2. Určíme „luck“ – v našem systému je to počet čtyřlístků
+    # 2. Rozhodneme o raritě a kvalitě vytištěné karty
     # -----------------------------------------------------------------
-    luck = clovers
-
-    # -----------------------------------------------------------------
-    # 3. Rozhodneme o raritě a shiny‑stavu
-    # -----------------------------------------------------------------
+    # Šablony v CARDS_DATA (viz /cards db_add) nenesou vlastní raritu ani
+    # kvalitu — ta se stejně jako u /cards print přiděluje až konkrétnímu
+    # vytištěnému kusu. Proto se dál nefiltrují šablony podle rarity/shiny
+    # (to nikdy nic nenajde a jen by to tiše rušilo garantovaný jackpot).
     if guaranteed_jackpot:
         rarity = LEGENDARY_RARITY
-        shiny = True
+        quality = "shiny"
     else:
         rarity = roll_rarity(tickets, clovers)
-        shiny = roll_quality(tickets, clovers) == "shiny"
+        quality = roll_quality(tickets, clovers)
 
     # -----------------------------------------------------------------
-    # 4. Filtrujeme karty podle požadované rarity a shiny‑stavu
+    # 3. Výběr šablony karty a generování unikátního ID
     # -----------------------------------------------------------------
-    eligible = [
-        card for card in all_cards
-        if card.get("rarity", "uncommon") == rarity and (shiny == card.get("shiny", False) or not shiny)
-    ]
+    card_template = random.choice(all_cards)
+    inventory = load_json(CARDS_INVENTORY, default={})
 
-    # Pokud žádná karta nevyhovuje, spadneme zpět na nejbližší nižší raritu
-    # (rarity je string jako "legendary"/"epic"/..., takže krokujeme podle
-    # RARITY_ORDER, ne odečítáním čísla).
-    rarity_index = RARITY_ORDER.index(rarity) if rarity in RARITY_ORDER else 0
-    while not eligible and rarity_index > 0:
-        rarity_index -= 1
-        rarity = RARITY_ORDER[rarity_index]
-        eligible = [
-            card for card in all_cards
-            if card.get("rarity", "uncommon") == rarity and (shiny == card.get("shiny", False) or not shiny)
-        ]
-
-    if not eligible:
-        # Když i po snížení rarity nic nenajdeme – vezmeme náhodnou kartu
-        eligible = all_cards
+    unique_id = generate_unique_id()
+    while unique_id in inventory:
+        unique_id = generate_unique_id()
 
     # -----------------------------------------------------------------
-    # 5. Výběr karty, generování unikátního ID a úprava metadat
+    # 4. Sestavení a uložení instance karty — stejný formát jako /cards print
     # -----------------------------------------------------------------
-    chosen_card = random.choice(eligible).copy()
-    unique_id = str(uuid.uuid4())
-    
-    # Zajistíme, že se do výsledku promítne, zda je karta shiny
-    chosen_card["shiny"] = shiny
-    
-    # -----------------------------------------------------------------
-    # 6. Uložení karty do inventáře hráče
-    # -----------------------------------------------------------------
-    inventories = load_json(CARDS_INVENTORY, default={})
-
-    # Pokud hráč ještě nemá inventář, založíme mu prázdný seznam
-    if uid not in inventories:
-        inventories[uid] = []
-
-    # Ukládáme instanci karty (odkaz na base ID + specifické vlastnosti)
+    max_print = max(
+        (c.get("print_number", 0) for c in inventory.values() if c.get("card_id") == card_template.get("id")),
+        default=0,
+    )
     card_instance = {
-        "unique_id": unique_id,
-        "base_id": chosen_card.get("id", "unknown"),
-        "shiny": shiny,
-        "obtained_via_jackpot": guaranteed_jackpot
+        "card_id":              card_template.get("id"),
+        "name":                 card_template.get("name"),
+        "description":          card_template.get("description"),
+        "image":                card_template.get("image"),
+        "collection":           card_template.get("collection"),
+        "rarity":               rarity,
+        "quality":              quality,
+        "print_number":         max_print + 1,
+        "owner_id":             uid,
+        "frame":                None,
+        "created_at":           datetime.now().isoformat(),
+        "obtained_via_jackpot": guaranteed_jackpot,
     }
-    inventories[uid].append(card_instance)
-    save_json(CARDS_INVENTORY, inventories)
+    inventory[unique_id] = card_instance
+    save_json(CARDS_INVENTORY, inventory)
 
     # -----------------------------------------------------------------
-    # 7. Návrat výsledku
+    # 5. Návrat výsledku
     # -----------------------------------------------------------------
-    return unique_id, chosen_card
+    return unique_id, card_instance
 
 # ---------------------------------------------------------------------------
 # Cog
