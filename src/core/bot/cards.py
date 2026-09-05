@@ -34,6 +34,11 @@ RARITIES = {
     "legendary": {"color": 0xFFD700, "emoji": "🟡"},
 }
 
+# Pořadí rarit od nejběžnější po nejvzácnější — používá se ve fallbacku
+# grant_random_card, když pro vylosovanou raritu neexistuje žádná karta.
+RARITY_ORDER = ["uncommon", "common", "rare", "epic", "legendary"]
+LEGENDARY_RARITY = "legendary"
+
 QUALITIES = {
     "shiny":   {"name": "Shiny",   "emoji": "✨", "color": 0xFFD700},
     "gold":    {"name": "Gold",    "emoji": "🥇", "color": 0xFFB142},
@@ -344,23 +349,27 @@ def grant_random_card(
         rarity = LEGENDARY_RARITY
         shiny = True
     else:
-        rarity = roll_rarity(luck)
-        shiny = is_shiny()
+        rarity = roll_rarity(tickets, clovers)
+        shiny = roll_quality(tickets, clovers) == "shiny"
 
     # -----------------------------------------------------------------
     # 4. Filtrujeme karty podle požadované rarity a shiny‑stavu
     # -----------------------------------------------------------------
     eligible = [
         card for card in all_cards
-        if card.get("rarity", 1) == rarity and (shiny == card.get("shiny", False) or not shiny)
+        if card.get("rarity", "uncommon") == rarity and (shiny == card.get("shiny", False) or not shiny)
     ]
 
     # Pokud žádná karta nevyhovuje, spadneme zpět na nejbližší nižší raritu
-    while not eligible and rarity > 1:
-        rarity -= 1
+    # (rarity je string jako "legendary"/"epic"/..., takže krokujeme podle
+    # RARITY_ORDER, ne odečítáním čísla).
+    rarity_index = RARITY_ORDER.index(rarity) if rarity in RARITY_ORDER else 0
+    while not eligible and rarity_index > 0:
+        rarity_index -= 1
+        rarity = RARITY_ORDER[rarity_index]
         eligible = [
             card for card in all_cards
-            if card.get("rarity", 1) == rarity and (shiny == card.get("shiny", False) or not shiny)
+            if card.get("rarity", "uncommon") == rarity and (shiny == card.get("shiny", False) or not shiny)
         ]
 
     if not eligible:
