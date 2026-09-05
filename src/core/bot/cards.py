@@ -171,6 +171,19 @@ def get_card_by_id(card_id: int):
     return None
 
 
+def load_inventory() -> dict:
+    """
+    Načte CARDS_INVENTORY a tiše odfiltruje jakékoliv poškozené záznamy
+    (např. staré položky uložené dřívější buggy verzí kódu ve špatném
+    formátu). Díky tomu jedna vadná položka nesloží žádný příkaz, který
+    přes inventář iteruje, a soubor se navíc sám vyčistí, jakmile se
+    příště zapíše zpět přes save_json(CARDS_INVENTORY, ...).
+    """
+    raw = load_json(CARDS_INVENTORY, default={})
+    return {k: v for k, v in raw.items() if isinstance(v, dict)}
+
+
+
 def get_card_image_path(image_filename: str):
     """Vrátí absolutní cestu k obrázku karty, nebo None pokud soubor neexistuje."""
     if not image_filename:
@@ -352,7 +365,7 @@ def grant_random_card(
     # 3. Výběr šablony karty a generování unikátního ID
     # -----------------------------------------------------------------
     card_template = random.choice(all_cards)
-    inventory = load_json(CARDS_INVENTORY, default={})
+    inventory = load_inventory()
 
     unique_id = generate_unique_id()
     while unique_id in inventory:
@@ -437,7 +450,7 @@ class Cards(commands.Cog):
             return
 
         owner_id = str(owner.id) if owner else None
-        inventory = load_json(CARDS_INVENTORY, default={})
+        inventory = load_inventory()
 
         max_print = max(
             (c.get("print_number", 0) for c in inventory.values() if c.get("card_id") == card_id),
@@ -613,7 +626,7 @@ class Cards(commands.Cog):
     @app_commands.describe(unique_id="Unikátní ID karty k odstranění")
     async def remove_card(self, interaction: discord.Interaction, unique_id: str):
         """Admin příkaz pro úplné smazání instance karty z inventáře."""
-        inventory = load_json(CARDS_INVENTORY, default={})
+        inventory = load_inventory()
 
         if unique_id not in inventory:
             await interaction.response.send_message(f"Karta `{unique_id}` neexistuje.", ephemeral=True)
@@ -663,7 +676,7 @@ class Cards(commands.Cog):
         target = user or interaction.user
         uid = str(target.id)
 
-        inv = load_json(CARDS_INVENTORY, default={})
+        inv = load_inventory()
         user_cards = {cid: card for cid, card in inv.items() if card.get("owner_id") == uid}
 
         if not user_cards:
@@ -702,7 +715,7 @@ class Cards(commands.Cog):
     @app_commands.describe(unique_id="Unikátní ID karty", frame="ID rámečku (volitelné — přepíše uložený)")
     async def show_card(self, interaction: discord.Interaction, unique_id: str, frame: str = None):
         """Zobrazí konkrétní kartu — nový formát s rendeovanou kartou."""
-        inv = load_json(CARDS_INVENTORY, default={})
+        inv = load_inventory()
 
         if unique_id not in inv:
             await interaction.response.send_message(f"Karta s ID `{unique_id}` neexistuje.", ephemeral=True)
@@ -756,7 +769,7 @@ class Cards(commands.Cog):
     async def upgrade_frame(self, interaction: discord.Interaction, unique_id: str, frame: str):
         """Aplikuje rámeček na kartu (rámeček se spotřebuje)."""
         uid = str(interaction.user.id)
-        inv = load_json(CARDS_INVENTORY, default={})
+        inv = load_inventory()
         frames_inv = load_json(FRAMES_INVENTORY, default={})
 
         if unique_id not in inv:
@@ -839,7 +852,7 @@ class Cards(commands.Cog):
     async def cards_info(self, interaction: discord.Interaction):
         """Uvítací embed s kompletním přehledem kartového systému."""
         cards = load_json(CARDS_DATA, default=[])
-        inv = load_json(CARDS_INVENTORY, default={})
+        inv = load_inventory()
 
         rarity_counts = {}
         collection_counts = {}
@@ -945,7 +958,7 @@ class Cards(commands.Cog):
     async def gallery(self, interaction: discord.Interaction, collection: str = None):
         """Přehled kolekcí nebo detail jedné sady."""
         cards_db = load_json(CARDS_DATA, default=[])
-        inv = load_json(CARDS_INVENTORY, default={})
+        inv = load_inventory()
 
         if collection:
             collection = collection.lower()
@@ -1026,7 +1039,7 @@ class Cards(commands.Cog):
     async def set_profile_card(self, interaction: discord.Interaction, unique_id: str):
         """Nastaví profilovou kartu hráče."""
         uid = str(interaction.user.id)
-        inv = load_json(CARDS_INVENTORY, default={})
+        inv = load_inventory()
 
         if unique_id not in inv:
             await interaction.response.send_message(f"Karta s ID `{unique_id}` neexistuje.", ephemeral=True)
@@ -1065,7 +1078,7 @@ class Cards(commands.Cog):
             )
             return
 
-        inv = load_json(CARDS_INVENTORY, default={})
+        inv = load_inventory()
         if active_card_id not in inv:
             # Karta byla spálena nebo smazána — vyčisti referenci
             profiles[uid]["active_card_id"] = None
@@ -1123,7 +1136,7 @@ class Cards(commands.Cog):
     async def burn_card(self, interaction: discord.Interaction, unique_id: str):
         """Spálí kartu hráče a připíše mu Hvězdný prach."""
         uid = str(interaction.user.id)
-        inv = load_json(CARDS_INVENTORY, default={})
+        inv = load_inventory()
 
         if unique_id not in inv:
             await interaction.response.send_message(f"Karta s ID `{unique_id}` neexistuje.", ephemeral=True)
@@ -1216,7 +1229,7 @@ class Cards(commands.Cog):
         card_id = card_template.get("id")
 
         # Přidej do inventáře
-        inventory = load_json(CARDS_INVENTORY, default={})
+        inventory = load_inventory()
         unique_id = generate_unique_id()
         while unique_id in inventory:
             unique_id = generate_unique_id()
@@ -1298,7 +1311,7 @@ class Cards(commands.Cog):
             embed.add_field(name="✨ Očekávaný zisk", value=f"**{expected_reward}** zl" + (f" (+{int((bonus_mult-1.0)*100)}%)" if bonus_mult > 1.0 else ""), inline=True)
             embed.add_field(name="⏰ Návrat", value=f"<t:{int(end_time.timestamp())}:R>", inline=False)
 
-            inv = load_json(CARDS_INVENTORY, default={})
+            inv = load_inventory()
             cards_text = "\n".join(
                 f"`{cid}` — {inv[cid].get('name', '?')}" if cid in inv else f"`{cid}`"
                 for cid in work["cards"]
@@ -1364,7 +1377,7 @@ class Cards(commands.Cog):
             await interaction.response.send_message("Nemůžeš poslat stejnou kartu víckrát!", ephemeral=True)
             return
 
-        inv = load_json(CARDS_INVENTORY, default={})
+        inv = load_inventory()
         for cid in card_ids:
             if cid not in inv or inv[cid].get("owner_id") != uid:
                 await interaction.response.send_message(
