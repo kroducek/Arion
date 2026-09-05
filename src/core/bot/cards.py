@@ -109,6 +109,7 @@ SEED_CARDS = [
     {"id": 25, "name": "Talias Aurelion",       "description": "Král Kalexie a duchovní vůdce Aurelionů", "image": "talias.png",               "collection": "aurelions"},
     {"id": 26, "name": "Saleriom",       "description": "Temný rytíř kultu jenž nemá tvář", "image": "saleriom.png",               "collection": "coven_of_death"},
     {"id": 27, "name": "První stín",       "description": "Žije v něm jakýsi mimozemský organismus", "image": "prvni_stin.png",               "collection": "shadows"},
+    {"id": 28, "name": "Noxarath",       "description": "Čarodějka smrti a bohyně temnoty", "image": "noxarath2.png",               "collection": "coven_of_death"},
 ]
 
 # ---------------------------------------------------------------------------
