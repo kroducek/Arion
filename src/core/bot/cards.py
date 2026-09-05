@@ -80,6 +80,8 @@ COLLECTIONS = {
 0x9B59B6, "emoji": "✝️",  "description": "Kult smrti a jeho členové"},
     "aurelions":  {"color": 
 0x9B59B6, "emoji": "⭐️",  "description": "Královská rodina Aurelionů"},
+    "friends":  {"color": 
+0x9B59B6, "emoji": "🧸",  "description": "Přátelé jenž potkáváme na cestách"},
 }
 SEED_CARDS = [
     {"id": 1, "name": "Alice Aurelion", "description": "Mystická postava z Aurionisu s aurou tajemství.",    "image": "unworthy_alice_aurelion.png", "collection": "unworthy"},
@@ -110,6 +112,7 @@ SEED_CARDS = [
     {"id": 26, "name": "Saleriom",       "description": "Temný rytíř kultu jenž nemá tvář", "image": "saleriom.png",               "collection": "coven_of_death"},
     {"id": 27, "name": "První stín",       "description": "Žije v něm jakýsi mimozemský organismus", "image": "prvni_stin.png",               "collection": "shadows"},
     {"id": 28, "name": "Noxarath",       "description": "Čarodějka smrti a bohyně temnoty", "image": "noxarath2.png",               "collection": "coven_of_death"},
+    {"id": 29, "name": "Sid Orovič",       "description": "Plešatý starý muž, jehož jeden ze sedmi hříchu je obžerství", "image": "noxarath2.png",               "collection": "coven_of_death"},
 ]
 
 # ---------------------------------------------------------------------------
