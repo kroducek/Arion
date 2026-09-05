@@ -388,13 +388,7 @@ def grant_random_card(
     # -----------------------------------------------------------------
     # 6. Uložení karty do inventáře hráče
     # -----------------------------------------------------------------
-    inventory_path = os.path.join(os.path.dirname(__file__), "..", "data", "inventories.json")
-    
-    try:
-        with open(inventory_path, "r", encoding="utf-8") as f:
-            inventories = json.load(f)
-    except FileNotFoundError:
-        inventories = {}
+    inventories = load_json(CARDS_INVENTORY, default={})
 
     # Pokud hráč ještě nemá inventář, založíme mu prázdný seznam
     if uid not in inventories:
@@ -408,28 +402,10 @@ def grant_random_card(
         "obtained_via_jackpot": guaranteed_jackpot
     }
     inventories[uid].append(card_instance)
-
-    with open(inventory_path, "w", encoding="utf-8") as f:
-        json.dump(inventories, f, indent=4, ensure_ascii=False)
+    save_json(CARDS_INVENTORY, inventories)
 
     # -----------------------------------------------------------------
-    # 7. Resetování čtyřlístků, pokud byl využit jackpot
-    # -----------------------------------------------------------------
-    if guaranteed_jackpot:
-        users_path = os.path.join(os.path.dirname(__file__), "..", "data", "users.json")
-        try:
-            with open(users_path, "r", encoding="utf-8") as f:
-                users = json.load(f)
-            
-            if uid in users:
-                users[uid]["clovers"] = 0  # Reset metru čtyřlístků
-                with open(users_path, "w", encoding="utf-8") as f:
-                    json.dump(users, f, indent=4, ensure_ascii=False)
-        except Exception as e:
-            print(f"Chyba při resetování čtyřlístků pro hráče {uid}: {e}")
-
-    # -----------------------------------------------------------------
-    # 8. Návrat výsledku
+    # 7. Návrat výsledku
     # -----------------------------------------------------------------
     return unique_id, chosen_card
 
