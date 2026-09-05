@@ -106,7 +106,6 @@ SEED_CARDS = [
     {"id": 22, "name": "Elegantní šašek",       "description": "Šašek jenž je známý svou touhou hrát hry", "image": "elegantni_sasek.png",               "collection": "jesters"},
     {"id": 23, "name":"Jason Harvey",       "description": "Říká se, že mu ženy a hádankáři padají k nohám", "image": "jason.png",               "collection": "unworthy"},
     {"id": 24, "name": "Malý šašek",       "description": "Šašek jenž často asistuje ostatním šaškům", "image": "maly_sasek.png",               "collection": "jesters"},
-"collection": "unworthy"},
     {"id": 25, "name": "Talias Aurelion",       "description": "Král Kalexie a duchovní vůdce Aurelionů", "image": "talias.png",               "collection": "aurelions"},
     {"id": 26, "name": "Saleriom",       "description": "Temný rytíř kultu jenž nemá tvář", "image": "saleriom.png",               "collection": "coven_of_death"},
     {"id": 27, "name": "První stín",       "description": "Žije v něm jakýsi mimozemský organismus", "image": "prvni_stin.png",               "collection": "shadows"},
