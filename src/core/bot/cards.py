@@ -589,6 +589,105 @@ class Cards(commands.Cog):
         embed.set_footer(text=f"Použij /cards print {next_id} <rarita> pro vytisknutí první kopie.")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+    @cards_group.command(name="create_frame", description="[ADMIN] Přidat nový rámeček do databáze")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(
+        frame_id="Unikátní ID rámečku (použije se v /cards give_frame a /cards upgrade_frame)",
+        name="Zobrazovaný název rámečku",
+        image="Název souboru PNG (např. riddler_frame.png) — pokud jsi ho už nahrál ručně na server",
+        color="Barva rámečku v hex formátu (např. #FF6B9D) — výchozí bílá",
+        rarity_exclusive="Omezit rámeček jen na určitou raritu karty (volitelné)",
+        attachment="Nebo rovnou nahraj PNG přímo z Discordu — uloží se pod zadaným 'image' názvem",
+    )
+    @app_commands.choices(rarity_exclusive=[
+        app_commands.Choice(name="Uncommon",  value="uncommon"),
+        app_commands.Choice(name="Common",    value="common"),
+        app_commands.Choice(name="Rare",      value="rare"),
+        app_commands.Choice(name="Epic",      value="epic"),
+        app_commands.Choice(name="Legendary", value="legendary"),
+    ])
+    async def create_frame(
+        self,
+        interaction: discord.Interaction,
+        frame_id: str,
+        name: str,
+        image: str,
+        color: str = "#FFFFFF",
+        rarity_exclusive: str = None,
+        attachment: discord.Attachment = None,
+    ):
+        """[ADMIN] Přidá nový rámeček do CARDS_FRAMES bez ruční editace JSON."""
+        frame_id = frame_id.strip().lower().replace(" ", "_")
+        frames = load_json(CARDS_FRAMES, default=[])
+
+        if any(f.get("id") == frame_id for f in frames):
+            await interaction.response.send_message(
+                f"Rámeček s ID `{frame_id}` už existuje.", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        # Ověř bezpečnost názvu souboru — žádné cesty ani separátory
+        safe_image = image.strip()
+        if any(ch in safe_image for ch in ("/", "\\", "..")):
+            await interaction.followup.send("❌ Neplatný název souboru — nepoužívej lomítka ani '..'.", ephemeral=True)
+            return
+
+        # Ověř formát barvy
+        hex_color = color.strip().lstrip("#")
+        if len(hex_color) != 6 or any(c not in string.hexdigits for c in hex_color):
+            await interaction.followup.send("❌ Barva musí být v hex formátu, např. `#FF6B9D`.", ephemeral=True)
+            return
+
+        image_status = ""
+        if attachment:
+            if not attachment.content_type or not attachment.content_type.startswith("image/"):
+                await interaction.followup.send("❌ Příloha není obrázek. Použij PNG.", ephemeral=True)
+                return
+            try:
+                dest = os.path.join(CARDS_DIR, safe_image)
+                image_data = await attachment.read()
+                with open(dest, "wb") as f:
+                    f.write(image_data)
+                image_status = "✅ uložen z přílohy"
+            except Exception as e:
+                await interaction.followup.send(f"❌ Nepodařilo se uložit obrázek: {e}", ephemeral=True)
+                return
+        else:
+            # Rámečky nemají vlastní resolver cesty jako karty (get_card_image_path
+            # kontroluje CARDS_DIR) — pokud jsi PNG nahrál jinam, tohle upozornění
+            # bude falešně negativní, ale registraci to neblokuje.
+            if get_card_image_path(safe_image):
+                image_status = "✅ nalezen v adresáři karet"
+            else:
+                image_status = "⚠️ v adresáři karet nenalezen — zkontroluj, že leží tam, kde ho čeká apply_frame_to_card"
+
+        new_frame = {
+            "id": frame_id,
+            "name": name.strip(),
+            "image": safe_image,
+            "color": f"#{hex_color.upper()}",
+            "rarity_exclusive": rarity_exclusive,
+        }
+        frames.append(new_frame)
+        save_json(CARDS_FRAMES, frames)
+
+        embed = discord.Embed(
+            title="✅ Rámeček přidán do databáze",
+            description=f"**{new_frame['name']}**",
+            color=int(hex_color, 16),
+        )
+        embed.add_field(name="🆔 ID", value=f"`{frame_id}`", inline=True)
+        embed.add_field(name="🖼️ Obrázek", value=f"`{safe_image}`\n{image_status}", inline=True)
+        embed.add_field(
+            name="🔒 Exkluzivní pro raritu",
+            value=rarity_exclusive.capitalize() if rarity_exclusive else "Žádná",
+            inline=True,
+        )
+        embed.set_footer(text=f"Otestuj přes /cards give_frame @hráč {frame_id}")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
     @cards_group.command(name="give_frame", description="[ADMIN] Dát rámeček hráči")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(user="Hráč, kterému chceš dát rámeček", frame_id="ID rámečku")
