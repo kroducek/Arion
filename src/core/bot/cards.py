@@ -76,6 +76,10 @@ COLLECTIONS = {
     "first-beings":  {"color": 0x9B59B6, "emoji": "⚜️",  "description": "Původní - ti, jenž tu jsou od počátku"},
     "shadows":  {"color": 0x9B59B6, "emoji": "👤",  "description": "Stíny - Neunikneš stínům v tvém srdci"},
     "witches":  {"color": 0x9B59B6, "emoji": "♦️",  "description": "Hříšné čarodějky patřící pod Sedm smrtelných hříchů"},
+    "coven_of_death":  {"color": 
+0x9B59B6, "emoji": "✝️",  "description": "Kult smrti a jeho členové"},
+    "aurelions":  {"color": 
+0x9B59B6, "emoji": "⭐️",  "description": "Královská rodina Aurelionů"},
 }
 SEED_CARDS = [
     {"id": 1, "name": "Alice Aurelion", "description": "Mystická postava z Aurionisu s aurou tajemství.",    "image": "unworthy_alice_aurelion.png", "collection": "unworthy"},
@@ -102,6 +106,10 @@ SEED_CARDS = [
     {"id": 22, "name": "Elegantní šašek",       "description": "Šašek jenž je známý svou touhou hrát hry", "image": "elegantni_sasek.png",               "collection": "jesters"},
     {"id": 23, "name":"Jason Harvey",       "description": "Říká se, že mu ženy a hádankáři padají k nohám", "image": "jason.png",               "collection": "unworthy"},
     {"id": 24, "name": "Malý šašek",       "description": "Šašek jenž často asistuje ostatním šaškům", "image": "maly_sasek.png",               "collection": "jesters"},
+"collection": "unworthy"},
+    {"id": 25, "name": "Talias Aurelion",       "description": "Král Kalexie a duchovní vůdce Aurelionů", "image": "talias.png",               "collection": "aurelions"},
+    {"id": 26, "name": "Saleriom",       "description": "Temný rytíř kultu jenž nemá tvář", "image": "saleriom.png",               "collection": "coven_of_death"},
+    {"id": 27, "name": "První stín",       "description": "Žije v něm jakýsi mimozemský organismus", "image": "prvni_stin.png",               "collection": "shadows"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -688,37 +696,61 @@ class Cards(commands.Cog):
         embed.set_footer(text=f"Otestuj přes /cards give_frame @hráč {frame_id}")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @cards_group.command(name="give_frame", description="[ADMIN] Dát rámeček hráči")
+    @cards_group.command(name="give_frame", description="[ADMIN] Dát rámeček jednomu nebo více hráčům")
     @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(user="Hráč, kterému chceš dát rámeček", frame_id="ID rámečku")
-    async def give_frame(self, interaction: discord.Interaction, user: discord.Member, frame_id: str):
-        """Admin příkaz pro přidání rámečku do inventáře hráče."""
+    @app_commands.describe(
+        users="Hráči oddělení mezerou nebo zatagování (např. @hráč1 @hráč2 ...)",
+        frame_id="ID rámečku",
+    )
+    async def give_frame(self, interaction: discord.Interaction, users: str, frame_id: str):
+        """Admin příkaz pro přidání rámečku do inventáře jednoho nebo více hráčů."""
         frame = get_frame_by_id(frame_id)
         if not frame:
             await interaction.response.send_message(f"Rámeček `{frame_id}` neexistuje.", ephemeral=True)
             return
 
-        uid = str(user.id)
-        frames_inv = load_json(FRAMES_INVENTORY, default={})
+        # Parsuj uživatele z textu (tagování nebo ID) — stejně jako /summon give
+        user_ids = []
+        for mention in users.split():
+            if mention.startswith("<@") and mention.endswith(">"):
+                user_ids.append(mention.strip("<@!>"))
+            elif mention.isdigit():
+                user_ids.append(mention)
 
-        if uid not in frames_inv:
-            frames_inv[uid] = []
-
-        if any(f.get("id") == frame_id for f in frames_inv[uid]):
+        if not user_ids:
             await interaction.response.send_message(
-                f"{user.mention} již má rámeček **{frame.get('name')}**.", ephemeral=True
+                "❌ Žádní hráči nenalezeni. Použij `/cards give_frame @hráč1 @hráč2 ... frame_id`",
+                ephemeral=True,
             )
             return
 
-        frames_inv[uid].append({"id": frame_id, "name": frame.get("name")})
+        await interaction.response.defer()
+
+        frames_inv = load_json(FRAMES_INVENTORY, default={})
+        results = []
+        for uid in user_ids:
+            try:
+                user = await self.bot.fetch_user(int(uid))
+                user_label = user.mention
+            except Exception:
+                user_label = f"ID:{uid}"
+
+            owned = frames_inv.setdefault(uid, [])
+            if any(f.get("id") == frame_id for f in owned):
+                results.append(f"⚠️ {user_label} — už **{frame.get('name')}** má")
+                continue
+
+            owned.append({"id": frame_id, "name": frame.get("name")})
+            results.append(f"✅ {user_label} — přidán **{frame.get('name')}**")
+
         save_json(FRAMES_INVENTORY, frames_inv)
 
         embed = discord.Embed(
-            title="✅ Rámeček přidán",
-            description=f"{user.mention} nyní vlastní **{frame.get('name')}**.",
+            title="🖼️ Rámeček rozdán",
+            description="\n".join(results),
             color=0x00FF00,
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @cards_group.command(name="remove_card", description="[ADMIN] Smazat kartu úplně z inventáře")
     @app_commands.checks.has_permissions(administrator=True)
