@@ -5,6 +5,7 @@ import os
 import uuid
 import random
 import string
+import math
 from typing import Optional, Tuple, Dict, Any
 from datetime import datetime, timedelta
 from discord.ext import commands
@@ -180,6 +181,101 @@ class KeepBurnView(discord.ui.View):
         await interaction.followup.send(
             f"🔥 **{result['name']}** spálena za **{result['dust']}× Hvězdný prach ✨**.",
             ephemeral=True,
+        )
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# Stránkování inventáře (/cards inventory)
+# ---------------------------------------------------------------------------
+
+INVENTORY_PAGE_SIZE = 10
+
+
+def build_inventory_embed(target, sorted_cards: list, page: int, page_size: int = INVENTORY_PAGE_SIZE) -> discord.Embed:
+    """Sestaví jednu stránku embedu inventáře pro daného hráče."""
+    total = len(sorted_cards)
+    total_pages = max(1, math.ceil(total / page_size))
+    page = max(0, min(page, total_pages - 1))
+    start = page * page_size
+    chunk = sorted_cards[start:start + page_size]
+
+    embed = discord.Embed(
+        title=f"🎴 Karty — {target.display_name}",
+        description=f"Celkem: **{total}** karet",
+        color=0xFFA500,
+    )
+    for i, (unique_id, card) in enumerate(chunk, start=start + 1):
+        rarity = card.get("rarity", "uncommon")
+        rarity_emoji = RARITIES.get(rarity, RARITIES["uncommon"])["emoji"]
+        qual = card.get("quality", "normal")
+        qual_data = QUALITIES.get(qual, QUALITIES["normal"])
+        frame_text = f"\nRámeček: {card['frame']}" if card.get("frame") else ""
+        embed.add_field(
+            name=f"{i}. {card.get('name', '?')} (Print #{card.get('print_number', '?')})",
+            value=(
+                f"ID: `{unique_id}`\n"
+                f"Rarita: {rarity.capitalize()} {rarity_emoji}  ·  "
+                f"Kvalita: {qual_data['emoji']} {qual_data['name']}"
+                f"{frame_text}"
+            ),
+            inline=False,
+        )
+    if total_pages > 1:
+        embed.set_footer(text=f"Stránka {page + 1}/{total_pages}")
+    return embed
+
+
+class InventoryPaginatorView(discord.ui.View):
+    """Tlačítka ⬅️ / ➡️ pro procházení víc stránek inventáře."""
+
+    def __init__(self, invoker_id: int, target, sorted_cards: list, page_size: int = INVENTORY_PAGE_SIZE, timeout: float = 120.0):
+        super().__init__(timeout=timeout)
+        self.invoker_id = invoker_id
+        self.target = target
+        self.sorted_cards = sorted_cards
+        self.page_size = page_size
+        self.page = 0
+        self.total_pages = max(1, math.ceil(len(sorted_cards) / page_size))
+        self.message: Optional[discord.Message] = None
+        self._update_buttons()
+
+    def _update_buttons(self):
+        self.prev_button.disabled = self.page <= 0
+        self.next_button.disabled = self.page >= self.total_pages - 1
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.invoker_id:
+            await interaction.response.send_message(
+                "Stránkovat může jen ten, kdo příkaz spustil.", ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="⬅️ Předchozí", style=discord.ButtonStyle.secondary)
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = max(0, self.page - 1)
+        self._update_buttons()
+        await interaction.response.edit_message(
+            embed=build_inventory_embed(self.target, self.sorted_cards, self.page, self.page_size),
+            view=self,
+        )
+
+    @discord.ui.button(label="Další ➡️", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = min(self.total_pages - 1, self.page + 1)
+        self._update_buttons()
+        await interaction.response.edit_message(
+            embed=build_inventory_embed(self.target, self.sorted_cards, self.page, self.page_size),
+            view=self,
         )
 
     async def on_timeout(self):
@@ -928,44 +1024,29 @@ class Cards(commands.Cog):
     @cards_group.command(name="inventory", description="Zobrazit své karty")
     @app_commands.describe(user="Hráč (volitelné — výchozí jsi ty)")
     async def show_inventory(self, interaction: discord.Interaction, user: discord.Member = None):
-        """Zobrazí inventář hráče."""
+        """Zobrazí inventář hráče se stránkováním, pokud má víc karet, než se vejde na jednu stránku."""
         target = user or interaction.user
         uid = str(target.id)
 
         inv = load_inventory()
-        user_cards = {cid: card for cid, card in inv.items() if card.get("owner_id") == uid}
+        user_cards = [(cid, card) for cid, card in inv.items() if card.get("owner_id") == uid]
 
         if not user_cards:
             await interaction.response.send_message(f"{target.mention} nemá žádné karty.", ephemeral=True)
             return
 
-        embed = discord.Embed(
-            title=f"🎴 Karty — {target.display_name}",
-            description=f"Celkem: **{len(user_cards)}** karet",
-            color=0xFFA500,
-        )
+        # Stabilní pořadí podle čísla tisku, ať se karty mezi stránkami nepřehazují
+        user_cards.sort(key=lambda item: item[1].get("print_number", 0))
 
-        for i, (unique_id, card) in enumerate(list(user_cards.items())[:15]):
-            rarity = card.get("rarity", "uncommon")
-            rarity_emoji = RARITIES.get(rarity, RARITIES["uncommon"])["emoji"]
-            qual = card.get("quality", "normal")
-            qual_data = QUALITIES.get(qual, QUALITIES["normal"])
-            frame_text = f"\nRámeček: {card['frame']}" if card.get("frame") else ""
-            embed.add_field(
-                name=f"{i + 1}. {card.get('name', '?')} (Print #{card.get('print_number', '?')})",
-                value=(
-                    f"ID: `{unique_id}`\n"
-                    f"Rarita: {rarity.capitalize()} {rarity_emoji}  ·  "
-                    f"Kvalita: {qual_data['emoji']} {qual_data['name']}"
-                    f"{frame_text}"
-                ),
-                inline=False,
-            )
+        embed = build_inventory_embed(target, user_cards, page=0)
 
-        if len(user_cards) > 15:
-            embed.set_footer(text=f"Zobrazeno 15 z {len(user_cards)} karet.")
+        if len(user_cards) <= INVENTORY_PAGE_SIZE:
+            await interaction.response.send_message(embed=embed)
+            return
 
-        await interaction.response.send_message(embed=embed)
+        view = InventoryPaginatorView(invoker_id=interaction.user.id, target=target, sorted_cards=user_cards)
+        await interaction.response.send_message(embed=embed, view=view)
+        view.message = await interaction.original_response()
 
     @cards_group.command(name="show", description="Zobrazit konkrétní kartu")
     @app_commands.describe(unique_id="Unikátní ID karty", frame="ID rámečku (volitelné — přepíše uložený)")
