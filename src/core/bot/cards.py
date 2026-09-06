@@ -59,6 +59,139 @@ QUALITY_MULTIPLIERS = {
     "damaged": 0.5,
 }
 
+
+# ---------------------------------------------------------------------------
+# Sdílená logika pro spálení karty (/cards burn i tlačítko Spálit po summonu)
+# ---------------------------------------------------------------------------
+
+class BurnError(Exception):
+    """Základ pro chyby při pokusu spálit kartu."""
+
+
+class CardNotFoundError(BurnError):
+    """Karta s daným ID neexistuje v inventáři."""
+
+
+class NotCardOwnerError(BurnError):
+    """Karta nepatří hráči, který ji zkouší spálit."""
+
+
+class CardOnExpeditionError(BurnError):
+    """Karta je momentálně na výpravě, nejde spálit."""
+
+
+def calculate_dust(rarity: str, quality: str) -> int:
+    """Spočítá, kolik Hvězdného prachu karta dá při spálení — čím vyšší rarita a kvalita, tím víc."""
+    base_dust = DUST_VALUES.get(rarity, 1)
+    mult = QUALITY_MULTIPLIERS.get(quality, 1.0)
+    return max(1, int(base_dust * mult))
+
+
+def burn_card_by_id(uid: str, unique_id: str) -> dict:
+    """
+    Spálí kartu hráče a připíše mu Hvězdný prach. Vrací
+    {"name", "rarity", "quality", "dust"}. Vyhazuje CardNotFoundError,
+    NotCardOwnerError nebo CardOnExpeditionError podle situace.
+    """
+    inv = load_inventory()
+    if unique_id not in inv:
+        raise CardNotFoundError(unique_id)
+
+    card = inv[unique_id]
+    if card.get("owner_id") != uid:
+        raise NotCardOwnerError(unique_id)
+
+    works = load_json(CARDS_WORK, default={})
+    user_work = works.get(uid)
+    if user_work and unique_id in user_work.get("cards", []):
+        raise CardOnExpeditionError(unique_id)
+
+    # Odstraň z profilu, pokud je aktivní
+    profiles = profile_load()
+    if uid in profiles and profiles[uid].get("active_card_id") == unique_id:
+        profiles[uid]["active_card_id"] = None
+        profile_save(profiles)
+
+    rarity = card.get("rarity", "uncommon")
+    quality = card.get("quality", "normal")
+    total_dust = calculate_dust(rarity, quality)
+    card_name = card.get("name", unique_id)
+
+    add_balance(uid, total_dust, "stardust")
+
+    del inv[unique_id]
+    save_json(CARDS_INVENTORY, inv)
+
+    return {"name": card_name, "rarity": rarity, "quality": quality, "dust": total_dust}
+
+
+class KeepBurnView(discord.ui.View):
+    """
+    Tlačítka Nechat / Spálit zobrazená pod čerstvě summonovanou kartou.
+    Bez odpovědi do timeoutu se karta jednoduše nechává (bezpečný default).
+    """
+
+    def __init__(self, uid: str, unique_id: str, card: dict, timeout: float = 60.0):
+        super().__init__(timeout=timeout)
+        self.uid = uid
+        self.unique_id = unique_id
+        self.card = card
+        self.message: Optional[discord.Message] = None
+
+        dust = calculate_dust(card.get("rarity", "uncommon"), card.get("quality", "normal"))
+        self.burn_button.label = f"Spálit (+{dust} ✨)"
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if str(interaction.user.id) != self.uid:
+            await interaction.response.send_message(
+                "Tohle rozhodnutí je jen na majiteli karty.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def _lock(self, interaction: discord.Interaction):
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(view=self)
+        self.stop()
+
+    @discord.ui.button(label="🎒 Nechat", style=discord.ButtonStyle.success)
+    async def keep_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._lock(interaction)
+        await interaction.followup.send(
+            f"🎒 **{self.card.get('name')}** zůstává ve tvém inventáři.", ephemeral=True
+        )
+
+    @discord.ui.button(label="🔥 Spálit", style=discord.ButtonStyle.danger)
+    async def burn_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._lock(interaction)
+        try:
+            result = burn_card_by_id(self.uid, self.unique_id)
+        except CardNotFoundError:
+            await interaction.followup.send("❌ Karta už mezitím zmizela z inventáře.", ephemeral=True)
+            return
+        except NotCardOwnerError:
+            await interaction.followup.send("❌ Tahle karta ti nepatří.", ephemeral=True)
+            return
+        except CardOnExpeditionError:
+            await interaction.followup.send("❌ Karta je momentálně na výpravě, nejde spálit.", ephemeral=True)
+            return
+
+        await interaction.followup.send(
+            f"🔥 **{result['name']}** spálena za **{result['dust']}× Hvězdný prach ✨**.",
+            ephemeral=True,
+        )
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
+
 EXPEDITIONS = {
     "hlidka": {"name": "Hlídka ve městě",      "reward":  5, "hours":  6, "emoji": "🛡️",  "description": "Střežení městských bran"},
     "tabor":  {"name": "Táborový kemp",       "reward":  8, "hours": 12, "emoji": "🏕️", "description": "Řídící tábor v pustině"},
@@ -76,12 +209,6 @@ COLLECTIONS = {
     "first-beings":  {"color": 0x9B59B6, "emoji": "⚜️",  "description": "Původní - ti, jenž tu jsou od počátku"},
     "shadows":  {"color": 0x9B59B6, "emoji": "👤",  "description": "Stíny - Neunikneš stínům v tvém srdci"},
     "witches":  {"color": 0x9B59B6, "emoji": "♦️",  "description": "Hříšné čarodějky patřící pod Sedm smrtelných hříchů"},
-    "coven_of_death":  {"color": 
-0x9B59B6, "emoji": "✝️",  "description": "Kult smrti a jeho členové"},
-    "aurelions":  {"color": 
-0x9B59B6, "emoji": "⭐️",  "description": "Královská rodina Aurelionů"},
-    "friends":  {"color": 
-0x9B59B6, "emoji": "🧸",  "description": "Přátelé jenž potkáváme na cestách"},
 }
 SEED_CARDS = [
     {"id": 1, "name": "Alice Aurelion", "description": "Mystická postava z Aurionisu s aurou tajemství.",    "image": "unworthy_alice_aurelion.png", "collection": "unworthy"},
@@ -108,11 +235,6 @@ SEED_CARDS = [
     {"id": 22, "name": "Elegantní šašek",       "description": "Šašek jenž je známý svou touhou hrát hry", "image": "elegantni_sasek.png",               "collection": "jesters"},
     {"id": 23, "name":"Jason Harvey",       "description": "Říká se, že mu ženy a hádankáři padají k nohám", "image": "jason.png",               "collection": "unworthy"},
     {"id": 24, "name": "Malý šašek",       "description": "Šašek jenž často asistuje ostatním šaškům", "image": "maly_sasek.png",               "collection": "jesters"},
-    {"id": 25, "name": "Talias Aurelion",       "description": "Král Kalexie a duchovní vůdce Aurelionů", "image": "talias.png",               "collection": "aurelions"},
-    {"id": 26, "name": "Saleriom",       "description": "Temný rytíř kultu jenž nemá tvář", "image": "saleriom.png",               "collection": "coven_of_death"},
-    {"id": 27, "name": "První stín",       "description": "Žije v něm jakýsi mimozemský organismus", "image": "prvni_stin.png",               "collection": "shadows"},
-    {"id": 28, "name": "Noxarath",       "description": "Čarodějka smrti a bohyně temnoty", "image": "noxarath2.png",               "collection": "coven_of_death"},
-    {"id": 29, "name": "Sid Orovič",       "description": "Plešatý starý muž, jehož jeden ze sedmi hříchu je obžerství", "image": "sidorovic.png",               "collection": "friends"},
 ]
 
 # ---------------------------------------------------------------------------
@@ -1270,54 +1392,31 @@ class Cards(commands.Cog):
     async def burn_card(self, interaction: discord.Interaction, unique_id: str):
         """Spálí kartu hráče a připíše mu Hvězdný prach."""
         uid = str(interaction.user.id)
-        inv = load_inventory()
 
-        if unique_id not in inv:
+        try:
+            result = burn_card_by_id(uid, unique_id)
+        except CardNotFoundError:
             await interaction.response.send_message(f"Karta s ID `{unique_id}` neexistuje.", ephemeral=True)
             return
-
-        card = inv[unique_id]
-        if card.get("owner_id") != uid:
+        except NotCardOwnerError:
             await interaction.response.send_message(
                 embed=create_error_embed("❌ Přístup odepřen", "Tato karta ti nepatří."), ephemeral=True
             )
             return
-
-        # Karta na výpravě?
-        works = load_json(CARDS_WORK, default={})
-        user_work = works.get(uid)
-        if user_work and unique_id in user_work.get("cards", []):
+        except CardOnExpeditionError:
             await interaction.response.send_message(
                 embed=create_error_embed("❌ Nelze spálit", "Karta je momentálně na výpravě! Nejprve si vyzvedni odměnu."),
                 ephemeral=True,
             )
             return
 
-        # Odstraň z profilu, pokud je aktivní
-        profiles = profile_load()
-        if uid in profiles and profiles[uid].get("active_card_id") == unique_id:
-            profiles[uid]["active_card_id"] = None
-            profile_save(profiles)
-
-        # Výpočet prachu
-        rarity = card.get("rarity", "uncommon")
-        qual = card.get("quality", "normal")
-        base_dust = DUST_VALUES.get(rarity, 1)
+        rarity, qual, total_dust = result["rarity"], result["quality"], result["dust"]
         mult = QUALITY_MULTIPLIERS.get(qual, 1.0)
-        total_dust = max(1, int(base_dust * mult))
-        card_name = card.get("name", unique_id)
-
-        # Připiš prach do economy (nová měna stardust ✨)
-        add_balance(uid, total_dust, "stardust")
-
-        # Smaž kartu
-        del inv[unique_id]
-        save_json(CARDS_INVENTORY, inv)
 
         embed = discord.Embed(
             title="🔥 Karta spálena",
             description=(
-                f"Spálil jsi **{card_name}** (ID: `{unique_id}`).\n"
+                f"Spálil jsi **{result['name']}** (ID: `{unique_id}`).\n"
                 f"Duše karty se rozpadla na **{total_dust}× Hvězdný prach**."
             ),
             color=0xFF8C00,

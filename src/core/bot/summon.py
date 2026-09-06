@@ -8,6 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from src.core.bot.cards import (
+    KeepBurnView,
     build_showcase_image,
     get_card_image_path,
     grant_random_card,
@@ -390,19 +391,25 @@ class Summon(commands.Cog):
                 tickets=f"{tickets}/{MAX_TICKETS}  ·  🍀 {clovers_after}/{MAX_CLOVERS}",
             ),
         )
+        view = KeepBurnView(uid=str(interaction.user.id), unique_id=unique_id, card=card)
+
         if showcase is None:
             await message.edit(
                 content=f"🎴 {interaction.user.mention} vysummonoval **{card.get('name')}** — obrázek karty chybí.",
                 embed=None,
                 attachments=[],
+                view=view,
             )
+            view.message = message
             return
 
         await message.edit(
             content=f"🎴 {interaction.user.mention} vysummonoval **{card.get('name')}**!",
             embed=None,
             attachments=[discord.File(showcase, filename="card.png")],
+            view=view,
         )
+        view.message = message
 
 
 async def setup(bot):
