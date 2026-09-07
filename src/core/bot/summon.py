@@ -45,6 +45,13 @@ GIF_DURATION = 3.0
 TICKET_STEP = 0.5
 ROLL_DELAYS = [0.35, 0.35, 0.45, 0.55, 0.7, 0.9, 1.1]
 
+# Konfetové snímky pro wow efekt při 5/5 jackpotu (garantovaná Legendary + Shiny)
+JACKPOT_FX_FRAMES = [
+    "🎉 🎊 ✨ 🎉 🎊 ✨ 🎉",
+    "🎊 ✨ 🎉 🎊 ✨ 🎉 🎊",
+    "✨ 🎉 🎊 ✨ 🎉 🎊 ✨",
+]
+
 
 # ---------------------------------------------------------------------------
 # Pomocné funkce
@@ -289,8 +296,48 @@ class Summon(commands.Cog):
         finally:
             self._opening.discard(uid)
 
-    async def _run_opening(self, interaction: discord.Interaction, crate: str, crate_data: dict):
-        """Odehraje animaci otevírání a nakonec přidělí kartu."""
+    async def _play_jackpot_fx(self, message: discord.Message, interaction: discord.Interaction):
+        """Konfetový wow efekt při dosažení 5/5 čtyřlístků — garantovaná Legendary + Shiny karta."""
+        for frame in JACKPOT_FX_FRAMES * 2:
+            fx_embed = discord.Embed(
+                title="🌟 JACKPOT 5/5 🌟",
+                description=f"{frame}\n\n**GARANTOVANÁ LEGENDARY ✨ SHINY KARTA!**\n{frame}",
+                color=0xFFD700,
+            )
+            fx_embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+            await message.edit(embed=fx_embed, attachments=[])
+            await asyncio.sleep(0.3)
+
+        final_embed = discord.Embed(
+            title="🎉🎊 JACKPOT!!! 🎊🎉",
+            description=(
+                "🍀🍀🍀🍀🍀\n\n"
+                "**5/5 ČTYŘLÍSTKŮ DOSAŽENO!**\n"
+                "Aurionis se otřásá v základech — čeká tě garantovaná **LEGENDARY ✨ SHINY** karta!"
+            ),
+            color=0xFFD700,
+        )
+        final_embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+        await message.edit(embed=final_embed, attachments=[])
+        await asyncio.sleep(1.5)
+
+    async def _run_opening(
+        self,
+        interaction: discord.Interaction,
+        crate: str,
+        crate_data: dict,
+        *,
+        forced_tickets: int = None,
+        forced_clovers: int = None,
+        is_test: bool = False,
+    ):
+        """
+        Odehraje animaci otevírání a nakonec přidělí kartu.
+
+        forced_tickets/forced_clovers/is_test slouží jen pro /summon admin-jackpot —
+        umožní vynutit a vizuálně otestovat 5/5 jackpot scénář, aniž by se sáhlo
+        na reálný stav beden nebo dlouhodobého luck metru hráče.
+        """
         await interaction.response.defer()
 
         embed = discord.Embed(
@@ -309,8 +356,8 @@ class Summon(commands.Cog):
         message = await interaction.followup.send(embed=embed, files=files, wait=True)
         await asyncio.sleep(GIF_DURATION)
 
-        tickets = random.randint(1, MAX_TICKETS)
-        clovers_before = get_luck(str(interaction.user.id)).get("clovers", 0)
+        tickets = forced_tickets if forced_tickets is not None else random.randint(1, MAX_TICKETS)
+        clovers_before = 0 if is_test else get_luck(str(interaction.user.id)).get("clovers", 0)
 
         for i in range(1, tickets + 1):
             embed.description = (
