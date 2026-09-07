@@ -1,4 +1,4 @@
-"""Summonovací systém — otevírání beden s kartami."""
+
 
 import asyncio
 import os
@@ -260,6 +260,39 @@ class Summon(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
+    @summon_group.command(name="admin-jackpot", description="[ADMIN] Otestovat 5/5 jackpot bez změny reálného luck metru")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(crate="Typ bedny, na které chceš jackpot otestovat")
+    @app_commands.choices(crate=[
+        app_commands.Choice(name="Základní bedna", value="basic"),
+    ])
+    async def admin_jackpot(self, interaction: discord.Interaction, crate: str = "basic"):
+        """[ADMIN] Spustí testovací 5/5 jackpot scénář bez odečtení bedny a bez změny luck metru."""
+        crate_data = CRATES.get(crate)
+        if not crate_data:
+            await interaction.response.send_message("Taková bedna neexistuje.", ephemeral=True)
+            return
+
+        uid = str(interaction.user.id)
+        if uid in self._opening:
+            await interaction.response.send_message(
+                "Jednu bednu už právě otevíráš — počkej, než dopadne.", ephemeral=True
+            )
+            return
+
+        self._opening.add(uid)
+        try:
+            await self._run_opening(
+                interaction,
+                crate,
+                crate_data,
+                forced_tickets=MAX_TICKETS,
+                forced_clovers=MAX_CLOVERS,
+                is_test=True,
+            )
+        finally:
+            self._opening.discard(uid)
+
     @summon_group.command(name="open", description="Otevřít bednu a summonovat kartu")
     @app_commands.describe(crate="Typ bedny (výchozí: základní)")
     @app_commands.choices(crate=[
@@ -357,7 +390,13 @@ class Summon(commands.Cog):
         await asyncio.sleep(GIF_DURATION)
 
         tickets = forced_tickets if forced_tickets is not None else random.randint(1, MAX_TICKETS)
-        clovers_before = 0 if is_test else get_luck(str(interaction.user.id)).get("clovers", 0)
+        clovers_before = (
+            forced_clovers
+            if forced_clovers is not None
+            else (0 if is_test else get_luck(str(interaction.user.id)).get("clovers", 0))
+        )
+        tickets = max(1, min(MAX_TICKETS, int(tickets)))
+        clovers_before = max(0, min(MAX_CLOVERS, int(clovers_before)))
 
         for i in range(1, tickets + 1):
             embed.description = (
@@ -367,10 +406,14 @@ class Summon(commands.Cog):
             await message.edit(embed=embed)
             await asyncio.sleep(TICKET_STEP)
 
-        # 10/10 lístků přidá jeden čtyřlístek do dočasného luck metru.
-        # 5/5 je ultimátní jackpot: garantuje Legendary + Shiny a meter se resetuje.
+        # 10/10 lístků přidá jeden čtyřlístek do luck metru.
+        # Testovací režim nesmí měnit reálný luck meter hráče.
         if tickets == MAX_TICKETS:
-            clovers_after = add_clover(str(interaction.user.id))
+            clovers_after = (
+                clovers_before
+                if is_test
+                else add_clover(str(interaction.user.id))
+            )
             embed.description = (
                 "🍀 **JACKPOT!!!!** 🍀\n\n"
                 f"{ticket_bar(MAX_TICKETS, MAX_TICKETS)}\n"
@@ -406,6 +449,9 @@ class Summon(commands.Cog):
             )
             await asyncio.sleep(delay)
 
+        if guaranteed_jackpot:
+            await self._play_jackpot_fx(message, interaction)
+
         granted = grant_random_card(
             str(interaction.user.id),
             tickets=tickets,
@@ -421,7 +467,8 @@ class Summon(commands.Cog):
                 ),
                 attachments=[],
             )
-            change_crates(str(interaction.user.id), crate, 1)
+            if not is_test:
+                change_crates(str(interaction.user.id), crate, 1)
             return
 
         unique_id, card = granted
