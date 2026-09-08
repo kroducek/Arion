@@ -1,5 +1,3 @@
-
-
 import asyncio
 import os
 import random
@@ -102,19 +100,30 @@ def get_crate_gif_path(crate_id: str):
     return path if os.path.exists(path) else None
 
 
+# Bezpečná hranice pod Discord upload limitem i na neboostnutých serverech —
+# obrázky nad touto velikostí se do rychle se měnící animace nezařadí.
+MAX_ROLL_IMAGE_BYTES = 8 * 1024 * 1024
+
+
 def get_roll_images(count: int) -> list:
-    """Vybere obrázky karet pro rolovací animaci — nikdy dva stejné za sebou."""
+    """Vybere obrázky karet pro rolovací animaci — nikdy dva stejné za sebou, nikdy moc velký soubor."""
+    def _size_ok(p: str) -> bool:
+        try:
+            return os.path.getsize(p) <= MAX_ROLL_IMAGE_BYTES
+        except OSError:
+            return False
+
     paths = [
         p for p in (
             get_card_image_path(card.get("image"))
             for card in load_json(CARDS_DATA, default=[])
-        ) if p
+        ) if p and _size_ok(p)
     ]
     if not paths and os.path.isdir(CARDS_DIR):
         paths = [
             os.path.join(CARDS_DIR, f)
             for f in sorted(os.listdir(CARDS_DIR))
-            if f.lower().endswith((".png", ".jpg", ".jpeg"))
+            if f.lower().endswith((".png", ".jpg", ".jpeg")) and _size_ok(os.path.join(CARDS_DIR, f))
         ]
     if not paths:
         return []
@@ -354,6 +363,26 @@ class Summon(commands.Cog):
         await message.edit(embed=final_embed, attachments=[])
         await asyncio.sleep(1.5)
 
+    async def _fail_opening(self, message: discord.Message):
+        """
+        Best-effort úprava zprávy do jasného chybového stavu, když se animace
+        uprostřed něčeho pokazí (např. 413 od Discordu na moc velký obrázek) —
+        ať zpráva nezůstane navždy viset na '🌀 Karty se točí…'.
+        """
+        try:
+            await message.edit(
+                content=None,
+                embed=discord.Embed(
+                    title="⚠️ Otevírání se nepovedlo",
+                    description="Něco se pokazilo uprostřed animace. Zkus to prosím znovu.",
+                    color=0xE74C3C,
+                ),
+                attachments=[],
+                view=None,
+            )
+        except discord.HTTPException:
+            pass
+
     async def _run_opening(
         self,
         interaction: discord.Interaction,
@@ -387,123 +416,136 @@ class Summon(commands.Cog):
             embed.set_image(url="attachment://crate_open.gif")
 
         message = await interaction.followup.send(embed=embed, files=files, wait=True)
-        await asyncio.sleep(GIF_DURATION)
 
-        tickets = forced_tickets if forced_tickets is not None else random.randint(1, MAX_TICKETS)
-        clovers_before = (
-            forced_clovers
-            if forced_clovers is not None
-            else (0 if is_test else get_luck(str(interaction.user.id)).get("clovers", 0))
-        )
-        tickets = max(1, min(MAX_TICKETS, int(tickets)))
-        clovers_before = max(0, min(MAX_CLOVERS, int(clovers_before)))
+        try:
+            await asyncio.sleep(GIF_DURATION)
 
-        for i in range(1, tickets + 1):
-            embed.description = (
-                f"*Sbíráš lístky štěstí…*\n\n"
-                f"{ticket_bar(i, MAX_TICKETS)}\n**{i}/{MAX_TICKETS}**"
+            tickets = forced_tickets if forced_tickets is not None else random.randint(1, MAX_TICKETS)
+            clovers_before = (
+                forced_clovers
+                if forced_clovers is not None
+                else (0 if is_test else get_luck(str(interaction.user.id)).get("clovers", 0))
             )
-            await message.edit(embed=embed)
-            await asyncio.sleep(TICKET_STEP)
+            tickets = max(1, min(MAX_TICKETS, int(tickets)))
+            clovers_before = max(0, min(MAX_CLOVERS, int(clovers_before)))
 
-        # 10/10 lístků přidá jeden čtyřlístek do luck metru.
-        # Testovací režim nesmí měnit reálný luck meter hráče.
-        if tickets == MAX_TICKETS:
-            clovers_after = (
-                clovers_before
-                if is_test
-                else add_clover(str(interaction.user.id))
-            )
-            embed.description = (
-                "🍀 **JACKPOT!!!!** 🍀\n\n"
-                f"{ticket_bar(MAX_TICKETS, MAX_TICKETS)}\n"
-                f"Čtyřlístky štěstí: **{clovers_after}/{MAX_CLOVERS}**\n"
-                f"{clover_bar(clovers_after, MAX_CLOVERS)}"
-            )
-            await message.edit(embed=embed)
-            await asyncio.sleep(1.25)
-        else:
-            clovers_after = clovers_before
-            embed.description = (
-                f"*Máš **{tickets}** "
-                f"{'lístek' if tickets == 1 else 'lístky' if tickets < 5 else 'lístků'} štěstí!*\n\n"
-                f"{ticket_bar(tickets, MAX_TICKETS)}\n"
-                f"🍀 Čtyřlístky: **{clovers_after}/{MAX_CLOVERS}**"
-            )
-            await message.edit(embed=embed)
-            await asyncio.sleep(0.8)
+            for i in range(1, tickets + 1):
+                embed.description = (
+                    f"*Sbíráš lístky štěstí…*\n\n"
+                    f"{ticket_bar(i, MAX_TICKETS)}\n**{i}/{MAX_TICKETS}**"
+                )
+                await message.edit(embed=embed)
+                await asyncio.sleep(TICKET_STEP)
 
-        guaranteed_jackpot = clovers_after >= MAX_CLOVERS
+            # 10/10 lístků přidá jeden čtyřlístek do luck metru.
+            # Testovací režim nesmí měnit reálný luck meter hráče.
+            if tickets == MAX_TICKETS:
+                clovers_after = (
+                    clovers_before
+                    if is_test
+                    else add_clover(str(interaction.user.id))
+                )
+                embed.description = (
+                    "🍀 **JACKPOT!!!!** 🍀\n\n"
+                    f"{ticket_bar(MAX_TICKETS, MAX_TICKETS)}\n"
+                    f"Čtyřlístky štěstí: **{clovers_after}/{MAX_CLOVERS}**\n"
+                    f"{clover_bar(clovers_after, MAX_CLOVERS)}"
+                )
+                await message.edit(embed=embed)
+                await asyncio.sleep(1.25)
+            else:
+                clovers_after = clovers_before
+                embed.description = (
+                    f"*Máš **{tickets}** "
+                    f"{'lístek' if tickets == 1 else 'lístky' if tickets < 5 else 'lístků'} štěstí!*\n\n"
+                    f"{ticket_bar(tickets, MAX_TICKETS)}\n"
+                    f"🍀 Čtyřlístky: **{clovers_after}/{MAX_CLOVERS}**"
+                )
+                await message.edit(embed=embed)
+                await asyncio.sleep(0.8)
 
-        for delay, frame in zip(ROLL_DELAYS, get_roll_images(len(ROLL_DELAYS))):
-            roll_embed = discord.Embed(
-                title="🌀 Karty se točí…",
-                description=f"{ticket_bar(tickets, MAX_TICKETS)}\n🍀 {clover_bar(clovers_after, MAX_CLOVERS)}",
-                color=crate_data["color"],
+            guaranteed_jackpot = clovers_after >= MAX_CLOVERS
+
+            for delay, frame in zip(ROLL_DELAYS, get_roll_images(len(ROLL_DELAYS))):
+                roll_embed = discord.Embed(
+                    title="🌀 Karty se točí…",
+                    description=f"{ticket_bar(tickets, MAX_TICKETS)}\n🍀 {clover_bar(clovers_after, MAX_CLOVERS)}",
+                    color=crate_data["color"],
+                )
+                roll_embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+                roll_embed.set_image(url=f"attachment://{os.path.basename(frame)}")
+                try:
+                    await message.edit(
+                        embed=roll_embed,
+                        attachments=[discord.File(frame, filename=os.path.basename(frame))],
+                    )
+                except discord.HTTPException:
+                    # Jeden vadný/moc velký snímek nesmí spadnout celou animaci —
+                    # pokračuj bez obrázku a jeď dál.
+                    roll_embed.set_image(url=None)
+                    await message.edit(embed=roll_embed, attachments=[])
+                await asyncio.sleep(delay)
+
+            if guaranteed_jackpot:
+                await self._play_jackpot_fx(message, interaction)
+
+            granted = grant_random_card(
+                str(interaction.user.id),
+                tickets=tickets,
+                clovers=clovers_after,
+                guaranteed_jackpot=guaranteed_jackpot,
             )
-            roll_embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-            roll_embed.set_image(url=f"attachment://{os.path.basename(frame)}")
-            await message.edit(
-                embed=roll_embed,
-                attachments=[discord.File(frame, filename=os.path.basename(frame))],
-            )
-            await asyncio.sleep(delay)
+            if not granted:
+                await message.edit(
+                    embed=discord.Embed(
+                        title="📦 Bedna je prázdná",
+                        description="Databáze karet neobsahuje žádný vzor — bedna se ti vrátila.",
+                        color=0xE74C3C,
+                    ),
+                    attachments=[],
+                )
+                if not is_test:
+                    change_crates(str(interaction.user.id), crate, 1)
+                return
 
-        if guaranteed_jackpot:
-            await self._play_jackpot_fx(message, interaction)
-
-        granted = grant_random_card(
-            str(interaction.user.id),
-            tickets=tickets,
-            clovers=clovers_after,
-            guaranteed_jackpot=guaranteed_jackpot,
-        )
-        if not granted:
-            await message.edit(
-                embed=discord.Embed(
-                    title="📦 Bedna je prázdná",
-                    description="Databáze karet neobsahuje žádný vzor — bedna se ti vrátila.",
-                    color=0xE74C3C,
+            unique_id, card = granted
+            if guaranteed_jackpot and not is_test:
+                reset_clovers(str(interaction.user.id))
+                clovers_after = 0
+            elif guaranteed_jackpot and is_test:
+                clovers_after = 0  # jen pro zobrazení v showcase, reálný luck meter zůstává netknutý
+            showcase = await asyncio.get_running_loop().run_in_executor(
+                None,
+                partial(
+                    build_showcase_image,
+                    card,
+                    unique_id,
+                    owner_name=interaction.user.display_name,
+                    tickets=f"{tickets}/{MAX_TICKETS}  ·  🍀 {clovers_after}/{MAX_CLOVERS}",
                 ),
-                attachments=[],
             )
-            if not is_test:
-                change_crates(str(interaction.user.id), crate, 1)
-            return
+            view = KeepBurnView(uid=str(interaction.user.id), unique_id=unique_id, card=card)
 
-        unique_id, card = granted
-        if guaranteed_jackpot:
-            reset_clovers(str(interaction.user.id))
-            clovers_after = 0
-        showcase = await asyncio.get_running_loop().run_in_executor(
-            None,
-            partial(
-                build_showcase_image,
-                card,
-                unique_id,
-                owner_name=interaction.user.display_name,
-                tickets=f"{tickets}/{MAX_TICKETS}  ·  🍀 {clovers_after}/{MAX_CLOVERS}",
-            ),
-        )
-        view = KeepBurnView(uid=str(interaction.user.id), unique_id=unique_id, card=card)
+            if showcase is None:
+                await message.edit(
+                    content=f"🎴 {interaction.user.mention} vysummonoval **{card.get('name')}** — obrázek karty chybí.",
+                    embed=None,
+                    attachments=[],
+                    view=view,
+                )
+                view.message = message
+                return
 
-        if showcase is None:
             await message.edit(
-                content=f"🎴 {interaction.user.mention} vysummonoval **{card.get('name')}** — obrázek karty chybí.",
+                content=f"🎴 {interaction.user.mention} vysummonoval **{card.get('name')}**!",
                 embed=None,
-                attachments=[],
+                attachments=[discord.File(showcase, filename="card.png")],
                 view=view,
             )
             view.message = message
-            return
-
-        await message.edit(
-            content=f"🎴 {interaction.user.mention} vysummonoval **{card.get('name')}**!",
-            embed=None,
-            attachments=[discord.File(showcase, filename="card.png")],
-            view=view,
-        )
-        view.message = message
+        except Exception:
+            await self._fail_opening(message)
+            raise
 
 
 async def setup(bot):
