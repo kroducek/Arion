@@ -305,6 +305,7 @@ COLLECTIONS = {
     "first-beings":  {"color": 0x9B59B6, "emoji": "⚜️",  "description": "Původní - ti, jenž tu jsou od počátku"},
     "shadows":  {"color": 0x9B59B6, "emoji": "👤",  "description": "Stíny - Neunikneš stínům v tvém srdci"},
     "witches":  {"color": 0x9B59B6, "emoji": "♦️",  "description": "Hříšné čarodějky patřící pod Sedm smrtelných hříchů"},
+    "angels":  {"color": 0x9B59B6, "emoji": "☀️",  "description": "Andělé věří, že můžou zničit veškeré zlo"},
 }
 SEED_CARDS = [
     {"id": 1, "name": "Alice Aurelion", "description": "Mystická postava z Aurionisu s aurou tajemství.",    "image": "unworthy_alice_aurelion.png", "collection": "unworthy"},
@@ -331,6 +332,7 @@ SEED_CARDS = [
     {"id": 22, "name": "Elegantní šašek",       "description": "Šašek jenž je známý svou touhou hrát hry", "image": "elegantni_sasek.png",               "collection": "jesters"},
     {"id": 23, "name":"Jason Harvey",       "description": "Říká se, že mu ženy a hádankáři padají k nohám", "image": "jason.png",               "collection": "unworthy"},
     {"id": 24, "name": "Malý šašek",       "description": "Šašek jenž často asistuje ostatním šaškům", "image": "maly_sasek.png",               "collection": "jesters"},
+    {"id": 25, "name": "Marco",       "description": "Vůdce Andělů, frakce věří, že zlo musí být zničeno", "image": "marco.png",               "collection": "angels"},
 ]
 
 # ---------------------------------------------------------------------------
