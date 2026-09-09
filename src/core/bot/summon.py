@@ -1,6 +1,7 @@
 import asyncio
 import os
 import random
+from datetime import datetime, timedelta, timezone
 from functools import partial
 import discord
 from discord import app_commands
@@ -37,6 +38,12 @@ TICKET_EMOJI = "🎟️"
 MAX_TICKETS = 10
 MAX_CLOVERS = 5
 LUCK_DATA = _data("summon_luck.json")
+
+DAILY_DATA = _data("summon_daily.json")
+DAILY_REWARD_CRATE = "basic"
+DAILY_COOLDOWN = timedelta(hours=24)
+# Pokud hráč přijde do 48h od poslední odměny, streak pokračuje; jinak spadne na 1.
+DAILY_STREAK_WINDOW = timedelta(hours=48)
 
 # Prodlevy jednotlivých fází animace (sekundy)
 GIF_DURATION = 3.0
@@ -177,6 +184,28 @@ def reset_clovers(uid: str) -> int:
     return 0
 
 
+def load_daily() -> dict:
+    """Načte stav denních odměn všech hráčů."""
+    return load_json(DAILY_DATA, default={})
+
+
+def _parse_utc(iso_str: str) -> datetime:
+    """Naparsuje ISO timestamp a doplní UTC, pokud v něm chybí timezone."""
+    dt = datetime.fromisoformat(iso_str)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def days_word(n: int) -> str:
+    """Skloňuje slovo 'den' podle počtu — 1 den / 2-4 dny / 5+ dní."""
+    if n == 1:
+        return "den"
+    if 2 <= n <= 4:
+        return "dny"
+    return "dní"
+
+
 # ---------------------------------------------------------------------------
 # Cog
 # ---------------------------------------------------------------------------
@@ -187,6 +216,7 @@ class Summon(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self._opening: set[str] = set()
+        self._claiming_daily: set[str] = set()
 
     summon_group = app_commands.Group(name="summon", description="Summonování karet z beden")
 
@@ -208,6 +238,93 @@ class Summon(commands.Cog):
             )
         embed.set_footer(text="⚜️ Aurionis")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @summon_group.command(name="daily", description="Vyzvedni si denní odměnu (jednou za 24 hodin)")
+    async def daily(self, interaction: discord.Interaction):
+        """Denní odměna — 1× Základní bedna. Počítá se i day streak a nejdelší streak."""
+        uid = str(interaction.user.id)
+
+        if uid in self._claiming_daily:
+            await interaction.response.send_message(
+                "Odměnu si už vyzvedáváš — chvilku počkej.", ephemeral=True
+            )
+            return
+
+        now = datetime.now(timezone.utc)
+        data = load_daily()
+        state = data.get(uid, {"last_claim": None, "streak": 0, "max_streak": 0})
+
+        last_claim_raw = state.get("last_claim")
+        if last_claim_raw:
+            last_claim = _parse_utc(last_claim_raw)
+            elapsed = now - last_claim
+
+            if elapsed < DAILY_COOLDOWN:
+                remaining = DAILY_COOLDOWN - elapsed
+                hours, rem = divmod(int(remaining.total_seconds()), 3600)
+                minutes = rem // 60
+                await interaction.response.send_message(
+                    f"⏳ Dnešní odměnu jsi už vyzvedl. Zkus to znovu za **{hours}h {minutes}m**.",
+                    ephemeral=True,
+                )
+                return
+
+            new_streak = state.get("streak", 0) + 1 if elapsed <= DAILY_STREAK_WINDOW else 1
+        else:
+            new_streak = 1
+
+        streak_broken = bool(last_claim_raw) and new_streak == 1 and state.get("streak", 0) > 1
+        new_max_streak = max(state.get("max_streak", 0), new_streak)
+
+        self._claiming_daily.add(uid)
+        try:
+            data[uid] = {
+                "last_claim": now.isoformat(),
+                "streak": new_streak,
+                "max_streak": new_max_streak,
+            }
+            save_json(DAILY_DATA, data)
+            change_crates(uid, DAILY_REWARD_CRATE, 1)
+
+            crate_data = CRATES[DAILY_REWARD_CRATE]
+
+            embed = discord.Embed(
+                title="📅 Otevíráš dnešní odměnu…",
+                description="*Kalendář se s vrzáním otáčí…*",
+                color=0x3498DB,
+            )
+            embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+            await interaction.response.send_message(embed=embed)
+            message = await interaction.original_response()
+            await asyncio.sleep(0.9)
+
+            embed.description = "✨ Něco se z něj sype ven…"
+            await message.edit(embed=embed)
+            await asyncio.sleep(0.9)
+
+            final_embed = discord.Embed(
+                title="🎁 Denní odměna vyzvednuta!",
+                description=f"{interaction.user.mention} získává **1× {crate_data['name']}** {crate_data['emoji']}",
+                color=0x2ECC71,
+            )
+            final_embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+            final_embed.add_field(
+                name="🔥 Aktuální streak",
+                value=f"**{new_streak}** {days_word(new_streak)}",
+                inline=True,
+            )
+            final_embed.add_field(
+                name="🏆 Nejdelší streak",
+                value=f"**{new_max_streak}** {days_word(new_max_streak)}",
+                inline=True,
+            )
+            if streak_broken:
+                final_embed.set_footer(text="Streak spadl, protože sis odměnu nevyzvedl včas — ale jedeš znovu od 1! Vrať se zítra.")
+            else:
+                final_embed.set_footer(text="Vrať se zítra, ať streak nespadne!")
+            await message.edit(embed=final_embed)
+        finally:
+            self._claiming_daily.discard(uid)
 
     @summon_group.command(name="give", description="[ADMIN] Přidat bedny více hráčům najednou")
     @app_commands.checks.has_permissions(administrator=True)
