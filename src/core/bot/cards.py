@@ -6,7 +6,7 @@ import uuid
 import random
 import string
 import math
-v
+from typing import Optional, Tuple, Dict, Any
 from datetime import datetime, timedelta
 from discord.ext import commands
 from discord import app_commands
