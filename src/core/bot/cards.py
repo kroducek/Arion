@@ -333,6 +333,7 @@ SEED_CARDS = [
     {"id": 23, "name":"Jason Harvey",       "description": "Říká se, že mu ženy a hádankáři padají k nohám", "image": "jason.png",               "collection": "unworthy"},
     {"id": 24, "name": "Malý šašek",       "description": "Šašek jenž často asistuje ostatním šaškům", "image": "maly_sasek.png",               "collection": "jesters"},
     {"id": 25, "name": "Marco",       "description": "Vůdce Andělů, frakce věří, že zlo musí být zničeno", "image": "marco.png",               "collection": "angels"},
+    {"id": 26, "name": "Draculis",       "description": "Ten lepší z původních jenž ovládá krev svých nepřátel", "image": "draculis.png",               "collection": "first-beings"},
 ]
 
 # ---------------------------------------------------------------------------
