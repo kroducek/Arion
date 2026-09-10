@@ -335,6 +335,7 @@ SEED_CARDS = [
     {"id": 25, "name": "Marco",       "description": "Vůdce Andělů, frakce věří, že zlo musí být zničeno", "image": "marco.png",               "collection": "angels"},
     {"id": 26, "name": "Draculis",       "description": "Ten lepší z původních jenž ovládá krev svých nepřátel", "image": "draculis.png",               "collection": "first-beings"},
     {"id": 27, "name": "Kocour",       "description": "Mluvící kocour a zároveň vyvolený dobrodruh", "image": "kocour.png",               "collection": "chosen"},
+    {"id": 28, "name": "Žolo",       "description": "Vodní mág jenž byl vyvolený učastnit se turnaje", "image": "zolo.png",               "collection": "chosen"},
 ]
 
 # ---------------------------------------------------------------------------
