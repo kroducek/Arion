@@ -1,12 +1,12 @@
 import discord
 from discord.ext import commands
-import json
 import os
 import re
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 
 from src.utils.paths import DND_COUNTER as COUNTER_FILE
+from src.utils.json_utils import load_json, save_json
 SNAJPY_ID    = 252489083899609089
 
 DND_PATTERNS = [
@@ -25,21 +25,13 @@ DND_PATTERNS = [
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def load_counter() -> int:
-    if os.path.exists(COUNTER_FILE):
-        try:
-            with open(COUNTER_FILE, "r", encoding="utf-8") as f:
-                return json.load(f).get("count", 0)
-        except Exception:
-            return 0
-    return 0
+    try:
+        return int(load_json(COUNTER_FILE, default={}).get("count", 0))
+    except (TypeError, ValueError, AttributeError):
+        return 0
 
 def save_counter(count: int):
-    try:
-        os.makedirs(os.path.dirname(COUNTER_FILE), exist_ok=True)
-        with open(COUNTER_FILE, "w", encoding="utf-8") as f:
-            json.dump({"count": count}, f)
-    except Exception as e:
-        print(f"[snajpycounter] Chyba při ukládání: {e}")
+    save_json(COUNTER_FILE, {"count": count})
 
 def is_dnd_message(content: str) -> bool:
     text = content.lower()

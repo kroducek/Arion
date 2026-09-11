@@ -172,31 +172,22 @@ DEFAULT_ITEMS = {
 
 
 def bootstrap_items() -> None:
-    """Zajistí, že items.json obsahuje všechny systémové položky potřebné pro loadouty."""
-    items_file = data("items.json")
+    """Zajistí, že položky potřebné pro loadouty existují v databázi."""
+    from src.utils.json_utils import update_json  # lazy — json_utils importuje paths
+
     os.makedirs(DATA_DIR, exist_ok=True)
-    
-    try:
-        if os.path.exists(items_file):
-            with open(items_file, "r", encoding="utf-8") as f:
-                items = json.load(f)
-        else:
+
+    def _add_missing(items: dict) -> dict:
+        if not isinstance(items, dict):
             items = {}
+        for item_id, item_def in DEFAULT_ITEMS.items():
+            items.setdefault(item_id, item_def)
+        return items
+
+    try:
+        update_json(data("items.json"), _add_missing)
     except Exception:
-        items = {}
-    
-    changed = False
-    for item_id, item_def in DEFAULT_ITEMS.items():
-        if item_id not in items:
-            items[item_id] = item_def
-            changed = True
-    
-    if changed or not os.path.exists(items_file):
-        try:
-            with open(items_file, "w", encoding="utf-8") as f:
-                json.dump(items, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+        pass
 
 
 def data(filename: str) -> str:

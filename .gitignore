@@ -17,6 +17,12 @@ ENV/
 # --- DATA SOUBORY (runtime, obsahují uživatelská data) ---
 # Tyto soubory žijí na Railway Volume (/data), ne v repozitáři
 src/database/data/*.json
+src/database/data/json_backup_*/
+
+# --- SQLITE ---
+*.db
+*.db-wal
+*.db-shm
 
 # --- IDE / NÁSTROJE ---
 .claude/settings.local.json

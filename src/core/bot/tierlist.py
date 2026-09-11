@@ -6,8 +6,9 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from typing import Optional
-import json
 import os
+
+from src.utils.json_utils import load_json, save_json
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -27,15 +28,10 @@ TIER_COLORS = {
 # ── JSON helpers ───────────────────────────────────────────────────────────────
 
 def load_tierlists() -> dict:
-    if not os.path.exists(DATA_PATH):
-        return {}
-    with open(DATA_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return load_json(DATA_PATH, default={})
 
 def save_tierlists(data: dict):
-    os.makedirs(os.path.dirname(DATA_PATH), exist_ok=True)
-    with open(DATA_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    save_json(DATA_PATH, data)
 
 def tierlist_key(guild_id: int, name: str) -> str:
     return f"{guild_id}:{name.lower()}"

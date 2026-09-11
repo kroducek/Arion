@@ -16,29 +16,21 @@ import discord
 import os
 import random
 import asyncio
-import json
 from discord.ext import commands
 from discord import app_commands
 
 from src.utils.paths import ECONOMY as ECONOMY_PATH, TAROT_DIR
 from src.logic.economy import minigame_file, minigame_coin
+from src.utils.json_utils import load_json, save_json
 POPLATEK     = 50
 MAX_SESSION  = 8
 GOLD_EMOJI   = "<:goldcoin:1490171741237018795>"
 
 def load_eco():
-    if not os.path.exists(minigame_file()):
-        return {}
-    try:
-        with open(minigame_file(), "r", encoding="utf-8") as f:
-            c = f.read().strip()
-            return json.loads(c) if c else {}
-    except Exception:
-        return {}
+    return load_json(minigame_file(), default={})
 
 def save_eco(data):
-    with open(minigame_file(), "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4)
+    save_json(minigame_file(), data)
 
 def deduct(uid, amount):
     data = load_eco()

@@ -13,7 +13,6 @@ import discord
 import re
 import random
 import asyncio
-import json
 import os
 import sys
 from discord.ext import commands
@@ -33,21 +32,13 @@ except Exception:
 
 from src.utils.paths import ECONOMY as ECONOMY_PATH, KOSTKY_LB as STATS_PATH, KOSTKY_MAGIC as MAGIC_DICE_PATH
 from src.logic.economy import minigame_file, minigame_coin, get_minigame_currency, COIN_GOLD, COIN_SILVER
+from src.utils.json_utils import load_json, save_json
 
 def _econ_load() -> dict:
-    try:
-        with open(minigame_file(), "r", encoding="utf-8") as f:
-            content = f.read().strip()
-            return json.loads(content) if content else {}
-    except Exception:
-        return {}
+    return load_json(minigame_file(), default={})
 
 def _econ_save(data: dict):
-    try:
-        with open(minigame_file(), "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4)
-    except Exception as e:
-        print(f"[kostky] economy save chyba: {e}")
+    save_json(minigame_file(), data)
 
 def econ_get(user_id: int) -> int:
     return _econ_load().get(str(user_id), 0)
@@ -73,19 +64,10 @@ def econ_deduct(user_id: int, amount: int) -> bool:
 
 
 def _stats_load() -> dict:
-    try:
-        with open(os.path.abspath(STATS_PATH), "r", encoding="utf-8") as f:
-            content = f.read().strip()
-            return json.loads(content) if content else {}
-    except Exception:
-        return {}
+    return load_json(STATS_PATH, default={})
 
 def _stats_save(data: dict):
-    try:
-        with open(os.path.abspath(STATS_PATH), "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[kostky] stats save chyba: {e}")
+    save_json(STATS_PATH, data)
 
 def _kostky_migrate(rec: dict):
     """Starý jednotný 'profit' → profit_silver (hry běžely na stříbro)."""
@@ -228,19 +210,10 @@ ALL_MAGIC_TYPES = list(MAGIC_DIE_INFO.keys())
 # Trvalé úložiště magických kostek (JSON)
 
 def _mdice_load() -> dict:
-    try:
-        with open(os.path.abspath(MAGIC_DICE_PATH), "r", encoding="utf-8") as f:
-            content = f.read().strip()
-            return json.loads(content) if content else {}
-    except Exception:
-        return {}
+    return load_json(MAGIC_DICE_PATH, default={})
 
 def _mdice_save(data: dict):
-    try:
-        with open(os.path.abspath(MAGIC_DICE_PATH), "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[kostky] magic_dice save chyba: {e}")
+    save_json(MAGIC_DICE_PATH, data)
 
 def get_magic_dice(guild_id: int, user_id: int) -> list:
     return _mdice_load().get(str(guild_id), {}).get(str(user_id), [])

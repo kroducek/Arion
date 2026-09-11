@@ -1,6 +1,5 @@
 import random
 import re
-import json
 import os
 import discord
 from discord.ext import commands
@@ -582,15 +581,9 @@ class StoryCog(commands.Cog):
             await interaction.response.send_message("Tady už hra běží!", ephemeral=True)
             return
 
-        if not os.path.exists(SAVE_FILE):
+        saves = load_json(SAVE_FILE, default={})
+        if not saves:
             await interaction.response.send_message("Žádná uložená hra nenalezena.", ephemeral=True)
-            return
-
-        try:
-            with open(SAVE_FILE, "r", encoding="utf-8") as f:
-                saves = json.load(f)
-        except:
-            await interaction.response.send_message("Chyba při čtení uložené hry.", ephemeral=True)
             return
 
         channel_id = str(interaction.channel.id)

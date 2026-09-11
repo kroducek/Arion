@@ -14,7 +14,7 @@ from src.utils.paths import (
     SHOPS as SHOPS_FILE,
     PROFILES as PROFILES_FILE,
 )
-from src.utils.json_utils import load_json, save_json
+from src.utils.json_utils import load_json, save_json, update_json
 from src.database.characters import pkey, use_slot
 from src.utils.char_target import POSTAVA_DESC, char_note, postava_autocomplete, resolve_postava
 
@@ -129,25 +129,30 @@ def get_balance(uid, currency: str = "gold") -> int:
 
 def set_balance(uid, amount: int, currency: str = "gold") -> int:
     """Nastaví zůstatek na přesnou hodnotu."""
-    f = _currency_file(currency)
-    data = load_json(f, default={})
-    data[_wallet_key(uid, currency)] = int(amount)
-    save_json(f, data)
+    key = _wallet_key(uid, currency)
+    update_json(_currency_file(currency), lambda data: data.update({key: int(amount)}))
     return int(amount)
+
+
+def _as_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def add_balance(uid, amount: int, currency: str = "gold") -> int:
     """Přičte částku (smí být záporná) a vrátí nový zůstatek."""
-    f = _currency_file(currency)
-    data = load_json(f, default={})
     key = _wallet_key(uid, currency)
-    try:
-        current = int(data.get(key, 0))
-    except (TypeError, ValueError):
-        current = 0
-    data[key] = current + int(amount)
-    save_json(f, data)
-    return data[key]
+    new_value = 0
+
+    def _apply(data: dict) -> None:
+        nonlocal new_value
+        new_value = _as_int(data.get(key, 0)) + int(amount)
+        data[key] = new_value
+
+    update_json(_currency_file(currency), _apply)
+    return new_value
 
 
 def spend(uid, amount: int, currency: str = "gold") -> bool:
@@ -155,18 +160,18 @@ def spend(uid, amount: int, currency: str = "gold") -> bool:
     amount = int(amount)
     if amount <= 0:
         return True
-    f = _currency_file(currency)
-    data = load_json(f, default={})
     key = _wallet_key(uid, currency)
-    try:
-        bal = int(data.get(key, 0))
-    except (TypeError, ValueError):
-        bal = 0
-    if bal < amount:
-        return False
-    data[key] = bal - amount
-    save_json(f, data)
-    return True
+    ok = False
+
+    def _apply(data: dict) -> None:
+        nonlocal ok
+        balance = _as_int(data.get(key, 0))
+        if balance >= amount:
+            data[key] = balance - amount
+            ok = True
+
+    update_json(_currency_file(currency), _apply)
+    return ok
 
 
 def transfer(uid_from, uid_to, amount: int, currency: str = "gold") -> bool:
