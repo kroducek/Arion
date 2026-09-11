@@ -15,7 +15,8 @@ from src.utils.paths import (
     PROFILES as PROFILES_FILE,
 )
 from src.utils.json_utils import load_json, save_json
-from src.database.characters import pkey
+from src.database.characters import pkey, use_slot
+from src.utils.char_target import POSTAVA_DESC, char_note, postava_autocomplete, resolve_postava
 
 # Destinace pro lokaci obchodů — čteno LÍNĚ (až za běhu), aby nezáleželo na
 # pořadí načítání cogů. Statické choices se vyhodnotí při importu, kdy onboard
@@ -647,14 +648,17 @@ class Economy(commands.Cog):
         member="Hráč",
         amount="Kolik přidat",
         mena="Která měna (výchozí: zlaťáky)",
+        postava=POSTAVA_DESC,
     )
     @app_commands.choices(mena=MENA_CHOICES)
+    @app_commands.autocomplete(postava=postava_autocomplete)
     async def gadd(
         self,
         interaction: discord.Interaction,
         member: discord.Member,
         amount: int,
         mena: app_commands.Choice[str] | None = None,
+        postava: str | None = None,
     ):
         currency = mena.value if mena else "gold"
         icon = coin(currency)
@@ -664,9 +668,20 @@ class Economy(commands.Cog):
         if member.bot:
             return await interaction.response.send_message("Botům měnu přidávat nelze.", ephemeral=True)
 
-        new_bal = add_balance(member.id, amount, currency)
+        slot, err = resolve_postava(member.id, postava)
+        if err:
+            return await interaction.response.send_message(err, ephemeral=True)
+        if postava and currency != "gold":
+            return await interaction.response.send_message(
+                f"{currency_name(currency).capitalize()} jsou účtové — sdílí je všechny postavy, "
+                f"parametr `postava` tu nedává smysl.", ephemeral=True
+            )
+
+        with use_slot(member.id, slot):
+            new_bal = add_balance(member.id, amount, currency)
         await interaction.response.send_message(
             f"✅ Přidáno **{amount}** {icon} hráči {member.mention}. (Celkem: {new_bal})"
+            + char_note(member.id, slot, postava)
         )
 
     @app_commands.command(name="dmgold",
@@ -745,6 +760,7 @@ class Economy(commands.Cog):
         amount = "Kolik odebrat (nebo 0 pro reset na nulu)",
         mena   = "Která měna (výchozí: zlaťáky)",
         minus  = "Povolit záporný zůstatek? (výchozí: Ne)",
+        postava = POSTAVA_DESC,
     )
     @app_commands.choices(
         mena=MENA_CHOICES,
@@ -753,6 +769,7 @@ class Economy(commands.Cog):
             app_commands.Choice(name="Ne — odebere max co má",   value=0),
         ],
     )
+    @app_commands.autocomplete(postava=postava_autocomplete)
     async def gremove(
         self,
         interaction: discord.Interaction,
@@ -760,6 +777,7 @@ class Economy(commands.Cog):
         amount: int,
         mena: app_commands.Choice[str] | None = None,
         minus: int = 0,
+        postava: str | None = None,
     ):
         currency = mena.value if mena else "gold"
         icon = coin(currency)
@@ -769,33 +787,45 @@ class Economy(commands.Cog):
                 "Zadej kladné číslo (nebo 0 pro reset na nulu)!", ephemeral=True
             )
 
-        current = get_balance(member.id, currency)
-
-        if amount == 0:
-            set_balance(member.id, 0, currency)
+        slot, err = resolve_postava(member.id, postava)
+        if err:
+            return await interaction.response.send_message(err, ephemeral=True)
+        if postava and currency != "gold":
             return await interaction.response.send_message(
-                f"🗑️ Hráči {member.mention} bylo odebráno všech **{current}** {icon}. Konto je prázdné."
+                f"{currency_name(currency).capitalize()} jsou účtové — sdílí je všechny postavy, "
+                f"parametr `postava` tu nedává smysl.", ephemeral=True
             )
+        note = char_note(member.id, slot, postava)
 
-        if minus:
-            # Povolíme záporný zůstatek
-            new_bal = add_balance(member.id, -amount, currency)
-            bal_str = f"**{new_bal}** {icon}" if new_bal >= 0 else f"**{new_bal}** {icon}  *(dluh)*"
-            await interaction.response.send_message(
-                f"🗑️ Odebráno **{amount}** {icon} hráči {member.mention}. (Zbývá: {bal_str})"
-            )
-        else:
-            # Klasické chování — nejde pod nulu
-            if current == 0:
+        with use_slot(member.id, slot):
+            current = get_balance(member.id, currency)
+
+            if amount == 0:
+                set_balance(member.id, 0, currency)
                 return await interaction.response.send_message(
-                    f"Hráč {member.mention} nemá žádné {currency_name(currency)}.", ephemeral=True
+                    f"🗑️ Hráči {member.mention} bylo odebráno všech **{current}** {icon}. "
+                    f"Konto je prázdné." + note
                 )
-            actual = min(amount, current)
-            set_balance(member.id, current - actual, currency)
-            msg = f"🗑️ Odebráno **{actual}** {icon} hráči {member.mention}. (Zbývá: {current - actual})"
-            if actual < amount:
-                msg += f"\n-# *(Hráč měl jen {current}, odebráno maximum. Použij `minus: Ano` pro dluh.)*"
-            await interaction.response.send_message(msg)
+
+            if minus:
+                # Povolíme záporný zůstatek
+                new_bal = add_balance(member.id, -amount, currency)
+                bal_str = f"**{new_bal}** {icon}" if new_bal >= 0 else f"**{new_bal}** {icon}  *(dluh)*"
+                await interaction.response.send_message(
+                    f"🗑️ Odebráno **{amount}** {icon} hráči {member.mention}. (Zbývá: {bal_str})" + note
+                )
+            else:
+                # Klasické chování — nejde pod nulu
+                if current == 0:
+                    return await interaction.response.send_message(
+                        f"Hráč {member.mention} nemá žádné {currency_name(currency)}.", ephemeral=True
+                    )
+                actual = min(amount, current)
+                set_balance(member.id, current - actual, currency)
+                msg = f"🗑️ Odebráno **{actual}** {icon} hráči {member.mention}. (Zbývá: {current - actual})"
+                if actual < amount:
+                    msg += f"\n-# *(Hráč měl jen {current}, odebráno maximum. Použij `minus: Ano` pro dluh.)*"
+                await interaction.response.send_message(msg + note)
 
     # ── /minihry_mena ─────────────────────────────────────────────────────────
 

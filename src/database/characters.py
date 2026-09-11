@@ -28,6 +28,8 @@ KLÍČOVÁNÍ DAT:
 Resolver vrací slot "1" i pro hráče bez záznamu, takže per-postava data
 mají vždy tvar "<uid>:<slot>" (po migraci legacy data sedí na "<uid>:1").
 """
+import contextlib
+import contextvars
 import time
 from src.utils.paths import CHARACTERS
 from src.utils.json_utils import load_json, save_json
@@ -54,8 +56,26 @@ def _save(data: dict):
 # RESOLVER  (tohle importují všechny per-postava moduly)
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Dočasné přesměrování resolveru na jiný slot (admin příkazy s parametrem postavy).
+# ContextVar → platí jen uvnitř aktuálního asyncio tasku, souběžné interakce se neovlivní.
+_slot_override: contextvars.ContextVar[dict] = contextvars.ContextVar("char_slot_override", default={})
+
+
+@contextlib.contextmanager
+def use_slot(uid, slot):
+    """Uvnitř bloku míří get_active_slot()/pkey() pro daný účet na zvolený slot."""
+    token = _slot_override.set({**_slot_override.get(), str(uid): str(slot)})
+    try:
+        yield
+    finally:
+        _slot_override.reset(token)
+
+
 def get_active_slot(uid) -> str:
     """Slot aktivní postavy ('1'/'2'). Default '1' i bez záznamu."""
+    override = _slot_override.get().get(str(uid))
+    if override:
+        return override
     rec = _load().get(str(uid))
     if not rec:
         return "1"
@@ -87,6 +107,23 @@ def list_chars(uid) -> dict:
 
 def get_char(uid, slot) -> dict | None:
     return list_chars(uid).get(str(slot))
+
+def resolve_slot(uid, query) -> str | None:
+    """Najde slot podle čísla slotu nebo jména postavy. None = nenalezeno/nejednoznačné."""
+    q = str(query).strip().lower()
+    if not q:
+        return None
+    chars = list_chars(uid)
+    if q in chars:
+        return q
+    exact = [s for s, c in chars.items() if (c.get("name") or "").strip().lower() == q]
+    if len(exact) == 1:
+        return exact[0]
+    partial = [s for s, c in chars.items() if q in (c.get("name") or "").strip().lower()]
+    if len(partial) == 1:
+        return partial[0]
+    return None
+
 
 def char_count(uid) -> int:
     return len(list_chars(uid))
