@@ -5,9 +5,13 @@ from discord.ext import commands
 from discord import app_commands
 from typing import Optional
 
-from src.utils.paths import PROFILES as PROFILES_FILE, ITEMS as ITEMS_FILE
-from src.utils.json_utils import load_json, save_json
-from src.database.characters import pkey
+from src.database.profiles import (
+    load_items as _load_items,
+    load_profiles as _load_profiles,
+    profile_key as _pk,
+    save_items as _save_items,
+    save_profiles as _save_profiles,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -181,24 +185,6 @@ STORAGE_VISUALS = {
 # ══════════════════════════════════════════════════════════════════════════════
 # DATOVÁ VRSTVA
 # ══════════════════════════════════════════════════════════════════════════════
-
-def _load_profiles() -> dict:
-    return load_json(PROFILES_FILE, default={})
-
-def _save_profiles(data: dict) -> None:
-    save_json(PROFILES_FILE, data)
-
-def _load_items() -> dict:
-    return load_json(ITEMS_FILE, default={})
-
-def _save_items(data: dict) -> None:
-    save_json(ITEMS_FILE, data)
-
-def _pk(profiles: dict, uid) -> str:
-    """Klíč profilu: pkey (uid:slot) když existuje, jinak holé uid (nemigrovaní)."""
-    k = pkey(uid)
-    return k if k in profiles else str(uid)
-
 
 def _get_profile(uid: int) -> dict | None:
     profiles = _load_profiles()

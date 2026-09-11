@@ -4,26 +4,14 @@ import logging
 import random
 from discord.ext import commands
 from discord import app_commands, ui
-from src.utils.paths import COMBAT_STATE, PROFILES, ITEMS
+from src.utils.paths import COMBAT_STATE
 from src.utils.json_utils import load_json, save_json
-from src.database.characters import pkey
-
-
-# ── Profile sync helpers ───────────────────────────────────────────────────────
-
-def _load_profiles() -> dict:
-    return load_json(PROFILES, default={})
-
-def _save_profiles(data: dict):
-    save_json(PROFILES, data)
-
-def _pk(profiles: dict, uid) -> str:
-    """Klíč profilu: pkey (uid:slot) když existuje, jinak holé uid (nemigrovaní)."""
-    k = pkey(uid)
-    return k if k in profiles else str(uid)
-
-def _load_items_db() -> dict:
-    return load_json(ITEMS, default={})
+from src.database.profiles import (
+    load_items as _load_items_db,
+    load_profiles as _load_profiles,
+    profile_key as _pk,
+    save_profiles as _save_profiles,
+)
 
 SOURCE_LABEL = {"zbran": "zbraň", "runa": "runa", "prostredi": "prostředí", "schopnost": "schopnost"}
 

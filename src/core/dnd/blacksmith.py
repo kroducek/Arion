@@ -26,6 +26,7 @@ from discord.ext import commands
 from src.utils.paths import PROFILES as PROFILES_FILE
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey
+from src.database.profiles import load_profiles as _load_profiles, save_profiles as _save_profiles
 
 logger = logging.getLogger(__name__)
 
@@ -96,11 +97,6 @@ def load_runes() -> dict:
 def save_runes(data: dict) -> None:
     save_json(RUNES_FILE, data)
 
-def _load_profiles() -> dict:
-    return load_json(PROFILES_FILE, default={})
-
-def _save_profiles(data: dict) -> None:
-    save_json(PROFILES_FILE, data)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
