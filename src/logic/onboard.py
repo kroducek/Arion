@@ -59,7 +59,7 @@ def _attach(embed, fname):
         return None
     embed.set_image(url=f"attachment://{att}")
     return discord.File(path, filename=att)
-from src.utils.json_utils import load_json, save_json
+from src.utils.json_utils import load_json, save_json, update_json
 from src.database.characters import pkey, ensure_active
 
 # ── Konfigurace ───────────────────────────────────────────────────────────────
@@ -299,18 +299,16 @@ class TutorialPartOneView(TutorialView):
     async def listen(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Ochrana — hráč s dokončeným profilem nemůže spustit tutorial znovu
         uid = pkey(interaction.user.id)
-        if os.path.exists(DATA_FILE):
-            try:
-                with open(DATA_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                if data.get(uid, {}).get("loadout_selected"):
-                    return await interaction.response.send_message(
-                        "Už jsi tutorial dokončil/a! "
-                        "Pokud potřebuješ pomoc, napiš DM",
-                        ephemeral=True,
-                    )
-            except Exception:
-                logger.exception('[onboard] potlačená chyba')
+        try:
+            data = load_json(DATA_FILE, default={})
+            if data.get(uid, {}).get("loadout_selected"):
+                return await interaction.response.send_message(
+                    "Už jsi tutorial dokončil/a! "
+                    "Pokud potřebuješ pomoc, napiš DM",
+                    ephemeral=True,
+                )
+        except Exception:
+            logger.exception('[onboard] potlačená chyba')
 
         embed = discord.Embed(
             title="🌌 Aurionis: Act II",
@@ -2596,21 +2594,16 @@ class FinalEnterView(TutorialView):
             uid        = pkey(interaction.user.id)
             date_str   = datetime.now().strftime("%d.%m.")
 
-            diaries = {}
-            if os.path.exists(diary_path):
-                with open(diary_path, "r", encoding="utf-8") as f:
-                    diaries = json.load(f)
+            def _add_entry(diaries: dict) -> None:
+                entries = diaries.get(uid, [])
+                entries.append({
+                    "text":   f"{date_str} — Tutorial byl dokončen, vítej v Aurionisu.",
+                    "pinned": True,
+                    "tag":    "⭐",
+                })
+                diaries[uid] = entries
 
-            entries = diaries.get(uid, [])
-            entries.append({
-                "text":   f"{date_str} — Tutorial byl dokončen, vítej v Aurionisu.",
-                "pinned": True,
-                "tag":    "⭐",
-            })
-            diaries[uid] = entries
-
-            with open(diary_path, "w", encoding="utf-8") as f:
-                json.dump(diaries, f, ensure_ascii=False, indent=2)
+            update_json(diary_path, _add_entry)
         except Exception as e:
             logger.exception(f"[onboard] Nepodařilo se zapsat do deníku: {e}")
 

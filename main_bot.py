@@ -49,6 +49,12 @@ if _data_dir_override:
 
 os.makedirs(_paths.DATA_DIR, exist_ok=True)
 _paths.sync_default_data_files()
+
+# JSON → SQLite: při prvním startu naimportuje existující data, pak už jen
+# doplní nové defaultní klíče. Původní JSONy zůstávají jako záloha.
+from src.database.migrate import run_migration as _run_migration
+_run_migration()
+
 _paths.bootstrap_items()
 
 BOT_COGS = [

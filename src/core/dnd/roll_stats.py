@@ -1,11 +1,11 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import json
 import os
 import threading
 
 from src.utils.paths import ROLL_STATS as ROLL_STATS_FILE
+from src.utils.json_utils import load_json, save_json
 
 _lock = threading.Lock()
 
@@ -26,21 +26,11 @@ _lock = threading.Lock()
 
 def _load_unsafe() -> dict:
     """Načte data bez zámku — volat pouze uvnitř _lock bloku."""
-    if not os.path.exists(ROLL_STATS_FILE):
-        return {}
-    try:
-        with open(ROLL_STATS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    return load_json(ROLL_STATS_FILE, default={})
 
 def _save_unsafe(data: dict):
     """Uloží data bez zámku — volat pouze uvnitř _lock bloku."""
-    try:
-        with open(ROLL_STATS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"[roll_stats] Chyba při ukládání: {e}")
+    save_json(ROLL_STATS_FILE, data)
 
 def load_stats() -> dict:
     """Thread-safe načtení statistik hodů."""

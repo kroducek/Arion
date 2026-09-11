@@ -16,6 +16,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from src.database import db
 from src.utils.paths import DATA_DIR
 
 # Limit přílohy pro ne-boostnuté servery je ~25 MB, necháme rezervu.
@@ -43,9 +44,20 @@ class AdminBackupCog(commands.Cog):
         # Zazipovat všechny soubory v DATA_DIR do paměti
         buf = io.BytesIO()
         count = 0
+        db_name = os.path.basename(db.db_path())
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Databázi nekopírujeme ze souboru (WAL by dal nekonzistentní kopii),
+            # ale přes sqlite backup API.
+            try:
+                zf.writestr(db_name, db.snapshot_bytes())
+                count += 1
+            except Exception:
+                pass
+
             for root, _dirs, files in os.walk(DATA_DIR):
                 for fn in files:
+                    if fn.startswith(db_name):
+                        continue
                     full = os.path.join(root, fn)
                     arc = os.path.relpath(full, DATA_DIR)
                     try:

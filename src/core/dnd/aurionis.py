@@ -5,7 +5,6 @@ Zbytek mechanik (Roll, Combat, Party, Countdown) je ve vlastních souborech.
 """
 import discord
 import random
-import json
 import os
 from discord.ext import commands
 from discord import app_commands
@@ -613,16 +612,8 @@ class Aurionis(commands.Cog):
 
     @vyvoleni_group.command(name="list", description="Zobrazí všechny zaregistrované postavy")
     async def vyvoleni_list(self, interaction: discord.Interaction):
-        import json
-        from src.utils.paths import PROFILES as DATA_FILE
-        if not os.path.exists(DATA_FILE):
-            await interaction.response.send_message("Zatím nikdo není zapsán v knize osudu.", ephemeral=True)
-            return
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except:
-            data = {}
+        from src.database.profiles import load_profiles
+        data = load_profiles()
 
         if not data:
             await interaction.response.send_message("Zatím nikdo není zapsán v knize osudu.", ephemeral=True)

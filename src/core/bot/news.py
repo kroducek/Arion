@@ -10,29 +10,22 @@ Příkazy:
 """
 
 import discord
-import json
 import os
 from datetime import datetime
 from discord.ext import commands
 from discord import app_commands
 
 from src.utils.paths import NEWS as NEWS_PATH
+from src.utils.json_utils import load_json, save_json
 
 # ── DATA ──────────────────────────────────────────────────────────────────────
 
 def load_news() -> list:
-    if not os.path.exists(NEWS_PATH):
-        return []
-    try:
-        with open(NEWS_PATH, "r", encoding="utf-8") as f:
-            content = f.read().strip()
-            return json.loads(content) if content else []
-    except Exception:
-        return []
+    data = load_json(NEWS_PATH, default=[])
+    return data if isinstance(data, list) else []
 
 def save_news(data: list):
-    with open(NEWS_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    save_json(NEWS_PATH, data)
 
 # ── EMBEDY ────────────────────────────────────────────────────────────────────
 

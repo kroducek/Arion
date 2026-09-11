@@ -3,11 +3,11 @@ Audit log — zaznamenává admin akce (give perk, quest, ekonomika...).
 Ukládá do audit_log.json, max 500 záznamů (starší se oříznou).
 Thread-safe s lockingem.
 """
-import json
 import os
 import threading
 from datetime import datetime, timezone
 
+from src.utils.json_utils import load_json, save_json
 from src.utils.paths import data as _data
 from src.utils.logger import get_logger
 
@@ -21,14 +21,8 @@ logger = get_logger("AuditLog")
 def _load() -> list:
     """Thread-safely načte audit log. Vrátí [] na chybu."""
     try:
-        if not os.path.exists(AUDIT_LOG):
-            return []
-        with open(AUDIT_LOG, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, list) else []
-    except json.JSONDecodeError:
-        logger.error(f"Corrupt audit log JSON at {AUDIT_LOG}")
-        return []
+        data = load_json(AUDIT_LOG, default=[])
+        return data if isinstance(data, list) else []
     except Exception as e:
         logger.error(f"Failed to load audit log: {e}")
         return []
@@ -37,11 +31,7 @@ def _load() -> list:
 def _save(entries: list):
     """Thread-safely uloží audit log."""
     try:
-        dir_name = os.path.dirname(AUDIT_LOG)
-        if dir_name:
-            os.makedirs(dir_name, exist_ok=True)
-        with open(AUDIT_LOG, "w", encoding="utf-8") as f:
-            json.dump(entries[-MAX_ENTRIES:], f, ensure_ascii=False, indent=2)
+        save_json(AUDIT_LOG, entries[-MAX_ENTRIES:])
     except Exception as e:
         logger.error(f"Failed to save audit log: {e}")
 
