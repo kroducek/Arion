@@ -11,7 +11,8 @@ import logging
 
 from src.utils.paths import PROFILES as DATA_FILE, ITEMS as ITEMS_FILE
 from src.utils.json_utils import load_json, save_json
-from src.database.characters import pkey
+from src.database.characters import pkey, use_slot
+from src.utils.char_target import POSTAVA_DESC, char_note, postava_autocomplete, resolve_postava
 import datetime
 
 logger = logging.getLogger("Stats")
@@ -942,15 +943,22 @@ class Stats(commands.Cog):
         member="Hráč, který SP dostane.",
         reason="Za co SP dostal (uloží se do logu).",
         amount="Kolik SP (výchozí 1, záporné odebere).",
+        postava=POSTAVA_DESC,
     )
+    @app_commands.autocomplete(postava=postava_autocomplete)
     async def sp_give(self, interaction: discord.Interaction, member: discord.Member,
-                      reason: str, amount: int = 1):
+                      reason: str, amount: int = 1, postava: str | None = None):
         await interaction.response.defer(ephemeral=True)
         if amount == 0:
             await interaction.followup.send("Množství nesmí být 0.", ephemeral=True)
             return
+        slot, err = resolve_postava(member.id, postava)
+        if err:
+            await interaction.followup.send(err, ephemeral=True)
+            return
         try:
-            new = grant_sp(member.id, amount, reason, interaction.user.display_name)
+            with use_slot(member.id, slot):
+                new = grant_sp(member.id, amount, reason, interaction.user.display_name)
         except Exception as e:
             logger.exception(f"[sp_give] {e}")
             await interaction.followup.send(f"❌ Chyba: {str(e)[:100]}", ephemeral=True)
@@ -960,7 +968,7 @@ class Stats(commands.Cog):
         embed = discord.Embed(
             title="⚡ Skill pointy",
             description=(f"{member.mention} dostal **{sign}{amount} SP**\n"
-                         f"-# *{reason}*"),
+                         f"-# *{reason}*" + char_note(member.id, slot, postava)),
             color=0xF1C40F,
         )
         embed.add_field(name="Nový stav", value=f"⚡ **{new}** SP", inline=True)
@@ -1018,24 +1026,31 @@ class Stats(commands.Cog):
         member="Hráč, kterému se SP nastaví.",
         amount="Nová hodnota SP.",
         reason="Proč (volitelné, uloží se do logu).",
+        postava=POSTAVA_DESC,
     )
+    @app_commands.autocomplete(postava=postava_autocomplete)
     async def sp_edit(self, interaction: discord.Interaction, member: discord.Member,
-                      amount: int, reason: str = ""):
+                      amount: int, reason: str = "", postava: str | None = None):
         await interaction.response.defer(ephemeral=True)
         if amount < 0:
             await interaction.followup.send("SP nemůže být záporné.", ephemeral=True)
             return
-        data = _load()
-        before = _profile(data, pkey(member.id)).get("sp", 0)
+        slot, err = resolve_postava(member.id, postava)
+        if err:
+            await interaction.followup.send(err, ephemeral=True)
+            return
         try:
-            new = set_sp(member.id, amount, reason, interaction.user.display_name)
+            with use_slot(member.id, slot):
+                before = _profile(_load(), pkey(member.id)).get("sp", 0)
+                new = set_sp(member.id, amount, reason, interaction.user.display_name)
         except Exception as e:
             logger.exception(f"[sp_edit] {e}")
             await interaction.followup.send(f"❌ Chyba: {str(e)[:100]}", ephemeral=True)
             return
         await interaction.followup.send(
             f"✅ **{member.display_name}**: ⚡ {before} → **{new}** SP"
-            + (f"\n-# *{reason}*" if reason else ""), ephemeral=True)
+            + (f"\n-# *{reason}*" if reason else "")
+            + char_note(member.id, slot, postava), ephemeral=True)
 
     # ── /staty ────────────────────────────────────────────────────────────────
 
@@ -1164,12 +1179,14 @@ class Stats(commands.Cog):
         member="Hráč",
         operace="set = nastav přesnou hodnotu, add/remove = uprav o hodnotu",
         hodnota="Číslo (0–200 pro set, libovolné pro add/remove)",
+        postava=POSTAVA_DESC,
     )
     @app_commands.choices(operace=[
         app_commands.Choice(name="set",    value="set"),
         app_commands.Choice(name="add",    value="add"),
         app_commands.Choice(name="remove", value="remove"),
     ])
+    @app_commands.autocomplete(postava=postava_autocomplete)
     @app_commands.checks.has_permissions(administrator=True)
     async def admin_luck(
         self,
@@ -1177,18 +1194,25 @@ class Stats(commands.Cog):
         member: discord.Member,
         operace: app_commands.Choice[str],
         hodnota: int,
+        postava: str | None = None,
     ):
         try:
-            if operace.value == "set":
-                set_luck(member.id, hodnota)
-                new_luck = max(0, min(200, hodnota))
-            elif operace.value == "add":
-                new_luck = modify_luck(member.id, hodnota)
-            else:
-                new_luck = modify_luck(member.id, -hodnota)
+            slot, err = resolve_postava(member.id, postava)
+            if err:
+                await interaction.response.send_message(err, ephemeral=True)
+                return
+            with use_slot(member.id, slot):
+                if operace.value == "set":
+                    set_luck(member.id, hodnota)
+                    new_luck = max(0, min(200, hodnota))
+                elif operace.value == "add":
+                    new_luck = modify_luck(member.id, hodnota)
+                else:
+                    new_luck = modify_luck(member.id, -hodnota)
 
             await interaction.response.send_message(
-                f"✅ Luck hráče {member.mention} nastaven na **{new_luck}%**.",
+                f"✅ Luck hráče {member.mention} nastaven na **{new_luck}%**."
+                + char_note(member.id, slot, postava),
                 ephemeral=True,
             )
         except Exception as e:
@@ -1205,13 +1229,22 @@ class Stats(commands.Cog):
         member="Hráč",
         amount="Množství XP (kladné = přidat, záporné = odebrat)",
         reason="Důvod (zobrazí se v /xp-log hráče)",
+        postava=POSTAVA_DESC,
     )
+    @app_commands.autocomplete(postava=postava_autocomplete)
     @app_commands.checks.has_permissions(administrator=True)
     async def admin_xp(self, interaction: discord.Interaction, member: discord.Member,
-                       amount: int, reason: str = ""):
+                       amount: int, reason: str = "", postava: str | None = None):
         try:
+            slot, err = resolve_postava(member.id, postava)
+            if err:
+                await interaction.response.send_message(err, ephemeral=True)
+                return
+            note = char_note(member.id, slot, postava)
+
             if amount > 0:
-                result = add_xp(member.id, amount, reason=reason)
+                with use_slot(member.id, slot):
+                    result = add_xp(member.id, amount, reason=reason)
                 if result["leveled_up"]:
                     cap_str = f"/ {result['cap']:,}" if result["cap"] else "(MAX)"
                     levels_str = (
@@ -1224,7 +1257,7 @@ class Stats(commands.Cog):
                             f"{member.mention} dosáhl/a **{level_label(result['new_level'])}**!{levels_str}\n\n"
                             f"XP: **{result['xp']:,}** {cap_str}\n"
                             f"Získané body: 🎯 **{result['ap_gained']} AP**  ·  ⚡ **{result['sp_gained']} SP**\n"
-                            f"-# rozděl přes /staty"
+                            f"-# rozděl přes /staty" + note
                         ),
                         color=0xf1c40f,
                     )
@@ -1235,15 +1268,16 @@ class Stats(commands.Cog):
                     cap_str = f"/ {result['cap']:,}" if result["cap"] else "(MAX)"
                     await interaction.response.send_message(
                         f"✅ {member.mention} získal/a **+{amount:,} XP**. "
-                        f"Aktuálně: **{result['xp']:,}** {cap_str}",
+                        f"Aktuálně: **{result['xp']:,}** {cap_str}" + note,
                         ephemeral=True,
                     )
             elif amount < 0:
-                result = remove_xp(member.id, abs(amount), reason=reason)
+                with use_slot(member.id, slot):
+                    result = remove_xp(member.id, abs(amount), reason=reason)
                 cap_str = f"/ {result['cap']:,}" if result["cap"] else "(MAX)"
                 await interaction.response.send_message(
                     f"✅ {member.mention} ztratil/a **{abs(amount):,} XP**. "
-                    f"Aktuálně: **{result['new_xp']:,}** {cap_str}",
+                    f"Aktuálně: **{result['new_xp']:,}** {cap_str}" + note,
                     ephemeral=True,
                 )
             else:
@@ -1264,8 +1298,10 @@ class Stats(commands.Cog):
         member="Hráč",
         stat="Stat (STR/DEX/INS/INT/CHA/WIS)",
         hodnota="Nová hodnota",
+        postava=POSTAVA_DESC,
     )
     @app_commands.choices(stat=[app_commands.Choice(name=s, value=s) for s in STAT_LABELS])
+    @app_commands.autocomplete(postava=postava_autocomplete)
     @app_commands.checks.has_permissions(administrator=True)
     async def admin_stats(
         self,
@@ -1273,15 +1309,22 @@ class Stats(commands.Cog):
         member: discord.Member,
         stat: app_commands.Choice[str],
         hodnota: int,
+        postava: str | None = None,
     ):
         try:
+            slot, err = resolve_postava(member.id, postava)
+            if err:
+                await interaction.response.send_message(err, ephemeral=True)
+                return
             data = _load()
-            uid  = pkey(member.id)
+            with use_slot(member.id, slot):
+                uid = pkey(member.id)
             p    = _profile(data, uid)
             p["stats"][stat.value] = max(1, hodnota)
             _save(data)
             await interaction.response.send_message(
-                f"✅ **{stat.value}** hráče {member.mention} nastaven na **{hodnota}**.",
+                f"✅ **{stat.value}** hráče {member.mention} nastaven na **{hodnota}**."
+                + char_note(member.id, slot, postava),
                 ephemeral=True,
             )
         except Exception as e:
