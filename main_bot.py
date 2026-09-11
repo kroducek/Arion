@@ -75,6 +75,7 @@ BOT_COGS = [
     "src.core.bot.news",
     "src.core.bot.story",
     "src.core.bot.tierlist",
+    "src.core.bot.admin_backup",
     # Sdílená logika
     "src.logic.economy",
 ]
