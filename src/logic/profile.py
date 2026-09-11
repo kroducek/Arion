@@ -6,32 +6,30 @@ from typing import Optional
 
 logger = logging.getLogger("Profile")
 
-from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, ITEMS as ITEMS_FILE, PLAYER_PERKS, ACHIEVEMENTS, REPUTATION, DATA_DIR
+from src.utils.paths import PLAYER_PERKS, ACHIEVEMENTS, REPUTATION, DATA_DIR
 from src.utils.json_utils import load_json, save_json
 from src.logic.stats import get_xp_cap, level_label, add_xp, STAT_LABELS, _skill_registry, _roman
 from src.logic.profile_render import render_stats_card, render_prukaz_card
-from src.logic.economy import get_balance, set_balance, COIN_SILVER, COIN_STARDUST
+from src.logic.economy import (
+    get_balance,
+    set_balance,
+    COIN_SILVER,
+    COIN_STARDUST,
+    _load_economy,
+    _save_economy,
+)
 from src.database.characters import pkey
+from src.database.profiles import load_items, load_profiles, save_profiles
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DATOVÁ VRSTVA
 # ══════════════════════════════════════════════════════════════════════════════
 
-def load_data():
-    return load_json(DATA_FILE)
-
-def load_economy():
-    """Load economy data (single source of truth)."""
-    return load_json(ECONOMY_FILE)
-
-def save_data(data):
-    save_json(DATA_FILE, data)
-
-def save_economy(data):
-    save_json(ECONOMY_FILE, data)
-
-def _load_items() -> dict:
-    return load_json(ITEMS_FILE, default={})
+load_data = load_profiles
+save_data = save_profiles
+_load_items = load_items
+load_economy = _load_economy
+save_economy = _save_economy
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HERNÍ LOGIKA

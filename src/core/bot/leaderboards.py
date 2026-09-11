@@ -19,8 +19,8 @@ from discord.ext import commands
 from discord import app_commands
 import logging
 
-from src.utils.paths import PROFILES as PROFILES_FILE
 from src.utils.json_utils import load_json, save_json
+from src.database.profiles import load_profiles
 
 logger = logging.getLogger("Leaderboards")
 
@@ -63,8 +63,7 @@ def _name_for(guild, uid: str) -> str:
 
 
 # Cache profilů v rámci jednoho renderu (ať nečteme soubor pro každý řádek)
-def _load_profiles_cache() -> dict:
-    return load_json(PROFILES_FILE, default={})
+_load_profiles_cache = load_profiles
 
 def _char_name_for(guild, pkey_str: str, profiles: dict | None = None) -> str:
     """Jméno KONKRÉTNÍ postavy (uid:slot) z jejího profilu.
@@ -151,7 +150,7 @@ def _gold_embed(guild, currency: str = "gold") -> discord.Embed:
 
 def _xp_embed(guild) -> discord.Embed:
     """XP/level žebříček z profiles.json: {pkey: {level, xp, name}}."""
-    data = load_json(PROFILES_FILE, default={})
+    data = load_profiles()
     entries = []
     for uid, p in data.items():
         if not isinstance(p, dict):

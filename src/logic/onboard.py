@@ -65,7 +65,8 @@ from src.database.characters import pkey, ensure_active
 # ── Konfigurace ───────────────────────────────────────────────────────────────
 
 ROLE_DOBRODRUH_F3_ID = 1476056192643104768
-from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, TUTORIAL_MSG as TUTORIAL_MSG_FILE, ITEMS
+from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, TUTORIAL_MSG as TUTORIAL_MSG_FILE
+from src.database.profiles import load_items
 from src.logic.economy import get_balance, set_balance, COIN_SILVER
 
 TUTORIAL_CHANNEL_ID = 1476045697496252607
@@ -160,11 +161,7 @@ LOADOUTS = {
 }
 
 
-def _loadout_items_db() -> dict:
-    try:
-        return load_json(ITEMS, default={})
-    except Exception:
-        return {}
+_loadout_items_db = load_items
 
 
 def _perk_name(perk_id: str) -> str:

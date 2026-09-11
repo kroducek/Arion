@@ -9,7 +9,7 @@ import logging
 # KONFIGURACE
 # ══════════════════════════════════════════════════════════════════════════════
 
-from src.utils.paths import PROFILES as DATA_FILE, ITEMS as ITEMS_FILE
+from src.database.profiles import load_items, load_profiles, save_profiles
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey, use_slot
 from src.utils.char_target import POSTAVA_DESC, char_note, postava_autocomplete, resolve_postava
@@ -271,11 +271,8 @@ def _migrate_skills(p: dict) -> None:
 # HELPERS — profiles.json
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _load() -> dict:
-    return load_json(DATA_FILE)
-
-def _save(data: dict):
-    save_json(DATA_FILE, data)
+_load = load_profiles
+_save = save_profiles
 
 def _profile(data: dict, uid: str) -> dict:
     """Vrátí profil hráče, inicializuje chybějící pole."""
@@ -314,11 +311,7 @@ def _ensure_fields(p: dict) -> None:
     p.setdefault("skills", {})
     _migrate_skills(p)
 
-def _load_items_db() -> dict:
-    try:
-        return load_json(ITEMS_FILE, default={})
-    except Exception:
-        return {}
+_load_items_db = load_items
 
 # ══════════════════════════════════════════════════════════════════════════════
 # XP LOG — persistentní log v profiles.json pod klíčem "xp_log"
