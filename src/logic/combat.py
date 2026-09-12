@@ -141,14 +141,45 @@ def apply_hit(stat: dict, raw_hit: int) -> dict:
     }
 
 
-def hp_line(name: str, old_hp: int, new_hp: int, max_hp: int,
-            change_str: str, attacker: str | None = None) -> str:
-    """Krátká jednořádková hláška o změně HP (místo velkého embedu)."""
+# ── Konzole ───────────────────────────────────────────────────────────────────
+
+CONSOLE_PREFIX = "-# "
+CONSOLE_DELAY = 1.0
+
+
+def console(text: str) -> str:
+    """Řádek Arionovy konzole — malé písmo (`-#`)."""
+    return CONSOLE_PREFIX + text
+
+
+def hp_console(name: str, old_hp: int, new_hp: int, max_hp: int,
+               change_str: str, attacker: str | None = None,
+               notes: list[str] | None = None) -> list[str]:
+    """Hláška o změně HP rozepsaná na řádky konzole (vypisují se po jednom)."""
     bar = _make_bar(new_hp, max_hp, 8)
     who = f"⚔️ {attacker} → " if attacker else ""
     dead = "  💀" if new_hp == 0 else ""
-    return (f"{who}❤️ **{name}** `{old_hp}` → `{new_hp}/{max_hp}` {bar}"
-            f"  *({change_str})*{dead}")
+    lines = [
+        console(f"{who}❤️ **{name}**"),
+        console(f"`{old_hp}` → `{new_hp}/{max_hp}` {bar}"),
+        console(f"*({change_str})*{dead}"),
+    ]
+    lines += [console(note) for note in (notes or [])]
+    return lines
+
+
+async def stream_console(message, lines: list[str], header: str = "",
+                         delay: float = CONSOLE_DELAY) -> None:
+    """Dopisuje řádky do už odeslané zprávy po jednom — výpis konzole."""
+    shown = lines[:1]
+    for line in lines[1:]:
+        await asyncio.sleep(delay)
+        shown.append(line)
+        try:
+            await message.edit(content=header + "\n".join(shown))
+        except Exception:
+            logging.exception("[combat] výpis konzole se nepodařilo dopsat")
+            return
 
 
 # ── Akce v tahu (attack / bonus attack / perk / reakce) ───────────────────────
@@ -759,11 +790,11 @@ class AttackView(ui.View):
         self._disable()
         self.cog._save_state()
 
-        line = hp_line(self.target, result["old_hp"], result["new_hp"], max_hp,
-                       result["change_str"], attacker=self.attacker)
-        if notes:
-            line += "\n-# " + "  ·  ".join(notes)
-        await interaction.response.edit_message(content=line, embed=None, view=self)
+        lines = hp_console(self.target, result["old_hp"], result["new_hp"], max_hp,
+                           result["change_str"], attacker=self.attacker,
+                           notes=["  ·  ".join(notes)] if notes else None)
+        await interaction.response.edit_message(content=lines[0], embed=None, view=self)
+        asyncio.create_task(self.cog._stream(interaction, lines))
 
         if combat.get("boss", {}).get("name") == self.target:
             asyncio.create_task(self.cog._update_boss_bar(combat, flashing=True))
@@ -827,6 +858,20 @@ class CombatCog(commands.Cog):
     def save_state(self):
         """Uloží stav boje (volají i jiné cogy, např. perky)."""
         self._save_state()
+
+    # ── Konzole ───────────────────────────────────────────────────────────────
+
+    async def _stream(self, interaction: discord.Interaction,
+                      lines: list[str], header: str = "") -> None:
+        """Dopíše zbytek konzolového výpisu do odpovědi interakce."""
+        if len(lines) < 2:
+            return
+        try:
+            message = await interaction.original_response()
+        except Exception:
+            logging.exception("[combat] zprávu konzole se nepodařilo načíst")
+            return
+        await stream_console(message, lines, header)
 
     # ── Shrnutí ───────────────────────────────────────────────────────────────
 
@@ -1345,8 +1390,10 @@ class CombatCog(commands.Cog):
 
         # Krátká hláška (default) — plný přehled je na /combat_status.
         if not combat.get("verbose"):
-            line = hp_line(name, old_hp, new_hp, max_hp, change_str, attacker=utocnik)
-            await interaction.response.send_message(line)
+            lines = hp_console(name, old_hp, new_hp, max_hp, change_str,
+                               attacker=utocnik)
+            await interaction.response.send_message(lines[0])
+            asyncio.create_task(self._stream(interaction, lines))
             if combat.get("boss", {}).get("name") == name:
                 asyncio.create_task(self._update_boss_bar(combat, flashing=(hp < 0)))
             asyncio.create_task(self.check_wipeout(interaction.channel, combat))
@@ -1747,9 +1794,12 @@ class CombatCog(commands.Cog):
                 else:
                     _writeback_hp_to_profile(uid, stat["hp"])
             self._save_state()
-            line = hp_line(cil, result["old_hp"], result["new_hp"],
-                           stat.get("max_hp", 0), result["change_str"], attacker=actor)
-            await interaction.response.send_message(f"{desc}\n{line}")
+            lines = hp_console(cil, result["old_hp"], result["new_hp"],
+                               stat.get("max_hp", 0), result["change_str"],
+                               attacker=actor)
+            header = f"{desc}\n"
+            await interaction.response.send_message(header + lines[0])
+            asyncio.create_task(self._stream(interaction, lines, header))
             if combat.get("boss", {}).get("name") == cil:
                 asyncio.create_task(self._update_boss_bar(combat, flashing=True))
             asyncio.create_task(self.check_wipeout(interaction.channel, combat))
