@@ -2,6 +2,7 @@ import discord
 import asyncio
 import logging
 import random
+from typing import Optional
 from discord.ext import commands
 from discord import app_commands, ui
 from src.utils.paths import COMBAT_STATE
@@ -12,6 +13,7 @@ from src.database.profiles import (
     profile_key as _pk,
     save_profiles as _save_profiles,
 )
+from src.logic.dice import DiceError, item_damage_expr, roll_expr
 
 SOURCE_LABEL = {"zbran": "zbraň", "runa": "runa", "prostredi": "prostředí", "schopnost": "schopnost"}
 
@@ -104,6 +106,89 @@ def _make_bar(current: int, maximum: int, length: int = 10) -> str:
         return "░" * length
     filled = max(0, min(length, round((current / maximum) * length)))
     return "█" * filled + "░" * (length - filled)
+
+
+def apply_hit(stat: dict, raw_hit: int) -> dict:
+    """Zásah: DEF pohltí napřed, pak se spotřebuje furioka, zbytek jde do HP.
+
+    Mutuje `stat` (hp, fur) a vrací souhrn pro hlášku.
+    """
+    raw_hit = max(0, int(raw_hit))
+    dfn = int(stat.get("def", 0) or 0)
+    fur = int(stat.get("fur", 0) or 0)
+
+    after_def = max(0, raw_hit - dfn)
+    absorbed = min(fur, after_def)
+    stat["fur"] = fur - absorbed
+    final = after_def - absorbed
+
+    old_hp = int(stat.get("hp", 0) or 0)
+    stat["hp"] = max(0, old_hp - final)
+
+    parts = [f"zásah {raw_hit}"]
+    if dfn:
+        parts.append(f"−{min(dfn, raw_hit)} DEF")
+    if absorbed:
+        parts.append(f"−{absorbed} 🔥furioku")
+    parts.append(f"= {final} do HP")
+
+    return {
+        "old_hp": old_hp,
+        "new_hp": stat["hp"],
+        "dmg": final,
+        "absorbed_fur": absorbed,
+        "change_str": "  ".join(parts),
+    }
+
+
+def hp_line(name: str, old_hp: int, new_hp: int, max_hp: int,
+            change_str: str, attacker: str | None = None) -> str:
+    """Krátká jednořádková hláška o změně HP (místo velkého embedu)."""
+    bar = _make_bar(new_hp, max_hp, 8)
+    who = f"⚔️ {attacker} → " if attacker else ""
+    dead = "  💀" if new_hp == 0 else ""
+    return (f"{who}❤️ **{name}** `{old_hp}` → `{new_hp}/{max_hp}` {bar}"
+            f"  *({change_str})*{dead}")
+
+
+# ── Akce v tahu (attack / bonus attack / perk / reakce) ───────────────────────
+
+TURN_ACTIONS = ("attack", "bonus", "perk", "reaction")
+ACTION_LABEL = {"attack": "útok", "bonus": "bonusový útok",
+                "perk": "perk", "reaction": "reakce"}
+
+
+def turn_state(combat: dict, actor: str) -> dict:
+    """Počitadlo akcí aktéra v aktuálním tahu (vytvoří, když chybí)."""
+    states = combat.setdefault("turn_state", {})
+    state = states.setdefault(actor, {})
+    for key in TURN_ACTIONS:
+        state.setdefault(key, 0)
+    return state
+
+
+def use_action(combat: dict, actor: str, action: str, force: bool = False) -> bool:
+    """Zapíše použití akce. False = aktér ji v tomhle tahu už použil."""
+    state = turn_state(combat, actor)
+    if state.get(action, 0) >= 1 and not force:
+        return False
+    state[action] = state.get(action, 0) + 1
+    return True
+
+
+def reset_turn(combat: dict, actor: str, reaction: bool = False) -> None:
+    """Konec tahu aktéra — akce zase k dispozici. Reakce jen na začátku kola."""
+    state = turn_state(combat, actor)
+    for key in ("attack", "bonus", "perk"):
+        state[key] = 0
+    if reaction:
+        state["reaction"] = 0
+
+
+def reset_reactions(combat: dict) -> None:
+    """Nové kolo — všem se vrací reakce."""
+    for actor in list(combat.get("turn_state", {})):
+        turn_state(combat, actor)["reaction"] = 0
 
 
 def _hp_color(hp: int, max_hp: int) -> int:
@@ -290,14 +375,17 @@ class EOTView(ui.View):
             )
 
         # Advance
+        reset_turn(combat, current_actor)
         combat["current_index"] = (combat["current_index"] + 1) % len(order)
         next_actor = order[combat["current_index"]]
         combat["active_player"] = next_actor
 
         # Nové kolo (pořadí se obtočilo) → auto-tick statusů (dmg z jedu/krvácení atd.)
         tick_note = ""
-        if combat["current_index"] == 0 and combat.get("auto_tick", True):
-            tick_note = self.cog._tick_round(combat)
+        if combat["current_index"] == 0:
+            reset_reactions(combat)
+            if combat.get("auto_tick", True):
+                tick_note = self.cog._tick_round(combat)
         self.cog._save_state()
 
         note = f"Tah předán — nyní hraje {next_actor}"
@@ -351,6 +439,204 @@ class InitiativeView(ui.View):
             await ch.send(f"🎲 {self.actor} hodil iniciativu: **{roll}**")
         except Exception:
             logger.exception("[combat] oznámení iniciativy selhalo")
+
+
+# ── Zbraně hráče ──────────────────────────────────────────────────────────────
+
+WEAPON_SLOTS = ("hand_l", "hand_r")
+
+
+def _iter_entries(profile: dict):
+    for entry in profile.get("inventory", []):
+        yield entry
+    for storage in (profile.get("storages") or {}).values():
+        for entry in storage:
+            yield entry
+
+
+def _weapon_entry(profile: dict, item_id: str) -> dict | None:
+    """Instance zbraně v inventáři — přednost má kus s runou/nátěrem."""
+    fallback = None
+    for entry in _iter_entries(profile):
+        if entry.get("type") != "registered" or entry.get("id") != item_id:
+            continue
+        if entry.get("runes") or entry.get("coating"):
+            return entry
+        fallback = fallback or entry
+    return fallback
+
+
+def _player_weapons(profile: dict) -> list[str]:
+    """ID zbraní v rukou + zbylé zbraně z inventáře (pro autocomplete)."""
+    out: list[str] = []
+    equipment = profile.get("equipment", {}) or {}
+    for slot in WEAPON_SLOTS:
+        item_id = equipment.get(slot)
+        if item_id and item_id not in out:
+            out.append(item_id)
+    for entry in _iter_entries(profile):
+        item_id = entry.get("id")
+        if entry.get("type") == "registered" and item_id and item_id not in out:
+            out.append(item_id)
+    return out
+
+
+def _rune_names(entry: dict, runes_reg: dict) -> str:
+    names = []
+    for rid in (entry.get("runes") or []):
+        rune = runes_reg.get(rid, {})
+        names.append(f"{rune.get('emoji', '🔹')} {rune.get('name', rid)}")
+    coat = entry.get("coating")
+    if isinstance(coat, dict) and coat.get("status"):
+        names.append(f"🧪 {coat['status']}")
+    return " · ".join(names)
+
+
+# ── Attack: potvrzení zásahu ──────────────────────────────────────────────────
+
+class DamageModal(ui.Modal, title="Upravit poškození"):
+    dmg = ui.TextInput(label="Poškození", placeholder="např. 12", max_length=5)
+
+    def __init__(self, view: "AttackView", default: int):
+        super().__init__()
+        self.view_ref = view
+        self.dmg.default = str(default)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            value = int(str(self.dmg.value).strip())
+        except ValueError:
+            return await interaction.response.send_message(
+                "❌ Zadej číslo.", ephemeral=True)
+        await self.view_ref.resolve_hit(interaction, value)
+
+
+class AttackView(ui.View):
+    """Útok čeká na potvrzení — cíl může uhnout, GM upravit číslo."""
+
+    def __init__(self, cog: "CombatCog", channel_id: int, attacker: str,
+                 attacker_uid: int | None, target: str, damage: int,
+                 weapon_id: str | None, mana_cost: int = 0):
+        super().__init__(timeout=600)
+        self.cog = cog
+        self.channel_id = channel_id
+        self.attacker = attacker
+        self.attacker_uid = attacker_uid
+        self.target = target
+        self.damage = damage
+        self.weapon_id = weapon_id
+        self.mana_cost = mana_cost
+        self.resolved = False
+
+    # ── oprávnění ────────────────────────────────────────────────────────────
+
+    def _may_resolve(self, interaction: discord.Interaction) -> bool:
+        """Rozhodovat smí GM, cíl útoku i útočník (ať GM nemusí klikat vše)."""
+        perms = getattr(interaction.user, "guild_permissions", None)
+        if perms is not None and perms.administrator:
+            return True
+        mention = interaction.user.mention
+        return mention in (self.target, self.attacker)
+
+    def _disable(self):
+        for child in self.children:
+            child.disabled = True
+
+    # ── aplikace zásahu ──────────────────────────────────────────────────────
+
+    async def resolve_hit(self, interaction: discord.Interaction, damage: int):
+        combat = self.cog.active_combats.get(self.channel_id)
+        if not combat or self.target not in combat["stats"]:
+            return await interaction.response.send_message(
+                "❌ *Cíl už není v boji.*", ephemeral=True)
+
+        stat = combat["stats"][self.target]
+        result = apply_hit(stat, damage)
+        max_hp = stat.get("max_hp", 0)
+
+        notes = []
+        bs = _bs()
+        delivered = self.cog._consume_weapon(self.attacker_uid, self.weapon_id,
+                                             self.mana_cost)
+        if delivered.get("mana_note"):
+            notes.append(delivered["mana_note"])
+        if bs and delivered.get("statuses"):
+            reg = bs.load_statuses()
+            applied = []
+            for status_id, source in delivered["statuses"]:
+                inst = bs.apply_status(stat, status_id, source, reg)
+                if inst:
+                    sdef = reg.get(status_id, {})
+                    applied.append(f"{sdef.get('emoji', '•')} {sdef.get('name', status_id)}")
+            if applied:
+                notes.append("Doručeno: " + " · ".join(applied))
+
+        uid = _actor_uid(self.target)
+        if uid is not None:
+            if bs:
+                _writeback_player_state(uid, stat, bs)
+            else:
+                _writeback_hp_to_profile(uid, stat["hp"])
+
+        self.resolved = True
+        self._disable()
+        self.cog._save_state()
+
+        line = hp_line(self.target, result["old_hp"], result["new_hp"], max_hp,
+                       result["change_str"], attacker=self.attacker)
+        if notes:
+            line += "\n-# " + "  ·  ".join(notes)
+        await interaction.response.edit_message(content=line, embed=None, view=self)
+
+        if combat.get("boss", {}).get("name") == self.target:
+            asyncio.create_task(self.cog._update_boss_bar(combat, flashing=True))
+
+    # ── tlačítka ─────────────────────────────────────────────────────────────
+
+    @ui.button(label="Zasáhl", emoji="✅", style=discord.ButtonStyle.success)
+    async def hit(self, interaction: discord.Interaction, button: ui.Button):
+        if not self._may_resolve(interaction):
+            return await interaction.response.send_message(
+                "❌ *Rozhodnout může GM, útočník nebo cíl.*", ephemeral=True)
+        await self.resolve_hit(interaction, self.damage)
+
+    @ui.button(label="Uhnul / minul", emoji="🛡️", style=discord.ButtonStyle.secondary)
+    async def miss(self, interaction: discord.Interaction, button: ui.Button):
+        if not self._may_resolve(interaction):
+            return await interaction.response.send_message(
+                "❌ *Rozhodnout může GM, útočník nebo cíl.*", ephemeral=True)
+        self.resolved = True
+        self._disable()
+        await interaction.response.edit_message(
+            content=f"🛡️ **{self.target}** uhnul útoku od {self.attacker} "
+                    f"— *{self.damage} dmg se neaplikovalo.*",
+            embed=None, view=self)
+
+    @ui.button(label="Upravit", emoji="✏️", style=discord.ButtonStyle.primary)
+    async def edit(self, interaction: discord.Interaction, button: ui.Button):
+        if not self._may_resolve(interaction):
+            return await interaction.response.send_message(
+                "❌ *Rozhodnout může GM, útočník nebo cíl.*", ephemeral=True)
+        await interaction.response.send_modal(DamageModal(self, self.damage))
+
+    @ui.button(label="Reakce (1d20)", emoji="🎲", style=discord.ButtonStyle.secondary)
+    async def reaction(self, interaction: discord.Interaction, button: ui.Button):
+        combat = self.cog.active_combats.get(self.channel_id)
+        if not combat:
+            return await interaction.response.send_message(
+                "❌ *Combat už neběží.*", ephemeral=True)
+        actor = interaction.user.mention
+        if actor != self.target:
+            return await interaction.response.send_message(
+                "❌ *Reakci hází cíl útoku.*", ephemeral=True)
+        if not use_action(combat, actor, "reaction"):
+            return await interaction.response.send_message(
+                "⛔ *Reakci jsi v tomhle kole už použil.*", ephemeral=True)
+        self.cog._save_state()
+        roll = random.randint(1, 20)
+        await interaction.response.send_message(
+            f"🎲 {actor} hází reakci (úhyb/check): **{roll}**\n"
+            f"-# GM rozhodne tlačítkem ✅ / 🛡️.")
 
 
 class CombatCog(commands.Cog):
@@ -803,8 +1089,11 @@ class CombatCog(commands.Cog):
     @app_commands.describe(
         name="Jméno NPC nebo mention hráče (@mention nebo přesné jméno)",
         hp="Nové HP (záporná hodnota = poškození, kladná = absolutní nastavení)",
+        utocnik="Kdo zásah způsobil (jen do hlášky).",
     )
-    async def combat_sethp(self, interaction: discord.Interaction, name: str, hp: int):
+    @app_commands.autocomplete(name=_ac_actor, utocnik=_ac_actor)
+    async def combat_sethp(self, interaction: discord.Interaction, name: str, hp: int,
+                           utocnik: Optional[str] = None):
         channel_id = interaction.channel_id
         if channel_id not in self.active_combats:
             return await interaction.response.send_message(
@@ -825,30 +1114,14 @@ class CombatCog(commands.Cog):
         max_hp = stats[name]["max_hp"]
 
         if hp < 0:
-            # ── Zásah: nejdřív pohltí DEF, pak furioku (spotřebuje se) ──────────
-            raw_hit  = -hp                       # kolik dmg přišlo
-            dfn      = stats[name].get("def", 0)
-            fur      = stats[name].get("fur", 0)
-
-            after_def = max(0, raw_hit - dfn)    # DEF pohltí napřed
-            absorbed_by_fur = min(fur, after_def)
-            stats[name]["fur"] = fur - absorbed_by_fur   # furioku se spotřebuje
-            final_dmg = after_def - absorbed_by_fur      # zbytek jde do HP
-
-            new_hp = max(0, old_hp - final_dmg)
-
-            parts = [f"zásah {raw_hit}"]
-            if dfn:
-                parts.append(f"−{min(dfn, raw_hit)} DEF")
-            if absorbed_by_fur:
-                parts.append(f"−{absorbed_by_fur} 🔥furioku")
-            parts.append(f"= {final_dmg} do HP")
-            change_str = "  ".join(parts)
+            result     = apply_hit(stats[name], -hp)
+            new_hp     = result["new_hp"]
+            change_str = result["change_str"]
         else:
             new_hp     = min(hp, max_hp)
             change_str = f"nastaveno na {new_hp}"
+            stats[name]["hp"] = new_hp
 
-        stats[name]["hp"] = new_hp
         self._save_state()
 
         # ── Zpětný zápis do profilu pokud jde o hráče (mention) ──────────────
@@ -860,6 +1133,14 @@ class CombatCog(commands.Cog):
                 _writeback_hp_to_profile(uid, new_hp)
             except ValueError:
                 pass
+
+        # Krátká hláška (default) — plný přehled je na /combat_status.
+        if not combat.get("verbose"):
+            line = hp_line(name, old_hp, new_hp, max_hp, change_str, attacker=utocnik)
+            await interaction.response.send_message(line)
+            if combat.get("boss", {}).get("name") == name:
+                asyncio.create_task(self._update_boss_bar(combat, flashing=(hp < 0)))
+            return
 
         bar   = _make_bar(new_hp, max_hp)
         color = _hp_color(new_hp, max_hp)
@@ -1062,6 +1343,214 @@ class CombatCog(commands.Cog):
             await interaction.response.send_message(
                 "⚠️ *Žádný aktivní boj.*", ephemeral=True
             )
+
+    # ── /attack ───────────────────────────────────────────────────────────────
+
+    def _consume_weapon(self, uid: int | None, weapon_id: str | None,
+                        mana_cost: int = 0, runes_active: bool = True) -> dict:
+        """Při potvrzeném zásahu: doručené statusy, úbytek nátěru a many."""
+        out = {"statuses": [], "mana_note": ""}
+        if uid is None or not weapon_id:
+            return out
+        try:
+            profiles = _load_profiles()
+            profile = profiles.get(_pk(profiles, uid))
+            if not profile:
+                return out
+            entry = _weapon_entry(profile, weapon_id)
+            bs = _bs()
+            if entry is not None and bs:
+                delivered = bs.weapon_delivered(entry)
+                out["statuses"] = [(sid, src) for sid, src in delivered
+                                   if runes_active or src != "runa"]
+                bs.consume_coating_hit(entry)
+            if mana_cost:
+                cur = profile.get("mana_cur", profile.get("mana_max", 20))
+                new = max(0, cur - mana_cost)
+                profile["mana_cur"] = new
+                out["mana_note"] = f"🔷 mana `{cur}` → `{new}`"
+            _save_profiles(profiles)
+        except Exception:
+            logging.exception("[combat] spotřeba zbraně selhala")
+        return out
+
+    async def _ac_weapon(self, interaction: discord.Interaction, current: str):
+        try:
+            profiles = _load_profiles()
+            profile  = profiles.get(_pk(profiles, interaction.user.id)) or {}
+            items_db = _load_items_db()
+        except Exception:
+            return []
+        cur = current.lower()
+        out = []
+        for item_id in _player_weapons(profile):
+            db_item = items_db.get(item_id) or {}
+            expr = item_damage_expr(db_item)
+            if not expr:
+                continue
+            name = db_item.get("name", item_id)
+            if cur and cur not in name.lower() and cur not in item_id.lower():
+                continue
+            out.append(app_commands.Choice(name=f"{name} ({expr})"[:100], value=item_id))
+        return out[:25]
+
+    @app_commands.command(
+        name="attack",
+        description="Útok zbraní — hodí damage a nabídne potvrzení zásahu.")
+    @app_commands.describe(
+        cil="Koho útočíš (aktér v boji).",
+        zbran="Zbraň (výchozí: co máš v ruce).",
+        akce="Útok nebo bonusový útok (dual wielding).",
+        bonus="Ruční bonus k poškození (perky, situace).",
+        force="[GM] Ignoruj pojistku na už použitou akci.",
+    )
+    @app_commands.choices(akce=[
+        app_commands.Choice(name="útok",          value="attack"),
+        app_commands.Choice(name="bonusový útok", value="bonus"),
+    ])
+    @app_commands.autocomplete(cil=_ac_actor, zbran=_ac_weapon)
+    async def attack(
+        self,
+        interaction: discord.Interaction,
+        cil: str,
+        zbran: Optional[str] = None,
+        akce: Optional[app_commands.Choice[str]] = None,
+        bonus: int = 0,
+        force: bool = False,
+    ):
+        combat = self.active_combats.get(interaction.channel_id)
+        if not combat:
+            return await interaction.response.send_message(
+                "❌ *Zde neběží combat.*", ephemeral=True)
+        if cil not in combat["stats"]:
+            return await interaction.response.send_message(
+                f"❌ *`{cil}` není v boji (nebo nemá zaznamenané HP).*", ephemeral=True)
+
+        actor = interaction.user.mention
+        action = (akce.value if akce else "attack")
+        is_gm = interaction.user.guild_permissions.administrator
+        if not use_action(combat, actor, action, force=force and is_gm):
+            return await interaction.response.send_message(
+                f"⛔ *{ACTION_LABEL[action].capitalize()} jsi v tomhle tahu už použil.* "
+                "Zkus bonusový útok, nebo ať GM zopakuje s `force`.",
+                ephemeral=True)
+
+        profiles = _load_profiles()
+        profile  = profiles.get(_pk(profiles, interaction.user.id)) or {}
+        items_db = _load_items_db()
+
+        weapon_id = zbran or (profile.get("equipment", {}) or {}).get(
+            "hand_r" if action == "attack" else "hand_l")
+        if not weapon_id:
+            return await interaction.response.send_message(
+                "❌ *Nemáš v ruce zbraň — vyber ji parametrem `zbran`.*", ephemeral=True)
+
+        db_item = items_db.get(weapon_id) or {}
+        expr = item_damage_expr(db_item)
+        if not expr:
+            return await interaction.response.send_message(
+                f"❌ **{db_item.get('name', weapon_id)}** nemá damage ani `atk`. "
+                f"Doplň ho: `/inv-db combat {weapon_id} dmg:1d8`.", ephemeral=True)
+        try:
+            roll = roll_expr(expr)
+        except DiceError:
+            return await interaction.response.send_message(
+                f"❌ *Damage `{expr}` nejde hodit — oprav item `{weapon_id}`.*", ephemeral=True)
+
+        damage = max(0, roll.total + int(bonus))
+
+        # ── Runy: použití stojí manu; když nestačí, runa neprocne ─────────────
+        entry = _weapon_entry(profile, weapon_id)
+        bs = _bs()
+        runes_reg = bs.load_runes() if bs else {}
+        rune_text = _rune_names(entry, runes_reg) if entry else ""
+        mana_cost = int(db_item.get("mana_cost", 0) or 0)
+        runes_active = True
+        mana_note = ""
+        if mana_cost and (entry and entry.get("runes")):
+            mana_cur = profile.get("mana_cur", profile.get("mana_max", 20))
+            if mana_cur < mana_cost:
+                runes_active = False
+                mana_cost = 0
+                mana_note = f"🔷 *Málo many ({mana_cur}/{db_item['mana_cost']}) — runa neprocne.*"
+        else:
+            mana_cost = 0
+
+        bonus_str = f" {'+' if bonus >= 0 else '−'}{abs(int(bonus))}" if bonus else ""
+        desc = (f"**{db_item.get('name', weapon_id)}** — `{expr}`{bonus_str}\n"
+                f"{roll.detail}  →  **{damage} dmg**")
+        if rune_text:
+            desc += f"\n{rune_text}" + ("" if runes_active else "  *(neaktivní)*")
+        if mana_note:
+            desc += f"\n{mana_note}"
+        if roll.nat20:
+            desc += "\n✨ **Nat 20!**"
+        elif roll.nat1:
+            desc += "\n💀 *Nat 1…*"
+
+        embed = discord.Embed(
+            title=f"⚔️  {ACTION_LABEL[action].capitalize()}: {actor} → {cil}",
+            description=desc,
+            color=discord.Color.orange(),
+        )
+        embed.set_footer(text="Damage se aplikuje až po potvrzení — cíl má prostor na reakci.")
+
+        view = AttackView(self, interaction.channel_id, actor,
+                          interaction.user.id, cil, damage, weapon_id, mana_cost)
+
+        if combat.get("auto_apply"):
+            stat = combat["stats"][cil]
+            result = apply_hit(stat, damage)
+            delivered = self._consume_weapon(interaction.user.id, weapon_id,
+                                             mana_cost, runes_active)
+            if bs and delivered["statuses"]:
+                reg = bs.load_statuses()
+                for status_id, source in delivered["statuses"]:
+                    bs.apply_status(stat, status_id, source, reg)
+            uid = _actor_uid(cil)
+            if uid is not None:
+                if bs:
+                    _writeback_player_state(uid, stat, bs)
+                else:
+                    _writeback_hp_to_profile(uid, stat["hp"])
+            self._save_state()
+            line = hp_line(cil, result["old_hp"], result["new_hp"],
+                           stat.get("max_hp", 0), result["change_str"], attacker=actor)
+            await interaction.response.send_message(f"{desc}\n{line}")
+            if combat.get("boss", {}).get("name") == cil:
+                asyncio.create_task(self._update_boss_bar(combat, flashing=True))
+            return
+
+        self._save_state()
+        await interaction.response.send_message(embed=embed, view=view)
+
+    @app_commands.command(
+        name="combat_autoapply",
+        description="[GM] Aplikovat damage z /attack rovnou, bez potvrzení.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def combat_autoapply(self, interaction: discord.Interaction, zapnuto: bool):
+        combat = self.active_combats.get(interaction.channel_id)
+        if not combat:
+            return await interaction.response.send_message(
+                "❌ *Zde neběží combat.*", ephemeral=True)
+        combat["auto_apply"] = zapnuto
+        self._save_state()
+        await interaction.response.send_message(
+            f"⚙️ Auto-aplikace útoků: **{'zapnuta' if zapnuto else 'vypnuta'}**.")
+
+    @app_commands.command(
+        name="combat_verbose",
+        description="[GM] Dlouhé embedy místo krátkých hlášek při úpravě HP.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def combat_verbose(self, interaction: discord.Interaction, zapnuto: bool):
+        combat = self.active_combats.get(interaction.channel_id)
+        if not combat:
+            return await interaction.response.send_message(
+                "❌ *Zde neběží combat.*", ephemeral=True)
+        combat["verbose"] = zapnuto
+        self._save_state()
+        await interaction.response.send_message(
+            f"⚙️ Dlouhé HP embedy: **{'zapnuty' if zapnuto else 'vypnuty'}**.")
 
     # ── /combat_status ────────────────────────────────────────────────────────
 

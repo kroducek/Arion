@@ -12,6 +12,7 @@ from src.database.profiles import (
     save_items as _save_items,
     save_profiles as _save_profiles,
 )
+from src.logic.dice import DiceError, roll_expr
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,7 @@ _KNOWN_ITEM_FIELDS = {
     "consumable", "stackable", "storage", "storage_capacity", "storage_emoji",
     "roll_tags", "id", "offhand",
     "rune_slots", "default_runes",
+    "dmg", "reusable",
     "image_url",
 }
 
@@ -562,6 +564,38 @@ def _remove_from_inventory(inventory: list, item_key: str, qty: int) -> bool:
     if entry["qty"] <= 0:
         inventory.remove(entry)
     return True
+
+def _find_consumable_entry(inventory: list, item_key: str) -> dict | None:
+    """Kus ke spotřebě — přednost mají kusy BEZ vyryté runy a bez nátěru.
+
+    Engrave/coat odděluje upravený kus do vlastní entry; kdyby se spotřeba
+    trefila do něj, zmizela by s ním i runa.
+    """
+    key = item_key.lower()
+    fallback = None
+    for entry in inventory:
+        if entry.get("type") == "registered":
+            matches = entry.get("id", "").lower() == key
+        else:
+            matches = entry.get("name", "").lower() == key
+        if not matches:
+            continue
+        if entry.get("runes") or entry.get("coating"):
+            fallback = fallback or entry
+            continue
+        return entry
+    return fallback
+
+
+def _remove_entry(inventory: list, entry: dict, qty: int = 1) -> bool:
+    """Odebere qty z konkrétní entry (ne z první stejného ID)."""
+    if entry.get("qty", 1) < qty:
+        return False
+    entry["qty"] = entry.get("qty", 1) - qty
+    if entry["qty"] <= 0 and entry in inventory:
+        inventory.remove(entry)
+    return True
+
 
 def _item_display_name(entry: dict, items_db: dict) -> str:
     if entry["type"] == "registered":
@@ -2138,6 +2172,31 @@ class Inventory(commands.Cog):
     @app_commands.autocomplete(item=_ac_consumable_item)
     async def inv_use(self, interaction: discord.Interaction, item: str):
         await interaction.response.defer()
+        await self._use_item(interaction, item)
+
+    # ── /use ──────────────────────────────────────────────────────────────────
+
+    @app_commands.command(name="use", description="Použij consumable item ze svého inventáře.")
+    @app_commands.describe(
+        kategorie="Filtruj typ itemu (výchozí: vše).",
+        item="Item k použití.",
+    )
+    @app_commands.choices(kategorie=[
+        app_commands.Choice(name=c, value=c) for c in USE_CATEGORIES
+    ])
+    @app_commands.autocomplete(item=_ac_use_item)
+    async def use_cmd(
+        self,
+        interaction: discord.Interaction,
+        item: str,
+        kategorie: Optional[app_commands.Choice[str]] = None,
+    ):
+        """Stejná logika jako /inv-use, ale s filtrovaným autocomplete."""
+        await interaction.response.defer()
+        await self._use_item(interaction, item)
+
+    async def _use_item(self, interaction: discord.Interaction, item: str) -> None:
+        """Použití consumable itemu — sdílené pro /inv-use i /use."""
         profiles = _load_profiles()
         profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
@@ -2154,7 +2213,7 @@ class Inventory(commands.Cog):
             await interaction.followup.send(
                 f"❌ **{db_item['name']}** není consumable.", ephemeral=True)
             return
-        entry = _find_inv_entry(profile["inventory"], item)
+        entry = _find_consumable_entry(profile["inventory"], item)
         if not entry:
             await interaction.followup.send(
                 f"❌ **{db_item['name']}** nemáš v inventáři.", ephemeral=True)
@@ -2171,7 +2230,17 @@ class Inventory(commands.Cog):
                 )
                 return
 
-        _remove_from_inventory(profile["inventory"], item, 1)
+        # Runy a jiné `reusable` itemy použití stojí manu, ale nezničí se.
+        reusable = bool(db_item.get("reusable"))
+        if not reusable:
+            if entry.get("runes") or entry.get("coating"):
+                await interaction.followup.send(
+                    f"⛔ Jediný kus **{db_item['name']}**, který máš, má vyrytou runu "
+                    "nebo nátěr — spotřebou by o něj přišel. Sundej ji přes "
+                    "`/blacksmith unengrave`, nebo použij jiný kus.",
+                    ephemeral=True)
+                return
+            _remove_entry(profile["inventory"], entry, 1)
 
         # ── Aplikuj efekty ────────────────────────────────────────────────────
         effects = []
@@ -2215,98 +2284,8 @@ class Inventory(commands.Cog):
             description=f"*{use_text}*" + (f"\n\n{effect_str}" if effect_str else ""),
             color=0xf0a500,
         )
-        embed.set_footer(text=f"{interaction.user.display_name}  ·  item použit a odebrán")
-        await interaction.followup.send(embed=embed)
-
-    # ── /use ──────────────────────────────────────────────────────────────────
-
-    @app_commands.command(name="use", description="Použij consumable item ze svého inventáře.")
-    @app_commands.describe(
-        kategorie="Filtruj typ itemu (výchozí: vše).",
-        item="Item k použití.",
-    )
-    @app_commands.choices(kategorie=[
-        app_commands.Choice(name=c, value=c) for c in USE_CATEGORIES
-    ])
-    @app_commands.autocomplete(item=_ac_use_item)
-    async def use_cmd(
-        self,
-        interaction: discord.Interaction,
-        item: str,
-        kategorie: Optional[app_commands.Choice[str]] = None,
-    ):
-        """Stejná logika jako /inv-use, ale s filtrovaným autocomplete."""
-        await interaction.response.defer()
-        profiles = _load_profiles()
-        profile  = profiles.get(_pk(profiles, interaction.user.id))
-        if not profile:
-            await interaction.followup.send("❌ Nemáš profil.", ephemeral=True)
-            return
-        _ensure_inv_fields(profile)
-        items_db = _load_items()
-        db_item  = items_db.get(item)
-        if not db_item:
-            await interaction.followup.send("❌ Tento item není v databázi.", ephemeral=True)
-            return
-        if not db_item.get("consumable"):
-            await interaction.followup.send(
-                f"❌ **{db_item['name']}** není consumable.", ephemeral=True)
-            return
-        entry = _find_inv_entry(profile["inventory"], item)
-        if not entry:
-            await interaction.followup.send(
-                f"❌ **{db_item['name']}** nemáš v inventáři.", ephemeral=True)
-            return
-
-        mana_cost = db_item.get("mana_cost", 0)
-        if mana_cost:
-            mana_cur = profile.get("mana_cur", profile.get("mana_max", 20))
-            if mana_cur < mana_cost:
-                await interaction.followup.send(
-                    f"❌ Nemáš dost many. Potřebuješ **{mana_cost}** 🔷, máš **{mana_cur}**.",
-                    ephemeral=True,
-                )
-                return
-
-        _remove_from_inventory(profile["inventory"], item, 1)
-        effects = []
-
-        if mana_cost:
-            cur = profile.get("mana_cur", profile.get("mana_max", 20))
-            new = max(0, cur - mana_cost)
-            profile["mana_cur"] = new
-            effects.append(f"🔷 Mana `{cur}` → `{new}` (-{mana_cost})")
-
-        if db_item.get("hunger_restore", 0):
-            cur = profile.get("hunger_cur", 0)
-            máx = profile.get("hunger_max", 10)
-            new = min(cur + db_item["hunger_restore"], máx)
-            profile["hunger_cur"] = new
-            effects.append(f"🍖 Hlad `{cur}` → `{new}` (+{new - cur})")
-
-        if db_item.get("hp_restore", 0):
-            cur = profile.get("hp_cur", 0)
-            máx = profile.get("hp_max", 50)
-            new = min(cur + db_item["hp_restore"], máx)
-            profile["hp_cur"] = new
-            effects.append(f"❤️ HP `{cur}` → `{new}` (+{new - cur})")
-
-        if db_item.get("mana_restore", 0):
-            cur = profile.get("mana_cur", profile.get("mana_max", 20))
-            máx = profile.get("mana_max", 20)
-            new = min(cur + db_item["mana_restore"], máx)
-            profile["mana_cur"] = new
-            effects.append(f"🔷 Mana `{cur}` → `{new}` (+{new - cur})")
-
-        _save_profiles(profiles)
-        effect_str = "\n".join(effects) if effects else ""
-        use_text = db_item.get("lore_drop") or db_item.get("desc", "…")
-        embed = discord.Embed(
-            title=f"✨ {db_item['name']}",
-            description=f"*{use_text}*" + (f"\n\n{effect_str}" if effect_str else ""),
-            color=0xf0a500,
-        )
-        embed.set_footer(text=f"{interaction.user.display_name}  ·  item použit a odebrán")
+        embed.set_footer(text=f"{interaction.user.display_name}  ·  "
+                              + ("item použit" if reusable else "item použit a odebrán"))
         await interaction.followup.send(embed=embed)
 
     # ── /inv-inspect ──────────────────────────────────────────────────────────
@@ -2748,6 +2727,50 @@ class Inventory(commands.Cog):
         _save_items(items_db)
         await interaction.followup.send(
             f"✅ Item **{item['name']}** (`{item_id}`) upraven.")
+
+    @inv_db.command(
+        name="combat",
+        description="[DM] Nastaví damage zbraně a příznak reusable (runy).")
+    @app_commands.describe(
+        item_id="ID itemu.",
+        dmg="Damage výraz pro /attack (např. 1d8+2 · 'clear' = odebrat).",
+        reusable="Použití se nespotřebuje (runy) — jen odečte manu.",
+    )
+    @app_commands.autocomplete(item_id=_ac_database_item)
+    async def inv_db_combat(
+        self, interaction: discord.Interaction,
+        item_id: str,
+        dmg: Optional[str] = None,
+        reusable: Optional[bool] = None,
+    ):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM může spravovat databázi.")
+            return
+        items_db = _load_items()
+        item = items_db.get(item_id)
+        if not item:
+            await interaction.followup.send(f"❌ Item `{item_id}` neexistuje.")
+            return
+        if dmg is not None:
+            clean = dmg.strip()
+            if clean.lower() in ("", "clear", "-", "none", "0"):
+                item.pop("dmg", None)
+            else:
+                try:
+                    roll_expr(clean)
+                except DiceError:
+                    await interaction.followup.send(
+                        "❌ Neplatný damage výraz. Použij např. `1d8`, `2d6+3`.")
+                    return
+                item["dmg"] = clean
+        if reusable is not None:
+            if reusable: item["reusable"] = True
+            else:        item.pop("reusable", None)
+        _save_items(items_db)
+        await interaction.followup.send(
+            f"✅ **{item['name']}** — dmg: `{item.get('dmg', '—')}`, "
+            f"reusable: `{bool(item.get('reusable'))}`.")
 
     @inv_db.command(name="remove", description="[DM] Odebere item z databáze.")
     @app_commands.describe(item_id="ID itemu k odebrání.")
