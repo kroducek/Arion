@@ -33,6 +33,7 @@ MAX_STAT = 20
 
 from src.utils.json_utils import load_json
 from src.database.characters import pkey
+from src.logic.dice import DiceError, roll_expr
 
 def _load_profile(user_id: int) -> dict:
     """Profil AKTIVNÍ postavy (pkey), s fallbackem na starý účtový klíč.
@@ -145,58 +146,20 @@ class Dice(commands.Cog):
             )
             return
 
-        tokens = re.findall(r'([+-]?(?:\d+d\d+|\d+))', raw_input)
-        if not tokens:
-            tokens = re.findall(r'([+-]?(?:\d+d\d+|\d+))', "+" + raw_input)
-        if not tokens:
-            await interaction.response.send_message(
-                "❌ Temná magie narušila tvůj hod. Zkontroluj formát! (Např. 1d20+2d6+4) ✧", ephemeral=True
-            )
-            return
-
-        total_sum        = 0
-        all_rolls_detail = []
-        is_nat_20        = False
-        is_nat_1         = False
-        is_d20           = False
-        dice_max         = 0   # největší kostka použitá v hodu (pro check scaling)
-
         try:
-            for token in tokens:
-                multiplier  = 1
-                clean_token = token
-                if token.startswith('+'):
-                    clean_token = token[1:]
-                elif token.startswith('-'):
-                    multiplier  = -1
-                    clean_token = token[1:]
-
-                if 'd' in clean_token:
-                    num_dice, sides = map(int, clean_token.split('d'))
-                    if multiplier == 1:
-                        dice_max = max(dice_max, sides)
-                    if num_dice > 100 or sides > 1000:
-                        raise ValueError("Příliš mnoho moci.")
-                    current_rolls = [random.randint(1, sides) for _ in range(num_dice)]
-                    if sides == 20 and num_dice == 1:
-                        is_d20 = True
-                        if current_rolls[0] == 20: is_nat_20 = True
-                        if current_rolls[0] == 1:  is_nat_1  = True
-                    total_sum += sum(current_rolls) * multiplier
-                    all_rolls_detail.append(
-                        f"{'+' if multiplier == 1 else '-'}{num_dice}d{sides}"
-                        f"({', '.join(map(str, current_rolls))})"
-                    )
-                else:
-                    val = int(clean_token)
-                    total_sum += val * multiplier
-                    all_rolls_detail.append(f"{'+' if multiplier == 1 else '-'}{val}")
-
-        except Exception:
+            result = roll_expr(raw_input)
+        except DiceError:
             await interaction.response.send_message(
                 "❌ Temná magie narušila tvůj hod. Zkontroluj formát! (Např. 1d20+2d6+4) ✧", ephemeral=True
             )
             return
+
+        total_sum        = result.total
+        all_rolls_detail = result.parts
+        is_nat_20        = result.nat20
+        is_nat_1         = result.nat1
+        is_d20           = result.is_d20
+        dice_max         = result.dice_max   # největší kostka v hodu (pro check scaling)
 
         # Guild statistiky + achievementy jen na serveru (v DM guild není)
         if interaction.guild is not None:
