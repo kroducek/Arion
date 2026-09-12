@@ -255,6 +255,85 @@ def format_log_event(event: dict) -> str:
     return line
 
 
+# ── Shrnutí boje ─────────────────────────────────────────────────────────────
+
+WIPEOUT_TITLE = {
+    "npc": "🏆  Nepřátelé padli!",
+    "players": "💀  Družina padla!",
+}
+MEDALS = ("🥇", "🥈", "🥉")
+
+
+def is_player(actor: str) -> bool:
+    return actor.startswith("<@")
+
+
+def damage_tally(combat: dict) -> list[tuple[str, dict]]:
+    """Kdo kolik rozdal/schytal/vyléčil podle logu. Vrácené záznamy se nepočítají.
+
+    Seřazeno podle uděleného damage sestupně.
+    """
+    tally: dict[str, dict] = {}
+
+    def slot(actor: str) -> dict:
+        return tally.setdefault(actor, {"dealt": 0, "taken": 0, "healed": 0})
+
+    for event in combat.get("log", []):
+        if event.get("undone"):
+            continue
+        delta = event["before"].get("hp", 0) - event["after"].get("hp", 0)
+        target = slot(event["target"])
+        if delta >= 0:
+            target["taken"] += delta
+        else:
+            target["healed"] += -delta
+        actor = event.get("actor")
+        if actor and actor != event["target"] and delta > 0:
+            slot(actor)["dealt"] += delta
+
+    return sorted(tally.items(), key=lambda kv: (-kv[1]["dealt"], -kv[1]["taken"]))
+
+
+def wipeout_side(combat: dict) -> str | None:
+    """'npc' když padli všichni nepřátelé, 'players' když družina. None = boj běží."""
+    sides: dict[str, list[dict]] = {"players": [], "npc": []}
+    for actor, stat in combat.get("stats", {}).items():
+        sides["players" if is_player(actor) else "npc"].append(stat)
+    if not sides["players"] or not sides["npc"]:
+        return None
+    for side, stats in sides.items():
+        if all(int(s.get("hp", 0) or 0) <= 0 for s in stats):
+            return side
+    return None
+
+
+def build_summary_embed(combat: dict, title: str) -> discord.Embed:
+    rows = damage_tally(combat)
+    lines = []
+    for i, (actor, nums) in enumerate(rows):
+        medal = MEDALS[i] if i < len(MEDALS) and nums["dealt"] else "▫️"
+        parts = [f"⚔️ `{nums['dealt']}`", f"🩸 `{nums['taken']}`"]
+        if nums["healed"]:
+            parts.append(f"💚 `{nums['healed']}`")
+        lines.append(f"{medal} **{actor}** — " + "  ".join(parts))
+
+    stats = combat.get("stats", {})
+    fallen = [a for a, s in stats.items() if int(s.get("hp", 0) or 0) <= 0]
+    embed = discord.Embed(
+        title=title,
+        description="\n".join(lines) if lines else "*Nikdo si ani neškrábl.*",
+        color=discord.Color.gold(),
+    )
+    embed.add_field(name="Kol", value=str(combat.get("round", 1)), inline=True)
+    embed.add_field(
+        name="Padlí",
+        value=", ".join(fallen) if fallen else "—",
+        inline=True,
+    )
+    embed.set_footer(text="⚔️ uděleno · 🩸 utrženo · 💚 vyléčeno")
+    return embed
+
+
 # ── Perkové buffy (efekt perku na následující útok / kolo) ───────────────────
 
 
@@ -487,6 +566,8 @@ class EOTView(ui.View):
         embed = _build_order_embed("⏭️  Další na řadě!", combat, note=note)
         view = EOTView(self.cog, self.channel_id)
         await interaction.response.send_message(embed=embed, view=view)
+        if tick_note:
+            await self.cog.check_wipeout(interaction.channel, combat)
 
 
 # ── CombatCog ─────────────────────────────────────────────────────────────────
@@ -686,6 +767,7 @@ class AttackView(ui.View):
 
         if combat.get("boss", {}).get("name") == self.target:
             asyncio.create_task(self.cog._update_boss_bar(combat, flashing=True))
+        asyncio.create_task(self.cog.check_wipeout(interaction.channel, combat))
 
     # ── tlačítka ─────────────────────────────────────────────────────────────
 
@@ -745,6 +827,23 @@ class CombatCog(commands.Cog):
     def save_state(self):
         """Uloží stav boje (volají i jiné cogy, např. perky)."""
         self._save_state()
+
+    # ── Shrnutí ───────────────────────────────────────────────────────────────
+
+    async def send_summary(self, channel, combat: dict, title: str) -> None:
+        try:
+            await channel.send(embed=build_summary_embed(combat, title))
+        except Exception:
+            logging.exception("[combat] shrnutí boje se nepodařilo odeslat")
+
+    async def check_wipeout(self, channel, combat: dict) -> None:
+        """Padla-li celá jedna strana, pošle shrnutí (jednou za boj)."""
+        side = wipeout_side(combat)
+        if not side or combat.get("summary_sent"):
+            return
+        combat["summary_sent"] = True
+        self._save_state()
+        await self.send_summary(channel, combat, WIPEOUT_TITLE[side])
 
     def _save_state(self):
         try:
@@ -1250,6 +1349,7 @@ class CombatCog(commands.Cog):
             await interaction.response.send_message(line)
             if combat.get("boss", {}).get("name") == name:
                 asyncio.create_task(self._update_boss_bar(combat, flashing=(hp < 0)))
+            asyncio.create_task(self.check_wipeout(interaction.channel, combat))
             return
 
         bar   = _make_bar(new_hp, max_hp)
@@ -1272,6 +1372,7 @@ class CombatCog(commands.Cog):
         is_boss = combat.get("boss", {}).get("name") == name
         if is_boss:
             asyncio.create_task(self._update_boss_bar(combat, flashing=(hp < 0)))
+        asyncio.create_task(self.check_wipeout(interaction.channel, combat))
 
     # ── /combat_setdef ────────────────────────────────────────────────────────
 
@@ -1440,19 +1541,25 @@ class CombatCog(commands.Cog):
     @app_commands.command(name="combat_end", description="Ukončí combat a vymaže data")
     async def combat_end(self, interaction: discord.Interaction):
         channel_id = interaction.channel_id
-        if channel_id in self.active_combats:
-            del self.active_combats[channel_id]
-            self._save_state()
-            embed = discord.Embed(
-                title="🏁  Combat ukončen",
-                description="*Boj skončil. Data byla vymazána.*",
-                color=discord.Color.greyple(),
-            )
-            await interaction.response.send_message(embed=embed)
-        else:
-            await interaction.response.send_message(
+        combat = self.active_combats.pop(channel_id, None)
+        if combat is None:
+            return await interaction.response.send_message(
                 "⚠️ *Žádný aktivní boj.*", ephemeral=True
             )
+        self._save_state()
+        await interaction.response.send_message(
+            embed=build_summary_embed(combat, "🏁  Combat ukončen"))
+
+    @app_commands.command(
+        name="combat_summary",
+        description="Shrnutí boje — kdo udělil a schytal nejvíc damage.")
+    async def combat_summary(self, interaction: discord.Interaction):
+        combat = self.active_combats.get(interaction.channel_id)
+        if not combat:
+            return await interaction.response.send_message(
+                "❌ *Zde neběží combat.*", ephemeral=True)
+        await interaction.response.send_message(
+            embed=build_summary_embed(combat, "📊  Shrnutí boje"))
 
     # ── /attack ───────────────────────────────────────────────────────────────
 
@@ -1645,6 +1752,7 @@ class CombatCog(commands.Cog):
             await interaction.response.send_message(f"{desc}\n{line}")
             if combat.get("boss", {}).get("name") == cil:
                 asyncio.create_task(self._update_boss_bar(combat, flashing=True))
+            asyncio.create_task(self.check_wipeout(interaction.channel, combat))
             return
 
         self._save_state()
