@@ -156,5 +156,56 @@ class TestPerkBuffs(unittest.TestCase):
         self.assertEqual(combat.take_attack_buffs(state, "<@2>"), [])
 
 
+class TestConsole(unittest.TestCase):
+    def test_hp_console_splits_into_small_lines(self):
+        lines = combat.hp_console("djdj", 27, 0, 27, "zásah 27  = 27 do HP",
+                                  attacker="<@530>")
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(all(l.startswith("-# ") for l in lines))
+        self.assertIn("⚔️ <@530> → ❤️ **djdj**", lines[0])
+        self.assertIn("`27` → `0/27`", lines[1])
+        self.assertIn("zásah 27", lines[2])
+
+    def test_dead_marker_on_last_line(self):
+        lines = combat.hp_console("Goblin", 5, 0, 30, "zásah 5")
+        self.assertTrue(lines[2].endswith("💀"))
+
+    def test_no_attacker_and_alive(self):
+        lines = combat.hp_console("Goblin", 30, 10, 30, "zásah 20")
+        self.assertNotIn("⚔️", lines[0])
+        self.assertNotIn("💀", lines[2])
+
+    def test_notes_are_extra_console_lines(self):
+        lines = combat.hp_console("Goblin", 30, 10, 30, "zásah 20",
+                                  notes=["🔷 −3 many"])
+        self.assertEqual(lines[3], "-# 🔷 −3 many")
+
+
+class TestStreamConsole(unittest.IsolatedAsyncioTestCase):
+    class _Message:
+        def __init__(self):
+            self.contents = []
+
+        async def edit(self, content):
+            self.contents.append(content)
+
+    async def test_lines_are_appended_one_by_one(self):
+        message = self._Message()
+        await combat.stream_console(message, ["a", "b", "c"], delay=0)
+        self.assertEqual(message.contents, ["a\nb", "a\nb\nc"])
+
+    async def test_header_stays_on_top(self):
+        message = self._Message()
+        await combat.stream_console(message, ["a", "b"], header="hlava\n", delay=0)
+        self.assertEqual(message.contents, ["hlava\na\nb"])
+
+    async def test_edit_failure_stops_stream(self):
+        class Broken(self._Message):
+            async def edit(self, content):
+                raise RuntimeError("zpráva zmizela")
+
+        await combat.stream_console(Broken(), ["a", "b"], delay=0)
+
+
 if __name__ == "__main__":
     unittest.main()
