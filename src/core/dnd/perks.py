@@ -12,6 +12,8 @@ from src.utils.paths import PERKS, PLAYER_PERKS
 from src.database.characters import pkey
 from src.utils.audit import log_action
 from src.utils.json_utils import load_json, save_json
+from src.logic.combat import add_perk_buff, use_action
+from src.logic.dice import DiceError, roll_expr
 
 logger = logging.getLogger("Perks")
 
@@ -2287,6 +2289,46 @@ class PerksCog(commands.Cog):
         await interaction.response.send_message(
             f"✅ Perk **{p['name']}** (`{perk_id}`) upraven: {', '.join(changed)}.", ephemeral=True)
 
+    @perk_group.command(name="combat", description="Nastav efekt perku v boji (admin)")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(
+        perk_id="ID perku",
+        dmg="Bonusový damage při /attack, např. 1d6 nebo 3 ('none' = smazat)",
+        scope="Jak dlouho efekt vydrží",
+    )
+    @app_commands.choices(scope=[
+        app_commands.Choice(name="nejbližší útok", value="attack"),
+        app_commands.Choice(name="do konce tahu", value="round"),
+    ])
+    async def perk_combat(self, interaction: discord.Interaction, perk_id: str,
+                          dmg: str, scope: Optional[app_commands.Choice[str]] = None):
+        perks = load_perks()
+        if perk_id not in perks:
+            await interaction.response.send_message(
+                f"❌ Perk `{perk_id}` neexistuje.", ephemeral=True)
+            return
+        p = perks[perk_id]
+        expr = dmg.strip().replace(" ", "")
+        if expr.lower() in ("none", "-", "0"):
+            p.pop("combat", None)
+            save_perks(perks)
+            await interaction.response.send_message(
+                f"♻️ **{p.get('name', perk_id)}** už v boji nic nepřidává.", ephemeral=True)
+            return
+        try:
+            roll_expr(expr)
+        except DiceError:
+            await interaction.response.send_message(
+                f"❌ `{expr}` není platný výraz — použij např. `1d6`, `2d4+1` nebo `3`.",
+                ephemeral=True)
+            return
+        p["combat"] = {"dmg": expr, "scope": scope.value if scope else "attack"}
+        save_perks(perks)
+        await interaction.response.send_message(
+            f"✅ **{p.get('name', perk_id)}** přidá `{expr}` k damage "
+            f"({'nejbližší útok' if p['combat']['scope'] == 'attack' else 'do konce tahu'}).",
+            ephemeral=True)
+
     @perk_group.command(name="tags", description="Nastav roll_tags pro perk — staty kde se zobrazí pod /roll check (admin)")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(perk_id="ID perku", tags="Staty oddělené čárkou, např. INS,DEX (prázdné = žádné)")
@@ -2370,6 +2412,13 @@ class PerksCog(commands.Cog):
         if p.get("stat_bonus"):
             embed.add_field(name="📈 Trvalé bonusy",
                             value=format_stat_bonus(p["stat_bonus"]), inline=False)
+        if (p.get("combat") or {}).get("dmg"):
+            scope = p["combat"].get("scope", "attack")
+            embed.add_field(
+                name="⚔️ V boji",
+                value=f"`+{p['combat']['dmg']}` k damage "
+                      f"({'nejbližší útok' if scope == 'attack' else 'do konce tahu'})",
+                inline=False)
         embed.set_footer(text=f"⭐ {ARION_NAME}  ·  ID: {perk_id}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -2402,6 +2451,12 @@ class PerksCog(commands.Cog):
             )
             return
 
+        allowed, combat_note = self._combat_use(interaction, perk_id, perk)
+        if not allowed:
+            # cooldown se ještě neuložil, takže se použití nezapočítá
+            await interaction.response.send_message(combat_note, ephemeral=True)
+            return
+
         save_player_perks(player_data)
         today = date.today().isoformat()
         cd    = player["cooldowns"].get(perk_id, {})
@@ -2426,7 +2481,36 @@ class PerksCog(commands.Cog):
             return
 
         embed = _perk_announce_embed(interaction.user, perk_id, perk, used)
+        if combat_note:
+            embed.description += f"\n\n{combat_note}"
         await interaction.response.send_message(embed=embed)
+
+    def _combat_use(self, interaction: discord.Interaction, perk_id: str,
+                    perk: dict) -> tuple[bool, str]:
+        """Perk v probíhajícím boji: pojistka 1× za tah + zápis bonusu k útoku.
+
+        Vrací (smí použít, poznámka do embedu). Mimo boj vždy (True, "").
+        """
+        cog = self.bot.get_cog("CombatCog")
+        if cog is None:
+            return True, ""
+        combat = cog.active_combats.get(interaction.channel_id)
+        actor = interaction.user.mention
+        if not combat or actor not in combat.get("order", []):
+            return True, ""
+        if not use_action(combat, actor, "perk"):
+            return False, "⛔ *Perk jsi v tomhle tahu už použil.*"
+
+        effect = perk.get("combat") or {}
+        note = ""
+        if effect.get("dmg"):
+            scope = effect.get("scope", "attack")
+            add_perk_buff(combat, actor, perk_id, perk.get("name", perk_id),
+                          str(effect["dmg"]), scope)
+            kdy = "k nejbližšímu útoku" if scope == "attack" else "k útokům do konce tahu"
+            note = f"⚔️ *Přičte `{effect['dmg']}` {kdy}.*"
+        cog.save_state()
+        return True, note
 
     # ── Autocomplete ──────────────────────────────────────────────────────────
 
@@ -2434,6 +2518,7 @@ class PerksCog(commands.Cog):
 
     @perk_give.autocomplete("perk_id")
     @perk_edit.autocomplete("perk_id")
+    @perk_combat.autocomplete("perk_id")
     @perk_delete.autocomplete("perk_id")
     @perks_give.autocomplete("perk_id")
     @perk_progress.autocomplete("perk_id")
