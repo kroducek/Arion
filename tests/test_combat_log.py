@@ -73,6 +73,64 @@ class TestCombatLog(unittest.TestCase):
         self.assertIn("~~", combat.format_log_event(state["log"][-1]))
 
 
+class TestSummary(unittest.TestCase):
+    def _state(self) -> dict:
+        state = _combat()
+        state["stats"]["<@1>"] = {"hp": 20, "max_hp": 20, "def": 0, "fur": 0}
+        return state
+
+    def _event(self, state, target, delta, actor=None):
+        stat = state["stats"][target]
+        before = combat.stat_snapshot(stat)
+        stat["hp"] = max(0, stat["hp"] - delta)
+        combat.log_event(state, "attack", target, before,
+                         combat.stat_snapshot(stat), actor=actor)
+
+    def test_tally_sorted_by_damage(self):
+        state = self._state()
+        self._event(state, "Goblin", 5, actor="<@1>")
+        self._event(state, "Goblin", 7, actor="<@2>")
+        self._event(state, "<@1>", 3, actor="Goblin")
+        tally = dict(combat.damage_tally(state))
+        self.assertEqual(tally["<@2>"]["dealt"], 7)
+        self.assertEqual(tally["<@1>"], {"dealt": 5, "taken": 3, "healed": 0})
+        self.assertEqual(combat.damage_tally(state)[0][0], "<@2>")
+
+    def test_heal_counts_separately(self):
+        state = self._state()
+        self._event(state, "<@1>", 10, actor="Goblin")
+        self._event(state, "<@1>", -6)
+        tally = dict(combat.damage_tally(state))
+        self.assertEqual(tally["<@1>"]["healed"], 6)
+        self.assertEqual(tally["<@1>"]["taken"], 10)
+
+    def test_undone_events_ignored(self):
+        state = self._state()
+        self._event(state, "Goblin", 9, actor="<@1>")
+        combat.undo_last(state)
+        self.assertEqual(combat.damage_tally(state), [])
+
+    def test_wipeout_detects_dead_side(self):
+        state = self._state()
+        self.assertIsNone(combat.wipeout_side(state))
+        state["stats"]["Goblin"]["hp"] = 0
+        self.assertEqual(combat.wipeout_side(state), "npc")
+        state["stats"]["<@1>"]["hp"] = 0
+        self.assertEqual(combat.wipeout_side(state), "players")
+
+    def test_no_wipeout_without_both_sides(self):
+        state = _combat()
+        state["stats"]["Goblin"]["hp"] = 0
+        self.assertIsNone(combat.wipeout_side(state))
+
+    def test_summary_embed_lists_fallen(self):
+        state = self._state()
+        self._event(state, "Goblin", 30, actor="<@1>")
+        embed = combat.build_summary_embed(state, "Konec")
+        self.assertIn("<@1>", embed.description)
+        self.assertEqual(embed.fields[1].value, "Goblin")
+
+
 class TestPerkBuffs(unittest.TestCase):
     def test_attack_scope_is_consumed(self):
         state = _combat()
