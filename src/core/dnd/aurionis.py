@@ -6,10 +6,11 @@ Zbytek mechanik (Roll, Combat, Party, Countdown) je ve vlastních souborech.
 import discord
 import random
 import os
+from datetime import datetime, timezone
 from discord.ext import commands
 from discord import app_commands
 
-from src.utils.paths import TOURNAMENT as TOURNAMENT_FILE
+from src.utils.paths import TOURNAMENT as TOURNAMENT_FILE, data as _data
 from src.utils.json_utils import load_json, save_json
 
 def _load_tournament() -> list:
@@ -33,6 +34,68 @@ def _hours_cz(n: int) -> str:
     if n == 1: return "hodina"
     if n <= 4: return "hodiny"
     return "hodin"
+
+# ============================================================
+#  AFK systém — /afk + detekce zmínky AFK hráče
+# ============================================================
+
+AFK_FILE = _data("afk.json")
+AFK_REASON_MAX_LEN = 200
+
+
+def _load_afk() -> dict:
+    """Načte AFK stavy všech hráčů."""
+    data = load_json(AFK_FILE, default={})
+    return data if isinstance(data, dict) else {}
+
+
+def _save_afk(data: dict):
+    save_json(AFK_FILE, data)
+
+
+def _minutes_cz(n: int) -> str:
+    if n == 1: return "minuta"
+    if n <= 4: return "minuty"
+    return "minut"
+
+
+def _days_cz(n: int) -> str:
+    if n == 1: return "den"
+    if n <= 4: return "dny"
+    return "dní"
+
+
+def _parse_afk_since(iso_str: str) -> datetime:
+    """Naparsuje ISO timestamp a doplní UTC, pokud v něm chybí timezone."""
+    dt = datetime.fromisoformat(iso_str)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _format_afk_duration(since_iso: str) -> str:
+    """Naformátuje, jak dlouho už je hráč AFK — např. '2 dny 3 hodiny' nebo '5 minut'."""
+    delta = datetime.now(timezone.utc) - _parse_afk_since(since_iso)
+    total_seconds = max(0, int(delta.total_seconds()))
+
+    if total_seconds < 60:
+        return "pár sekund"
+
+    days, rem = divmod(total_seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+
+    parts = []
+    if days:
+        parts.append(f"{days} {_days_cz(days)}")
+    if hours:
+        parts.append(f"{hours} {_hours_cz(hours)}")
+    if minutes and not days:
+        # U víc než denního AFK stačí dny + hodiny, ať zpráva není přeplácaná.
+        parts.append(f"{minutes} {_minutes_cz(minutes)}")
+    return " ".join(parts) if parts else "pár sekund"
+
+
 
 # ============================================================
 #  KRONIKA — interaktivní rozcestník (/kronika)
@@ -516,7 +579,74 @@ class Aurionis(commands.Cog):
     async def on_ready(self):
         print(f"✅ Arion Kronika je připravena k zápisu!")
 
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        """Detekuje návrat AFK hráče a zmínky AFK hráčů v nové zprávě."""
+        if message.author.bot:
+            return
+
+        afk_data = _load_afk()
+        if not afk_data:
+            return
+
+        changed = False
+
+        # Hráč, který právě napsal, byl AFK — vítej ho zpátky
+        author_id = str(message.author.id)
+        if author_id in afk_data:
+            entry = afk_data.pop(author_id)
+            changed = True
+            duration = _format_afk_duration(entry.get("since", datetime.now(timezone.utc).isoformat()))
+            try:
+                await message.channel.send(
+                    f"👋 **Vítej zpět, {message.author.display_name}!** Byl jsi AFK **{duration}**."
+                )
+            except discord.HTTPException:
+                pass
+
+        # Zmínka AFK hráče/hráčů v téhle zprávě
+        notified = []
+        seen_ids = set()
+        for member in message.mentions:
+            if member.bot or member.id == message.author.id:
+                continue
+            muid = str(member.id)
+            if muid in seen_ids or muid not in afk_data:
+                continue
+            seen_ids.add(muid)
+            entry = afk_data[muid]
+            duration = _format_afk_duration(entry.get("since", datetime.now(timezone.utc).isoformat()))
+            reason = entry.get("reason") or "Bez udání důvodu"
+            notified.append(f"🌙 **{member.display_name}** je AFK už **{duration}** — *{reason}*")
+
+        if notified:
+            try:
+                await message.channel.send("\n".join(notified))
+            except discord.HTTPException:
+                pass
+
+        if changed:
+            _save_afk(afk_data)
+
     # --- ZÁKLADNÍ PŘÍKAZY ---
+
+    @app_commands.command(name="afk", description="Nastav si AFK stav — Arion ohlásí každému, kdo tě pingne")
+    @app_commands.describe(reason="Důvod, proč jsi AFK (volitelné)")
+    async def afk(self, interaction: discord.Interaction, reason: str = None):
+        uid = str(interaction.user.id)
+        afk_data = _load_afk()
+
+        afk_data[uid] = {
+            "reason": (reason or "Bez udání důvodu").strip()[:AFK_REASON_MAX_LEN],
+            "since": datetime.now(timezone.utc).isoformat(),
+        }
+        _save_afk(afk_data)
+
+        embed = discord.Embed(
+            description=f"😴 **{interaction.user.display_name}** je teď AFK: *{afk_data[uid]['reason']}*",
+            color=0x95A5A6,
+        )
+        await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="ping", description="Zjistí, jak rychle Arion přiběhne")
     async def ping(self, interaction: discord.Interaction):
