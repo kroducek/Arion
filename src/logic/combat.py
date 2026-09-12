@@ -1449,8 +1449,8 @@ class CombatCog(commands.Cog):
         expr = item_damage_expr(db_item)
         if not expr:
             return await interaction.response.send_message(
-                f"❌ **{db_item.get('name', weapon_id)}** nemá damage. "
-                f"Doplň ho: `/inv-db edit {weapon_id} dmg:1d8`.", ephemeral=True)
+                f"❌ **{db_item.get('name', weapon_id)}** nemá damage ani `atk`. "
+                f"Doplň ho: `/inv-db combat {weapon_id} dmg:1d8`.", ephemeral=True)
         try:
             roll = roll_expr(expr)
         except DiceError:

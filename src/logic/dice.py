@@ -78,8 +78,8 @@ _DMG_EXPR_RE = re.compile(r"\d+d\d+(?:\s*[+-]\s*\d+(?:d\d+)?)*")
 def item_damage_expr(db_item: dict) -> str | None:
     """Damage výraz itemu.
 
-    Priorita: pole `dmg` → první `1dX` výraz na řádku `DMG:` v popisu →
-    `atk` jako plochý bonus. None když zbraň damage nemá.
+    Priorita: pole `dmg` → `atk` (číslo i kostky, např. `4d6`) → první `1dX`
+    výraz na řádku `DMG:` v popisu. None když zbraň damage nemá.
     """
     if not isinstance(db_item, dict):
         return None
@@ -87,6 +87,14 @@ def item_damage_expr(db_item: dict) -> str | None:
     explicit = str(db_item.get("dmg") or "").strip()
     if explicit:
         return explicit
+
+    atk = str(db_item.get("atk") or "").strip().replace(" ", "")
+    if atk and atk != "0":
+        try:
+            roll_expr(atk)        # ověří, že `4d6` i `12` jde hodit
+            return atk
+        except DiceError:
+            pass
 
     for line in str(db_item.get("desc") or "").split("\n"):
         m = _DMG_LINE_RE.match(line)
@@ -96,9 +104,4 @@ def item_damage_expr(db_item: dict) -> str | None:
         if expr:
             return expr.group(0)
 
-    atk = db_item.get("atk") or 0
-    try:
-        atk = int(atk)
-    except (TypeError, ValueError):
-        atk = 0
-    return str(atk) if atk else None
+    return None

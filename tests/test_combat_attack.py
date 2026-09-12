@@ -51,6 +51,16 @@ class TestItemDamage(unittest.TestCase):
     def test_atk_fallback(self):
         self.assertEqual(item_damage_expr({"atk": 7}), "7")
 
+    def test_atk_dice(self):
+        self.assertEqual(item_damage_expr({"atk": "4d6+1"}), "4d6+1")
+
+    def test_atk_beats_desc(self):
+        item = {"atk": "1d8", "desc": "DMG: 2d6"}
+        self.assertEqual(item_damage_expr(item), "1d8")
+
+    def test_broken_atk_falls_through(self):
+        self.assertIsNone(item_damage_expr({"atk": "hodně"}))
+
     def test_none(self):
         self.assertIsNone(item_damage_expr({"name": "Chleba"}))
         self.assertIsNone(item_damage_expr(None))
