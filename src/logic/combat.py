@@ -168,6 +168,37 @@ def hp_console(name: str, old_hp: int, new_hp: int, max_hp: int,
     return lines
 
 
+def miss_console(target: str, attacker: str, damage: int) -> list[str]:
+    """Uhnutí / minutí — stejný výpis jako zásah, jen bez ubraných HP."""
+    return [
+        console(f"🛡️ {attacker} → ❤️ **{target}**"),
+        console("`—` *uhnul / minul*"),
+        console(f"*({damage} dmg se neaplikovalo)*"),
+    ]
+
+
+def turn_console(combat: dict, next_actor: str, new_round: bool = False) -> list[str]:
+    """Předání tahu (a případný start nového kola) jako výpis konzole."""
+    lines = []
+    if new_round:
+        lines.append(console(f"── kolo {combat.get('round', 1)} ──"))
+    lines.append(console(f"⏭️ na tahu **{next_actor}**"))
+    order = combat.get("order") or []
+    if len(order) > 1 and next_actor in order:
+        after = order[(order.index(next_actor) + 1) % len(order)]
+        lines.append(console(f"po něm: {after}"))
+    return lines
+
+
+def undo_console(event: dict, target: str, hp: int, max_hp: int) -> list[str]:
+    """Vrácení poslední změny HP ve stejném stylu jako zásah."""
+    return [
+        console(f"↩️ ❤️ **{target}**"),
+        console(f"`{event['after'].get('hp', 0)}` → `{hp}/{max_hp}`"),
+        console(f"*(vráceno: {event.get('detail') or event.get('kind', '')})*"),
+    ]
+
+
 async def stream_console(message, lines: list[str], header: str = "",
                          delay: float = CONSOLE_DELAY) -> None:
     """Dopisuje řádky do už odeslané zprávy po jednom — výpis konzole."""
@@ -583,21 +614,20 @@ class EOTView(ui.View):
         combat["active_player"] = next_actor
 
         # Nové kolo (pořadí se obtočilo) → auto-tick statusů (dmg z jedu/krvácení atd.)
-        tick_note = ""
-        if combat["current_index"] == 0:
+        tick_lines: list[str] = []
+        new_round = combat["current_index"] == 0
+        if new_round:
             combat["round"] = int(combat.get("round", 1)) + 1
             reset_reactions(combat)
             if combat.get("auto_tick", True):
-                tick_note = self.cog._tick_round(combat)
+                tick_lines = self.cog._tick_round(combat)
         self.cog._save_state()
 
-        note = f"Tah předán — nyní hraje {next_actor}"
-        if tick_note:
-            note += f"\n\n{tick_note}"
-        embed = _build_order_embed("⏭️  Další na řadě!", combat, note=note)
+        lines = turn_console(combat, next_actor, new_round=new_round) + tick_lines
         view = EOTView(self.cog, self.channel_id)
-        await interaction.response.send_message(embed=embed, view=view)
-        if tick_note:
+        await interaction.response.send_message(content=lines[0], view=view)
+        await self.cog._stream(interaction, lines)
+        if tick_lines:
             await self.cog.check_wipeout(interaction.channel, combat)
 
 
@@ -816,10 +846,9 @@ class AttackView(ui.View):
                 "❌ *Rozhodnout může GM, útočník nebo cíl.*", ephemeral=True)
         self.resolved = True
         self._disable()
-        await interaction.response.edit_message(
-            content=f"🛡️ **{self.target}** uhnul útoku od {self.attacker} "
-                    f"— *{self.damage} dmg se neaplikovalo.*",
-            embed=None, view=self)
+        lines = miss_console(self.target, self.attacker, self.damage)
+        await interaction.response.edit_message(content=lines[0], embed=None, view=self)
+        asyncio.create_task(self.cog._stream(interaction, lines))
 
     @ui.button(label="Upravit", emoji="✏️", style=discord.ButtonStyle.primary)
     async def edit(self, interaction: discord.Interaction, button: ui.Button):
@@ -843,9 +872,13 @@ class AttackView(ui.View):
                 "⛔ *Reakci jsi v tomhle kole už použil.*", ephemeral=True)
         self.cog._save_state()
         roll = random.randint(1, 20)
-        await interaction.response.send_message(
-            f"🎲 {actor} hází reakci (úhyb/check): **{roll}**\n"
-            f"-# GM rozhodne tlačítkem ✅ / 🛡️.")
+        lines = [
+            console(f"🎲 {actor} hází reakci (úhyb/check)"),
+            console(f"**{roll}**"),
+            console("*GM rozhodne tlačítkem ✅ / 🛡️*"),
+        ]
+        await interaction.response.send_message(lines[0])
+        asyncio.create_task(self.cog._stream(interaction, lines))
 
 
 class CombatCog(commands.Cog):
@@ -953,15 +986,15 @@ class CombatCog(commands.Cog):
 
     # ── Statusy: tick + ovládání ───────────────────────────────────────────────
 
-    def _tick_round(self, combat: dict) -> str:
+    def _tick_round(self, combat: dict) -> list[str]:
         """Konec kola: u všech aktérů udělí dmg ze statusů a sníží trvání.
 
         Hráčům zapíše hp + statusy zpět do profilu a uberou kolo jejich nátěrům.
-        Vrací shrnutí pro embed (prázdné, když se nic nestalo).
+        Vrací řádky konzole (prázdný seznam, když se nic nestalo).
         """
         bs = _bs()
         if not bs:
-            return ""
+            return []
         reg   = bs.load_statuses()
         lines = []
         for actor, s in combat["stats"].items():
@@ -975,10 +1008,10 @@ class CombatCog(commands.Cog):
             if uid is not None:
                 _writeback_player_state(uid, s, bs)
             if log:
-                lines.append(f"**{actor}**: " + " · ".join(log))
+                lines.append(console(f"🩸 **{actor}**: " + " · ".join(log)))
         if not lines:
-            return ""
-        return "🩸 **Konec kola — statusy:**\n" + "\n".join(lines)
+            return []
+        return [console("── statusy na konci kola ──")] + lines
 
     combat_effect = app_commands.Group(
         name="combat_effect", description="Statusy v boji — jed/krvácení atd. (DM).")
@@ -1783,10 +1816,19 @@ class CombatCog(commands.Cog):
                       detail=result["change_str"], actor=actor)
             delivered = self._consume_weapon(interaction.user.id, weapon_id,
                                              mana_cost, runes_active)
+            notes = []
+            if delivered.get("mana_note"):
+                notes.append(delivered["mana_note"])
             if bs and delivered["statuses"]:
                 reg = bs.load_statuses()
+                applied = []
                 for status_id, source in delivered["statuses"]:
-                    bs.apply_status(stat, status_id, source, reg)
+                    inst = bs.apply_status(stat, status_id, source, reg)
+                    if inst:
+                        sdef = reg.get(status_id, {})
+                        applied.append(f"{sdef.get('emoji', '•')} {sdef.get('name', status_id)}")
+                if applied:
+                    notes.append("Doručeno: " + " · ".join(applied))
             uid = _actor_uid(cil)
             if uid is not None:
                 if bs:
@@ -1796,7 +1838,8 @@ class CombatCog(commands.Cog):
             self._save_state()
             lines = hp_console(cil, result["old_hp"], result["new_hp"],
                                stat.get("max_hp", 0), result["change_str"],
-                               attacker=actor)
+                               attacker=actor,
+                               notes=["  ·  ".join(notes)] if notes else None)
             header = f"{desc}\n"
             await interaction.response.send_message(header + lines[0])
             asyncio.create_task(self._stream(interaction, lines, header))
@@ -1852,10 +1895,9 @@ class CombatCog(commands.Cog):
             _writeback_hp_to_profile(uid, stat["hp"])
         self._save_state()
 
-        await interaction.response.send_message(
-            f"↩️ Vráceno: **{target}** {event['after'].get('hp', 0)} → "
-            f"`{stat['hp']}/{stat.get('max_hp', 0)}` HP"
-            f"  *({event.get('detail') or event.get('kind', '')})*")
+        lines = undo_console(event, target, stat["hp"], stat.get("max_hp", 0))
+        await interaction.response.send_message(lines[0])
+        asyncio.create_task(self._stream(interaction, lines))
         if combat.get("boss", {}).get("name") == target:
             asyncio.create_task(self._update_boss_bar(combat))
 

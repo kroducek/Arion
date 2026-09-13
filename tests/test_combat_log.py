@@ -180,6 +180,33 @@ class TestConsole(unittest.TestCase):
                                   notes=["🔷 −3 many"])
         self.assertEqual(lines[3], "-# 🔷 −3 many")
 
+    def test_miss_console_keeps_hp_untouched(self):
+        lines = combat.miss_console("Goblin", "<@1>", 12)
+        self.assertTrue(all(l.startswith("-# ") for l in lines))
+        self.assertIn("🛡️ <@1> → ❤️ **Goblin**", lines[0])
+        self.assertIn("12 dmg se neaplikovalo", lines[2])
+
+    def test_turn_console_announces_round_only_when_new(self):
+        state = _combat()
+        state["order"] = ["<@1>", "Goblin"]
+        state["round"] = 3
+        lines = combat.turn_console(state, "Goblin", new_round=True)
+        self.assertIn("── kolo 3 ──", lines[0])
+        self.assertIn("na tahu **Goblin**", lines[1])
+        self.assertIn("po něm: <@1>", lines[2])
+        self.assertNotIn("kolo", combat.turn_console(state, "Goblin")[0])
+
+    def test_turn_console_survives_actor_outside_order(self):
+        state = _combat()
+        self.assertEqual(len(combat.turn_console(state, "Trol")), 1)
+
+    def test_undo_console(self):
+        event = {"after": {"hp": 3}, "detail": "zásah 7"}
+        lines = combat.undo_console(event, "Goblin", 10, 30)
+        self.assertIn("↩️ ❤️ **Goblin**", lines[0])
+        self.assertIn("`3` → `10/30`", lines[1])
+        self.assertIn("zásah 7", lines[2])
+
 
 class TestStreamConsole(unittest.IsolatedAsyncioTestCase):
     class _Message:

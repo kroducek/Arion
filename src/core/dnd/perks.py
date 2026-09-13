@@ -12,7 +12,7 @@ from src.utils.paths import PERKS, PLAYER_PERKS
 from src.database.characters import pkey
 from src.utils.audit import log_action
 from src.utils.json_utils import load_json, save_json
-from src.logic.combat import add_perk_buff, use_action
+from src.logic.combat import add_perk_buff, console, use_action
 from src.logic.dice import DiceError, roll_expr
 
 logger = logging.getLogger("Perks")
@@ -2481,9 +2481,9 @@ class PerksCog(commands.Cog):
             return
 
         embed = _perk_announce_embed(interaction.user, perk_id, perk, used)
-        if combat_note:
-            embed.description += f"\n\n{combat_note}"
         await interaction.response.send_message(embed=embed)
+        if combat_note:
+            await interaction.followup.send(console(combat_note))
 
     def _combat_use(self, interaction: discord.Interaction, perk_id: str,
                     perk: dict) -> tuple[bool, str]:
@@ -2508,7 +2508,7 @@ class PerksCog(commands.Cog):
             add_perk_buff(combat, actor, perk_id, perk.get("name", perk_id),
                           str(effect["dmg"]), scope)
             kdy = "k nejbližšímu útoku" if scope == "attack" else "k útokům do konce tahu"
-            note = f"⚔️ *Přičte `{effect['dmg']}` {kdy}.*"
+            note = f"⚔️ **{perk.get('name', perk_id)}** — *přičte `{effect['dmg']}` {kdy}*"
         cog.save_state()
         return True, note
 
