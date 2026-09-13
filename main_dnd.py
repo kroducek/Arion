@@ -87,6 +87,7 @@ DND_COGS = [
     "src.logic.roll",
     "src.logic.rpmanage",
     "src.logic.memory",
+    "src.logic.flex",
     "src.logic.reputation",
     "src.logic.economy",
     "src.logic.spirits",
