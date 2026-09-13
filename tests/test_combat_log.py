@@ -200,6 +200,22 @@ class TestConsole(unittest.TestCase):
         state = _combat()
         self.assertEqual(len(combat.turn_console(state, "Trol")), 1)
 
+    def test_mana_is_charged_for_rune_item_without_engraving(self):
+        item = {"mana_cost": 10, "reusable": True}
+        cost, active, note = combat.mana_for_attack(item, {"mana_cur": 70})
+        self.assertEqual((cost, active, note), (10, True, ""))
+
+    def test_missing_mana_disables_rune(self):
+        cost, active, note = combat.mana_for_attack({"mana_cost": 10},
+                                                    {"mana_cur": 3})
+        self.assertEqual(cost, 0)
+        self.assertFalse(active)
+        self.assertIn("3/10", note)
+
+    def test_item_without_mana_cost_is_free(self):
+        self.assertEqual(combat.mana_for_attack({}, {"mana_cur": 0}),
+                         (0, True, ""))
+
     def test_undo_console(self):
         event = {"after": {"hp": 3}, "detail": "zásah 7"}
         lines = combat.undo_console(event, "Goblin", 10, 30)

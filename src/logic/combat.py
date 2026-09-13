@@ -727,6 +727,20 @@ def _rune_names(entry: dict, runes_reg: dict) -> str:
     return " · ".join(names)
 
 
+def mana_for_attack(db_item: dict, profile: dict) -> tuple[int, bool, str]:
+    """Cena many za útok: platí každý item s `mana_cost` (runa i runou zdobená zbraň).
+
+    Vrací (odečítaná mana, procne runa, poznámka do embedu).
+    """
+    cost = int(db_item.get("mana_cost", 0) or 0)
+    if not cost:
+        return 0, True, ""
+    cur = profile.get("mana_cur", profile.get("mana_max", 20))
+    if cur < cost:
+        return 0, False, f"🔷 *Málo many ({cur}/{cost}) — runa neprocne.*"
+    return cost, True, ""
+
+
 # ── Attack: potvrzení zásahu ──────────────────────────────────────────────────
 
 class DamageModal(ui.Modal, title="Upravit poškození"):
@@ -1772,17 +1786,7 @@ class CombatCog(commands.Cog):
         bs = _bs()
         runes_reg = bs.load_runes() if bs else {}
         rune_text = _rune_names(entry, runes_reg) if entry else ""
-        mana_cost = int(db_item.get("mana_cost", 0) or 0)
-        runes_active = True
-        mana_note = ""
-        if mana_cost and (entry and entry.get("runes")):
-            mana_cur = profile.get("mana_cur", profile.get("mana_max", 20))
-            if mana_cur < mana_cost:
-                runes_active = False
-                mana_cost = 0
-                mana_note = f"🔷 *Málo many ({mana_cur}/{db_item['mana_cost']}) — runa neprocne.*"
-        else:
-            mana_cost = 0
+        mana_cost, runes_active, mana_note = mana_for_attack(db_item, profile)
 
         bonus_str = f" {'+' if bonus >= 0 else '−'}{abs(int(bonus))}" if bonus else ""
         desc = (f"**{db_item.get('name', weapon_id)}** — `{expr}`{bonus_str}\n"
