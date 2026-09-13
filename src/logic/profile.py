@@ -976,7 +976,7 @@ class Profile(commands.Cog):
         save_data(data)
         await interaction.followup.send(f"✅ **{member.display_name}** si zase může dát `/rest`.")
 
-    @app_commands.command(name="profile", description="Zobrazí tvůj dobrodružný průkaz.")
+    @app_commands.command(name="profile", description="Zobrazí tvůj dobrodružný průkaz (jen pro tebe).")
     @app_commands.describe(member="Hráč (výchozí: ty).")
     async def profile(self, interaction: discord.Interaction,
                       member: Optional[discord.Member] = None):
@@ -998,7 +998,7 @@ class Profile(commands.Cog):
         can_edit = (target.id == interaction.user.id)
         guild_id = interaction.guild.id if interaction.guild else None
         view     = ProfileView(target, guild_id, can_edit)
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
     # ── /test-profile (POC obrázkové karty) ─────────────────────────────────────

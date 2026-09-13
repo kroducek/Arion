@@ -1047,11 +1047,11 @@ class Cards(commands.Cog):
         embed = build_inventory_embed(target, user_cards, page=0)
 
         if len(user_cards) <= INVENTORY_PAGE_SIZE:
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
         view = InventoryPaginatorView(invoker_id=interaction.user.id, target=target, sorted_cards=user_cards)
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         view.message = await interaction.original_response()
 
     @cards_group.command(name="show", description="Zobrazit konkrétní kartu")

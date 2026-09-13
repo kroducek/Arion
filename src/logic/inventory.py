@@ -1992,11 +1992,11 @@ class Inventory(commands.Cog):
         self.bot = bot
 
     # ── /inv ──────────────────────────────────────────────────────────────────
-    @app_commands.command(name="inv", description="Zobrazí equipment a úložiště.")
+    @app_commands.command(name="inv", description="Zobrazí equipment a úložiště (jen pro tebe).")
     @app_commands.describe(member="Hráč (výchozí: ty).")
     async def inv(self, interaction: discord.Interaction,
                   member: Optional[discord.Member] = None):
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         target   = member or interaction.user
         profiles = _load_profiles()
         profile  = profiles.get(_pk(profiles, target.id))
@@ -2015,7 +2015,7 @@ class Inventory(commands.Cog):
         embed, pages = _build_storage_embed(profile, target, items_db, "inventory", 0)
         view.pages = pages
         view._update_nav()
-        await interaction.followup.send(embed=embed, view=view)
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
         # Achievement: plná výbava — záchytný trigger při zobrazení vlastního inv.
         if target.id == interaction.user.id:

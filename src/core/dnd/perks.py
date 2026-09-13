@@ -1399,6 +1399,43 @@ def _cooldown_status(player: dict, perk_id: str, perk: dict) -> str:
 
 # ── Announce helpers ──────────────────────────────────────────────────────────
 
+def build_perk_detail_embed(perk_id: str, perk: dict) -> discord.Embed:
+    group  = perk.get("group", "")
+    gemoji = GROUP_EMOJI.get(group, "✨")
+    color  = GROUP_COLOR.get(group, 0xFFD700)
+
+    passive_line = "🔒 Pasivní" if perk.get("passive") else "⚡ Aktivní"
+    if perk.get("unique"):
+        unique_line = "⭐ Unikátní"
+    elif perk.get("learnable"):
+        unique_line = "📚 Pouze učením"
+    else:
+        unique_line = "🎲 V náhodném poolu"
+    max_    = perk.get("cooldown_uses", 0)
+    cd_line = f"{max_}×/den" if max_ > 0 else "—"
+
+    desc = f"### {gemoji} {perk['name']}\n{perk['desc']}"
+    if perk.get("subdesc"):
+        desc += f"\n-# {perk['subdesc']}"
+
+    embed = discord.Embed(description=desc, color=color)
+    embed.add_field(name="Typ",        value=passive_line, inline=True)
+    embed.add_field(name="⏳ Cooldown", value=cd_line,      inline=True)
+    embed.add_field(name="Dostupnost", value=unique_line,   inline=True)
+    if perk.get("stat_bonus"):
+        embed.add_field(name="📈 Trvalé bonusy",
+                        value=format_stat_bonus(perk["stat_bonus"]), inline=False)
+    if (perk.get("combat") or {}).get("dmg"):
+        scope = perk["combat"].get("scope", "attack")
+        embed.add_field(
+            name="⚔️ V boji",
+            value=f"`+{perk['combat']['dmg']}` k damage "
+                  f"({'nejbližší útok' if scope == 'attack' else 'do konce tahu'})",
+            inline=False)
+    embed.set_footer(text=f"⭐ {ARION_NAME}  ·  ID: {perk_id}")
+    return embed
+
+
 def _perk_announce_embed(member: discord.Member, perk_id: str, perk: dict, used: int) -> discord.Embed:
     group  = perk.get("group", "")
     color  = GROUP_COLOR.get(group, 0xFFD700)
@@ -2385,41 +2422,7 @@ class PerksCog(commands.Cog):
         if perk_id not in perks:
             await interaction.response.send_message(f"Perk `{perk_id}` neexistuje.", ephemeral=True)
             return
-        p = perks[perk_id]
-
-        group  = p.get("group", "")
-        gemoji = GROUP_EMOJI.get(group, "✨")
-        color  = GROUP_COLOR.get(group, 0xFFD700)
-
-        passive_line = "🔒 Pasivní" if p.get("passive") else "⚡ Aktivní"
-        if p.get("unique"):
-            unique_line = "⭐ Unikátní"
-        elif p.get("learnable"):
-            unique_line = "📚 Pouze učením"
-        else:
-            unique_line = "🎲 V náhodném poolu"
-        max_         = p.get("cooldown_uses", 0)
-        cd_line      = f"{max_}×/den" if max_ > 0 else "—"
-
-        desc = f"### {gemoji} {p['name']}\n{p['desc']}"
-        if p.get("subdesc"):
-            desc += f"\n-# {p['subdesc']}"
-
-        embed = discord.Embed(description=desc, color=color)
-        embed.add_field(name="Typ",       value=passive_line, inline=True)
-        embed.add_field(name="⏳ Cooldown", value=cd_line,     inline=True)
-        embed.add_field(name="Dostupnost", value=unique_line,  inline=True)
-        if p.get("stat_bonus"):
-            embed.add_field(name="📈 Trvalé bonusy",
-                            value=format_stat_bonus(p["stat_bonus"]), inline=False)
-        if (p.get("combat") or {}).get("dmg"):
-            scope = p["combat"].get("scope", "attack")
-            embed.add_field(
-                name="⚔️ V boji",
-                value=f"`+{p['combat']['dmg']}` k damage "
-                      f"({'nejbližší útok' if scope == 'attack' else 'do konce tahu'})",
-                inline=False)
-        embed.set_footer(text=f"⭐ {ARION_NAME}  ·  ID: {perk_id}")
+        embed = build_perk_detail_embed(perk_id, perks[perk_id])
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @perk_group.command(name="use", description="Aktivuj perk")
