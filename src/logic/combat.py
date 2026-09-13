@@ -702,16 +702,12 @@ def _weapon_entry(profile: dict, item_id: str) -> dict | None:
 
 
 def _player_weapons(profile: dict) -> list[str]:
-    """ID zbraní v rukou + zbylé zbraně z inventáře (pro autocomplete)."""
+    """ID zbraní, které má hráč v rukou — jen s nimi jde útočit."""
     out: list[str] = []
     equipment = profile.get("equipment", {}) or {}
     for slot in WEAPON_SLOTS:
         item_id = equipment.get(slot)
         if item_id and item_id not in out:
-            out.append(item_id)
-    for entry in _iter_entries(profile):
-        item_id = entry.get("id")
-        if entry.get("type") == "registered" and item_id and item_id not in out:
             out.append(item_id)
     return out
 
@@ -1713,7 +1709,7 @@ class CombatCog(commands.Cog):
         zbran="Zbraň (výchozí: co máš v ruce).",
         akce="Útok nebo bonusový útok (dual wielding).",
         bonus="Ruční bonus k poškození (perky, situace).",
-        force="[GM] Ignoruj pojistku na už použitou akci.",
+        force="[GM] Ignoruj pojistku na už použitou akci i na zbraň mimo ruce.",
     )
     @app_commands.choices(akce=[
         app_commands.Choice(name="útok",          value="attack"),
@@ -1754,7 +1750,16 @@ class CombatCog(commands.Cog):
             "hand_r" if action == "attack" else "hand_l")
         if not weapon_id:
             return await interaction.response.send_message(
-                "❌ *Nemáš v ruce zbraň — vyber ji parametrem `zbran`.*", ephemeral=True)
+                "❌ *Nemáš v ruce zbraň — nejdřív si ji vezmi přes `/equip`.*",
+                ephemeral=True)
+
+        equipped = _player_weapons(profile)
+        if weapon_id not in equipped and not (force and is_gm):
+            have = ", ".join(f"`{w}`" for w in equipped) or "*nic*"
+            return await interaction.response.send_message(
+                f"⛔ **{items_db.get(weapon_id, {}).get('name', weapon_id)}** nemáš v ruce. "
+                f"V rukou máš: {have}. Přezbroj přes `/equip` (se souhlasem GM).",
+                ephemeral=True)
 
         db_item = items_db.get(weapon_id) or {}
         expr = item_damage_expr(db_item)

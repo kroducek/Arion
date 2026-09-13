@@ -139,12 +139,20 @@ class TestWeaponLookup(unittest.TestCase):
         entry = self.combat._weapon_entry(profile, "mec")
         self.assertEqual(entry["runes"], ["led_1"])
 
-    def test_equipped_first(self):
+    def test_only_equipped_weapons_are_offered(self):
         profile = {
             "equipment": {"hand_r": "luk"},
             "inventory": [{"type": "registered", "id": "mec", "qty": 1}],
         }
-        self.assertEqual(self.combat._player_weapons(profile)[0], "luk")
+        self.assertEqual(self.combat._player_weapons(profile), ["luk"])
+
+    def test_both_hands_without_duplicates(self):
+        profile = {"equipment": {"hand_r": "mec", "hand_l": "mec"}}
+        self.assertEqual(self.combat._player_weapons(profile), ["mec"])
+
+    def test_no_equipment_means_no_weapons(self):
+        self.assertEqual(self.combat._player_weapons({"inventory": [
+            {"type": "registered", "id": "mec", "qty": 1}]}), [])
 
 
 class TestConsumableEntry(unittest.TestCase):
