@@ -185,5 +185,77 @@ class TestConsumableEntry(unittest.TestCase):
         self.assertIn("coating", entry)   # volající takový kus odmítne spotřebovat
 
 
+class TestAmmo(unittest.TestCase):
+    def setUp(self):
+        from src.logic import combat
+        self.combat = combat
+        self.items = {
+            "luk":  {"name": "Luk", "category": "luky_kuše", "atk": "1d10"},
+            "sip":  {"name": "Šíp", "category": "náboje", "atk": "1d2"},
+            "mec":  {"name": "Meč", "category": "jednoruční", "atk": "1d6"},
+        }
+
+    def test_ranged_detection(self):
+        self.assertTrue(self.combat._is_ranged(self.items["luk"]))
+        self.assertFalse(self.combat._is_ranged(self.items["mec"]))
+
+    def test_counts_ammo_from_toulec_and_inventory(self):
+        profile = {
+            "inventory": [{"type": "registered", "id": "sip", "qty": 2}],
+            "storages": {"toulec": [{"type": "registered", "id": "sip", "qty": 10}]},
+        }
+        self.assertEqual(self.combat._ammo_count(profile, "sip"), 12)
+        self.assertEqual(self.combat._player_ammo(profile, self.items), [("sip", 12)])
+
+    def test_non_ammo_item_not_listed(self):
+        profile = {"inventory": [{"type": "registered", "id": "mec", "qty": 1}]}
+        self.assertEqual(self.combat._player_ammo(profile, self.items), [])
+
+    def test_consume_takes_from_toulec_first(self):
+        profile = {
+            "inventory": [{"type": "registered", "id": "sip", "qty": 2}],
+            "storages": {"toulec": [{"type": "registered", "id": "sip", "qty": 3}]},
+        }
+        self.assertTrue(self.combat._consume_ammo(profile, "sip"))
+        self.assertEqual(profile["storages"]["toulec"][0]["qty"], 2)
+        self.assertEqual(profile["inventory"][0]["qty"], 2)
+
+    def test_consume_last_piece_removes_entry(self):
+        profile = {"inventory": [{"type": "registered", "id": "sip", "qty": 1}]}
+        self.assertTrue(self.combat._consume_ammo(profile, "sip"))
+        self.assertEqual(profile["inventory"], [])
+        self.assertEqual(self.combat._ammo_count(profile, "sip"), 0)
+
+    def test_consume_missing_ammo_fails(self):
+        profile = {"inventory": []}
+        self.assertFalse(self.combat._consume_ammo(profile, "sip"))
+
+    def test_weapon_plus_ammo_damage_range(self):
+        rng = random.Random(7)
+        for _ in range(50):
+            weapon = roll_expr(item_damage_expr(self.items["luk"]), rng).total
+            ammo   = roll_expr(item_damage_expr(self.items["sip"]), rng).total
+            self.assertTrue(2 <= weapon + ammo <= 12)
+
+
+class TestReleaseAction(unittest.TestCase):
+    def setUp(self):
+        from src.logic import combat
+        self.combat = combat
+
+    def test_released_action_is_usable_again(self):
+        combat = {"turn_state": {}}
+        actor = "<@1>"
+        self.assertTrue(self.combat.use_action(combat, actor, "attack"))
+        self.assertFalse(self.combat.use_action(combat, actor, "attack"))
+        self.combat.release_action(combat, actor, "attack")
+        self.assertTrue(self.combat.use_action(combat, actor, "attack"))
+
+    def test_release_never_goes_negative(self):
+        combat = {"turn_state": {}}
+        self.combat.release_action(combat, "<@1>", "attack")
+        self.assertEqual(self.combat.turn_state(combat, "<@1>")["attack"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

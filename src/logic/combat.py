@@ -14,6 +14,11 @@ from src.database.profiles import (
     save_profiles as _save_profiles,
 )
 from src.logic.dice import DiceError, item_damage_expr, roll_expr
+from src.logic.inventory import TOULEC_ITEM_ID, _remove_from_inventory
+
+# Munice a zbraně, které ji potřebují.
+AMMO_CATEGORY     = "náboje"
+RANGED_CATEGORIES = {"luky_kuše", "střelné"}
 
 SOURCE_LABEL = {"zbran": "zbraň", "runa": "runa", "prostredi": "prostředí", "schopnost": "schopnost"}
 
@@ -236,6 +241,12 @@ def use_action(combat: dict, actor: str, action: str, force: bool = False) -> bo
         return False
     state[action] = state.get(action, 0) + 1
     return True
+
+
+def release_action(combat: dict, actor: str, action: str) -> None:
+    """Vrátí akci zpět — útok se nakonec nekonal (chybí zbraň, munice, damage)."""
+    state = turn_state(combat, actor)
+    state[action] = max(0, state.get(action, 0) - 1)
 
 
 def reset_turn(combat: dict, actor: str, reaction: bool = False) -> None:
@@ -721,6 +732,49 @@ def _rune_names(entry: dict, runes_reg: dict) -> str:
     if isinstance(coat, dict) and coat.get("status"):
         names.append(f"🧪 {coat['status']}")
     return " · ".join(names)
+
+
+def _is_ranged(db_item: dict) -> bool:
+    return (db_item or {}).get("category") in RANGED_CATEGORIES
+
+
+def _ammo_stores(profile: dict) -> list[list]:
+    """Místa, kde hráč drží munici — Toulec (pokud ho má) a inventář."""
+    stores = []
+    toulec = (profile.get("storages", {}) or {}).get(TOULEC_ITEM_ID)
+    if toulec is not None:
+        stores.append(toulec)
+    stores.append(profile.setdefault("inventory", []))
+    return stores
+
+
+def _ammo_count(profile: dict, item_id: str) -> int:
+    return sum(e.get("qty", 1)
+               for store in _ammo_stores(profile) for e in store
+               if e.get("type") == "registered" and e.get("id") == item_id)
+
+
+def _consume_ammo(profile: dict, item_id: str, qty: int = 1) -> bool:
+    """Odečte munici z prvního místa, kde ji hráč má."""
+    for store in _ammo_stores(profile):
+        if any(e.get("type") == "registered" and e.get("id") == item_id
+               and e.get("qty", 1) >= qty for e in store):
+            return _remove_from_inventory(store, item_id, qty)
+    return False
+
+
+def _player_ammo(profile: dict, items_db: dict) -> list[tuple[str, int]]:
+    """(id, počet) veškeré munice hráče — pro našeptávač i hlášku 'nemáš munici'."""
+    counts: dict[str, int] = {}
+    for store in _ammo_stores(profile):
+        for entry in store:
+            if entry.get("type") != "registered":
+                continue
+            iid = entry.get("id", "")
+            if (items_db.get(iid) or {}).get("category") != AMMO_CATEGORY:
+                continue
+            counts[iid] = counts.get(iid, 0) + entry.get("qty", 1)
+    return sorted(counts.items())
 
 
 def mana_for_attack(db_item: dict, profile: dict) -> tuple[int, bool, str]:
@@ -1704,12 +1758,32 @@ class CombatCog(commands.Cog):
             out.append(app_commands.Choice(name=f"{name} ({expr})"[:100], value=item_id))
         return out[:25]
 
+    async def _ac_ammo(self, interaction: discord.Interaction, current: str):
+        try:
+            profiles = _load_profiles()
+            profile  = profiles.get(_pk(profiles, interaction.user.id)) or {}
+            items_db = _load_items_db()
+        except Exception:
+            return []
+        cur = current.lower()
+        out = []
+        for item_id, qty in _player_ammo(profile, items_db):
+            db_item = items_db.get(item_id) or {}
+            name = db_item.get("name", item_id)
+            if cur and cur not in name.lower() and cur not in item_id.lower():
+                continue
+            expr = item_damage_expr(db_item)
+            label = f"{name} ×{qty}" + (f" ({expr})" if expr else "")
+            out.append(app_commands.Choice(name=label[:100], value=item_id))
+        return out[:25]
+
     @app_commands.command(
         name="attack",
         description="Útok zbraní — hodí damage a nabídne potvrzení zásahu.")
     @app_commands.describe(
         cil="Koho útočíš (aktér v boji).",
         zbran="Zbraň (výchozí: co máš v ruce).",
+        ammo="Munice pro střelnou zbraň — přičte svůj atk a odečte se kus.",
         akce="Útok nebo bonusový útok (dual wielding).",
         bonus="Ruční bonus k poškození (perky, situace).",
         force="[GM] Ignoruj pojistku na už použitou akci i na zbraň mimo ruce.",
@@ -1718,12 +1792,13 @@ class CombatCog(commands.Cog):
         app_commands.Choice(name="útok",          value="attack"),
         app_commands.Choice(name="bonusový útok", value="bonus"),
     ])
-    @app_commands.autocomplete(cil=_ac_actor, zbran=_ac_weapon)
+    @app_commands.autocomplete(cil=_ac_actor, zbran=_ac_weapon, ammo=_ac_ammo)
     async def attack(
         self,
         interaction: discord.Interaction,
         cil: str,
         zbran: Optional[str] = None,
+        ammo: Optional[str] = None,
         akce: Optional[app_commands.Choice[str]] = None,
         bonus: int = 0,
         force: bool = False,
@@ -1752,12 +1827,14 @@ class CombatCog(commands.Cog):
         weapon_id = zbran or (profile.get("equipment", {}) or {}).get(
             "hand_r" if action == "attack" else "hand_l")
         if not weapon_id:
+            release_action(combat, actor, action)
             return await interaction.response.send_message(
                 "❌ *Nemáš v ruce zbraň — nejdřív si ji vezmi přes `/equip`.*",
                 ephemeral=True)
 
         equipped = _player_weapons(profile)
         if weapon_id not in equipped and not (force and is_gm):
+            release_action(combat, actor, action)
             have = ", ".join(f"`{w}`" for w in equipped) or "*nic*"
             return await interaction.response.send_message(
                 f"⛔ **{items_db.get(weapon_id, {}).get('name', weapon_id)}** nemáš v ruce. "
@@ -1767,14 +1844,59 @@ class CombatCog(commands.Cog):
         db_item = items_db.get(weapon_id) or {}
         expr = item_damage_expr(db_item)
         if not expr:
+            release_action(combat, actor, action)
             return await interaction.response.send_message(
                 f"❌ **{db_item.get('name', weapon_id)}** nemá damage ani `atk`. "
                 f"Doplň ho: `/inv-db combat {weapon_id} dmg:1d8`.", ephemeral=True)
         try:
             roll = roll_expr(expr)
         except DiceError:
+            release_action(combat, actor, action)
             return await interaction.response.send_message(
                 f"❌ *Damage `{expr}` nejde hodit — oprav item `{weapon_id}`.*", ephemeral=True)
+
+        # ── Munice: vlastní `atk` navíc a odečtení kusu ──────────────────────
+        ammo_total = 0
+        ammo_line  = ""
+        if ammo:
+            db_ammo = items_db.get(ammo) or {}
+            if db_ammo.get("category") != AMMO_CATEGORY:
+                release_action(combat, actor, action)
+                return await interaction.response.send_message(
+                    f"❌ **{db_ammo.get('name', ammo)}** není munice (kategorie *{AMMO_CATEGORY}*).",
+                    ephemeral=True)
+            have_ammo = _ammo_count(profile, ammo)
+            if have_ammo <= 0:
+                release_action(combat, actor, action)
+                return await interaction.response.send_message(
+                    f"🎯 **{db_ammo.get('name', ammo)}** nemáš — doplň munici do Toulce.",
+                    ephemeral=True)
+            ammo_expr   = item_damage_expr(db_ammo)
+            ammo_detail = ""
+            if ammo_expr:
+                try:
+                    ammo_roll = roll_expr(ammo_expr)
+                except DiceError:
+                    release_action(combat, actor, action)
+                    return await interaction.response.send_message(
+                        f"❌ *Damage `{ammo_expr}` nejde hodit — oprav item `{ammo}`.*",
+                        ephemeral=True)
+                ammo_total  = ammo_roll.total
+                ammo_detail = f" — `{ammo_expr}` → **+{ammo_total}**"
+            _consume_ammo(profile, ammo)
+            _save_profiles(profiles)
+            ammo_line = (f"🎯 **{db_ammo.get('name', ammo)}**{ammo_detail}  "
+                         f"*(zbývá {have_ammo - 1})*")
+        elif _is_ranged(db_item):
+            owned = _player_ammo(profile, items_db)
+            if owned:
+                release_action(combat, actor, action)
+                names = ", ".join(
+                    f"**{items_db.get(iid, {}).get('name', iid)}** ×{qty}"
+                    for iid, qty in owned)
+                return await interaction.response.send_message(
+                    f"🎯 *Vyber munici do `ammo`.* Máš: {names}", ephemeral=True)
+            ammo_line = "🎯 *Nemáš žádnou munici — střílíš naslepo.*"
 
         buffs = take_attack_buffs(combat, actor)
         buff_total = 0
@@ -1787,7 +1909,7 @@ class CombatCog(commands.Cog):
             buff_total += buff_roll.total
             buff_lines.append(f"✨ {buff['name']}: `{buff['dmg']}` → **+{buff_roll.total}**")
 
-        damage = max(0, roll.total + int(bonus) + buff_total)
+        damage = max(0, roll.total + ammo_total + int(bonus) + buff_total)
 
         # ── Runy: použití stojí manu; když nestačí, runa neprocne ─────────────
         entry = _weapon_entry(profile, weapon_id)
@@ -1799,6 +1921,8 @@ class CombatCog(commands.Cog):
         bonus_str = f" {'+' if bonus >= 0 else '−'}{abs(int(bonus))}" if bonus else ""
         desc = (f"**{db_item.get('name', weapon_id)}** — `{expr}`{bonus_str}\n"
                 f"{roll.detail}  →  **{damage} dmg**")
+        if ammo_line:
+            desc += f"\n{ammo_line}"
         if buff_lines:
             desc += "\n" + "\n".join(buff_lines)
         if rune_text:
