@@ -192,9 +192,22 @@ class TestConsole(unittest.TestCase):
         state["round"] = 3
         lines = combat.turn_console(state, "Goblin", new_round=True)
         self.assertIn("── kolo 3 ──", lines[0])
-        self.assertIn("na tahu **Goblin**", lines[1])
-        self.assertIn("po něm: <@1>", lines[2])
+        self.assertIn("na tahu **Goblin**", lines[-2])
+        self.assertIn("po něm: <@1>", lines[-1])
         self.assertNotIn("kolo", combat.turn_console(state, "Goblin")[0])
+
+    def test_new_round_recaps_hp(self):
+        state = _combat(12)
+        lines = combat.turn_console(state, "Goblin", new_round=True)
+        self.assertTrue(all(l.startswith("-# ") for l in lines))
+        self.assertIn("❤️ **Goblin** `12/30`", lines[1])
+        self.assertNotIn("❤️", "".join(combat.turn_console(state, "Goblin")))
+
+    def test_hp_recap_skips_actors_without_stats(self):
+        state = _combat()
+        state["order"] = ["<@1>", "Goblin"]
+        recap = combat.hp_recap_console(state)
+        self.assertEqual(len(recap), 1)
 
     def test_turn_console_survives_actor_outside_order(self):
         state = _combat()

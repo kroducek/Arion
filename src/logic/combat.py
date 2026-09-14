@@ -190,11 +190,27 @@ def miss_console(target: str, attacker: str, damage: int,
     ]
 
 
+def hp_recap_console(combat: dict) -> list[str]:
+    """Přehled HP všech bojovníků — řádek na jednoho, ve stylu konzole."""
+    stats = combat.get("stats", {})
+    lines = []
+    for name in (combat.get("order") or list(stats)):
+        s = stats.get(name)
+        if not s:
+            continue
+        hp, max_hp = s.get("hp", 0), s.get("max_hp", 0)
+        bar = _make_bar(hp, max_hp, 8)
+        dead = "  💀" if hp == 0 else ""
+        lines.append(console(f"❤️ **{name}** `{hp}/{max_hp}` {bar}{dead}"))
+    return lines
+
+
 def turn_console(combat: dict, next_actor: str, new_round: bool = False) -> list[str]:
     """Předání tahu (a případný start nového kola) jako výpis konzole."""
     lines = []
     if new_round:
         lines.append(console(f"── kolo {combat.get('round', 1)} ──"))
+        lines += hp_recap_console(combat)
     lines.append(console(f"⏭️ na tahu **{next_actor}**"))
     order = combat.get("order") or []
     if len(order) > 1 and next_actor in order:
