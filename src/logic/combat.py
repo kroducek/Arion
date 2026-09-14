@@ -815,7 +815,8 @@ class AttackView(ui.View):
 
     def __init__(self, cog: "CombatCog", channel_id: int, attacker: str,
                  attacker_uid: int | None, target: str, damage: int,
-                 weapon_id: str | None, mana_cost: int = 0):
+                 weapon_id: str | None, mana_cost: int = 0,
+                 ammo_note: str = ""):
         super().__init__(timeout=600)
         self.cog = cog
         self.channel_id = channel_id
@@ -825,6 +826,7 @@ class AttackView(ui.View):
         self.damage = damage
         self.weapon_id = weapon_id
         self.mana_cost = mana_cost
+        self.ammo_note = ammo_note
         self.resolved = False
 
     # ── oprávnění ────────────────────────────────────────────────────────────
@@ -857,6 +859,8 @@ class AttackView(ui.View):
                   detail=result["change_str"], actor=self.attacker)
 
         notes = []
+        if self.ammo_note:
+            notes.append(self.ammo_note)
         bs = _bs()
         delivered = self.cog._consume_weapon(self.attacker_uid, self.weapon_id,
                                              self.mana_cost)
@@ -911,6 +915,8 @@ class AttackView(ui.View):
         self.resolved = True
         self._disable()
         lines = miss_console(self.target, self.attacker, self.damage)
+        if self.ammo_note:
+            lines.append(console(self.ammo_note))
         await interaction.response.edit_message(content=lines[0], embed=None, view=self)
         asyncio.create_task(self.cog._stream(interaction, lines))
 
@@ -1858,6 +1864,7 @@ class CombatCog(commands.Cog):
         # ── Munice: vlastní `atk` navíc a odečtení kusu ──────────────────────
         ammo_total = 0
         ammo_line  = ""
+        ammo_note  = ""
         if ammo:
             db_ammo = items_db.get(ammo) or {}
             if db_ammo.get("category") != AMMO_CATEGORY:
@@ -1886,6 +1893,8 @@ class CombatCog(commands.Cog):
             _consume_ammo(profile, ammo)
             _save_profiles(profiles)
             ammo_line = (f"🎯 **{db_ammo.get('name', ammo)}**{ammo_detail}  "
+                         f"*(zbývá {have_ammo - 1})*")
+            ammo_note = (f"🎯 −1 {db_ammo.get('name', ammo)}  "
                          f"*(zbývá {have_ammo - 1})*")
         elif _is_ranged(db_item):
             owned = _player_ammo(profile, items_db)
@@ -1942,7 +1951,8 @@ class CombatCog(commands.Cog):
         embed.set_footer(text="Damage se aplikuje až po potvrzení — cíl má prostor na reakci.")
 
         view = AttackView(self, interaction.channel_id, actor,
-                          interaction.user.id, cil, damage, weapon_id, mana_cost)
+                          interaction.user.id, cil, damage, weapon_id, mana_cost,
+                          ammo_note)
 
         if combat.get("auto_apply"):
             stat = combat["stats"][cil]
@@ -1953,6 +1963,8 @@ class CombatCog(commands.Cog):
             delivered = self._consume_weapon(interaction.user.id, weapon_id,
                                              mana_cost, runes_active)
             notes = []
+            if ammo_note:
+                notes.append(ammo_note)
             if delivered.get("mana_note"):
                 notes.append(delivered["mana_note"])
             if bs and delivered["statuses"]:

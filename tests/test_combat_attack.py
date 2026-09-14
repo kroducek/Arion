@@ -230,6 +230,12 @@ class TestAmmo(unittest.TestCase):
         profile = {"inventory": []}
         self.assertFalse(self.combat._consume_ammo(profile, "sip"))
 
+    def test_ammo_note_goes_to_console(self):
+        note  = "🎯 −1 Šíp  *(zbývá 11)*"
+        lines = self.combat.hp_console("Goblin", 20, 8, 20, "zásah 12", notes=[note])
+        self.assertTrue(lines[-1].startswith("-# "))
+        self.assertIn(note, lines[-1])
+
     def test_weapon_plus_ammo_damage_range(self):
         rng = random.Random(7)
         for _ in range(50):
