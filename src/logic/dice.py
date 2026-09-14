@@ -75,23 +75,30 @@ _DMG_LINE_RE = re.compile(r"^\s*dmg\s*:\s*(.+)$", re.IGNORECASE)
 _DMG_EXPR_RE = re.compile(r"\d+d\d+(?:\s*[+-]\s*\d+(?:d\d+)?)*")
 
 
+def _implicit_die(expr: str) -> str:
+    """Holé číslo je maximum kostky: `16` → `1d16`, `4d6` zůstává."""
+    return f"1d{expr}" if expr.isdigit() else expr
+
+
 def item_damage_expr(db_item: dict) -> str | None:
     """Damage výraz itemu.
 
     Priorita: pole `dmg` → `atk` (číslo i kostky, např. `4d6`) → první `1dX`
-    výraz na řádku `DMG:` v popisu. None když zbraň damage nemá.
+    výraz na řádku `DMG:` v popisu. Holé číslo znamená kostku (`16` → `1d16`).
+    None když zbraň damage nemá.
     """
     if not isinstance(db_item, dict):
         return None
 
-    explicit = str(db_item.get("dmg") or "").strip()
+    explicit = str(db_item.get("dmg") or "").strip().replace(" ", "")
     if explicit:
-        return explicit
+        return _implicit_die(explicit)
 
     atk = str(db_item.get("atk") or "").strip().replace(" ", "")
     if atk and atk != "0":
+        atk = _implicit_die(atk)
         try:
-            roll_expr(atk)        # ověří, že `4d6` i `12` jde hodit
+            roll_expr(atk)        # ověří, že `4d6` i `1d12` jde hodit
             return atk
         except DiceError:
             pass
