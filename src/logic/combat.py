@@ -288,7 +288,7 @@ def log_event(combat: dict, kind: str, target: str, before: dict, after: dict,
 def undo_last(combat: dict) -> dict | None:
     """Vrátí poslední nezrušenou změnu HP/FUR zpět. None = není co vracet.
 
-    Statusy ani spotřebovanou manu nevrací — ty řeší `/combat_effect clear`.
+    Statusy ani spotřebovanou manu nevrací — ty řeší `/combat effect clear`.
     """
     for event in reversed(combat.get("log", [])):
         if event.get("undone"):
@@ -579,7 +579,7 @@ class EOTView(ui.View):
 
         if not combat.get("locked"):
             return await interaction.response.send_message(
-                "⚠️ *Combat ještě není uzavřen. Čekej na `/combat_setorder`.*",
+                "⚠️ *Combat ještě není uzavřen. Čekej na `/combat setorder`.*",
                 ephemeral=True,
             )
 
@@ -664,7 +664,7 @@ class InitiativeView(ui.View):
         await interaction.response.edit_message(
             embed=discord.Embed(
                 title="🎲  Iniciativa hozena",
-                description=f"# {roll}{crit}\n-# GM tě zařadí přes `/combat_setorder`.",
+                description=f"# {roll}{crit}\n-# GM tě zařadí přes `/combat setorder`.",
                 color=discord.Color.gold()),
             view=self,
         )
@@ -1023,8 +1023,11 @@ class CombatCog(commands.Cog):
             return []
         return [console("── statusy na konci kola ──")] + lines
 
+    combat_group = app_commands.Group(
+        name="combat", description="Bojový systém — start, join, správa aktérů a efektů (DM)")
+
     combat_effect = app_commands.Group(
-        name="combat_effect", description="Statusy v boji — jed/krvácení atd. (DM).")
+        name="effect", description="Statusy v boji — jed/krvácení atd. (DM).", parent=combat_group)
 
     async def _ac_actor(self, interaction: discord.Interaction, current: str):
         combat = self.active_combats.get(interaction.channel_id)
@@ -1128,9 +1131,9 @@ class CombatCog(commands.Cog):
         await interaction.response.send_message(
             f"⚙️ Auto-tick statusů: **{'zapnut' if zapnuto else 'vypnut'}**.")
 
-    # ── /combat_start ─────────────────────────────────────────────────────────
+    # ── /combat start ─────────────────────────────────────────────────────────
 
-    @app_commands.command(name="combat_start", description="Zahájí boj v této místnosti")
+    @combat_group.command(name="start", description="Zahájí boj v této místnosti")
     async def combat_start(self, interaction: discord.Interaction):
         channel_id = interaction.channel_id
         self.active_combats[channel_id] = {
@@ -1149,17 +1152,17 @@ class CombatCog(commands.Cog):
             title="⚔️  Boj začíná!",
             description=(
                 "*Combat byl zahájen v tomto kanálu.*\n\n"
-                "Hráči: `/combat_join` → hoď si iniciativu\n"
-                "GM přidá NPC: `/combat_add_npc`\n"
-                "GM uzavře pořadí: `/combat_setorder` *(seřadí dle iniciativy)*"
+                "Hráči: `/combat join` → hoď si iniciativu\n"
+                "GM přidá NPC: `/combat add_npc`\n"
+                "GM uzavře pořadí: `/combat setorder` *(seřadí dle iniciativy)*"
             ),
             color=discord.Color.red(),
         )
         await interaction.response.send_message(embed=embed)
 
-    # ── /combat_join ──────────────────────────────────────────────────────────
+    # ── /combat join ──────────────────────────────────────────────────────────
 
-    @app_commands.command(name="combat_join", description="Hráč se zapojí do boje")
+    @combat_group.command(name="join", description="Hráč se zapojí do boje")
     async def combat_join(self, interaction: discord.Interaction):
         channel_id = interaction.channel_id
         if channel_id not in self.active_combats:
@@ -1218,9 +1221,9 @@ class CombatCog(commands.Cog):
         await interaction.response.send_message(
             embed=embed, view=InitiativeView(self, channel_id, user), ephemeral=True)
 
-    # ── /combat_add_npc ───────────────────────────────────────────────────────
+    # ── /combat add_npc ───────────────────────────────────────────────────────
 
-    @app_commands.command(name="combat_add_npc", description="GM přidá NPC/potvoru s HP, DEF a FUR")
+    @combat_group.command(name="add_npc", description="GM přidá NPC/potvoru s HP, DEF a FUR")
     @app_commands.describe(
         name="Jméno NPC",
         hp="Maximum životů (výchozí: 100)",
@@ -1265,7 +1268,7 @@ class CombatCog(commands.Cog):
             "def":    defense,
             "fur":    fury,
         }
-        # NPC si hodí iniciativu automaticky (GM může přepsat /combat_setinit)
+        # NPC si hodí iniciativu automaticky (GM může přepsat /combat setinit)
         npc_init = random.randint(1, 20)
         combat.setdefault("initiative", {})[final_name] = npc_init
         self._save_state()
@@ -1276,10 +1279,10 @@ class CombatCog(commands.Cog):
             note=f"NPC přidáno — HP {actual_current}/{hp}  DEF {defense}  FUR {fury}  🎲 init {npc_init}",
         )
 
-    # ── /combat_add_player_stats ──────────────────────────────────────────────
+    # ── /combat add_player_stats ──────────────────────────────────────────────
 
-    @app_commands.command(
-        name="combat_add_player_stats",
+    @combat_group.command(
+        name="add_player_stats",
         description="GM přidá HP/DEF/FUR hráči (např. pro tracking zranění)"
     )
     @app_commands.checks.has_permissions(administrator=True)
@@ -1322,9 +1325,9 @@ class CombatCog(commands.Cog):
             ephemeral=True,
         )
 
-    # ── /combat_add_boss ──────────────────────────────────────────────────────
+    # ── /combat add_boss ──────────────────────────────────────────────────────
 
-    @app_commands.command(name="combat_add_boss", description="GM přidá bosse s odděleným boss barem")
+    @combat_group.command(name="add_boss", description="GM přidá bosse s odděleným boss barem")
     @app_commands.describe(
         name="Jméno bosse",
         hp="Maximum životů (výchozí: 200)",
@@ -1348,7 +1351,7 @@ class CombatCog(commands.Cog):
         combat = self.active_combats[channel_id]
         if combat.get("boss"):
             return await interaction.response.send_message(
-                "⚠️ *V tomto combatu už boss je. Nejdřív ho odeber přes `/combat_remove`.*",
+                "⚠️ *V tomto combatu už boss je. Nejdřív ho odeber přes `/combat remove`.*",
                 ephemeral=True,
             )
 
@@ -1376,9 +1379,9 @@ class CombatCog(commands.Cog):
             f"☠️ *Boss **{name}** vstoupil do boje!*  ❤️ `{hp}` HP  🛡️ `{defense}` DEF  🔥 `{fury}` FUR"
         )
 
-    # ── /combat_sethp ─────────────────────────────────────────────────────────
+    # ── /combat sethp ─────────────────────────────────────────────────────────
 
-    @app_commands.command(name="combat_sethp", description="Admin: nastaví HP NPC/hráči během combatu")
+    @combat_group.command(name="sethp", description="Admin: nastaví HP NPC/hráči během combatu")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
         name="Jméno NPC nebo mention hráče (@mention nebo přesné jméno)",
@@ -1400,7 +1403,7 @@ class CombatCog(commands.Cog):
         if name not in stats:
             return await interaction.response.send_message(
                 f"⚠️ *`{name}` nemá zaznamenané HP.*\n"
-                "NPC: `/combat_add_npc`  |  Hráč: `/combat_add_player_stats` nebo `/combat_join`",
+                "NPC: `/combat add_npc`  |  Hráč: `/combat add_player_stats` nebo `/combat join`",
                 ephemeral=True,
             )
 
@@ -1431,7 +1434,7 @@ class CombatCog(commands.Cog):
             except ValueError:
                 pass
 
-        # Krátká hláška (default) — plný přehled je na /combat_status.
+        # Krátká hláška (default) — plný přehled je na /combat status.
         if not combat.get("verbose"):
             lines = hp_console(name, old_hp, new_hp, max_hp, change_str,
                                attacker=utocnik)
@@ -1453,7 +1456,7 @@ class CombatCog(commands.Cog):
                 f"*{old_hp} → {new_hp}  ({change_str})*\n"
                 f"🛡️ DEF: `{stats[name]['def']}`  🔥 FUR: `{stats[name].get('fur', 0)}`"
                 + ("\n*↩️ Zapsáno do profilu hráče.*" if is_player else "")
-                + ("\n\n💀 *HP dosáhlo nuly! Zvaž `/combat_remove`.*" if dead else "")
+                + ("\n\n💀 *HP dosáhlo nuly! Zvaž `/combat remove`.*" if dead else "")
             ),
             color=discord.Color.red() if dead else color,
         )
@@ -1464,9 +1467,9 @@ class CombatCog(commands.Cog):
             asyncio.create_task(self._update_boss_bar(combat, flashing=(hp < 0)))
         asyncio.create_task(self.check_wipeout(interaction.channel, combat))
 
-    # ── /combat_setdef ────────────────────────────────────────────────────────
+    # ── /combat setdef ────────────────────────────────────────────────────────
 
-    @app_commands.command(name="combat_setdef", description="Admin: nastaví DEF NPC/hráči")
+    @combat_group.command(name="setdef", description="Admin: nastaví DEF NPC/hráči")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(name="Jméno NPC nebo mention hráče", defense="Nová hodnota obrany")
     async def combat_setdef(self, interaction: discord.Interaction, name: str, defense: int):
@@ -1493,9 +1496,9 @@ class CombatCog(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
-    # ── /combat_setfur ────────────────────────────────────────────────────────
+    # ── /combat setfur ────────────────────────────────────────────────────────
 
-    @app_commands.command(name="combat_setfur", description="Admin: nastaví FUR (zuřivost) NPC/hráči")
+    @combat_group.command(name="setfur", description="Admin: nastaví FUR (zuřivost) NPC/hráči")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(name="Jméno NPC nebo mention hráče", fury="Nová hodnota zuřivosti")
     async def combat_setfur(self, interaction: discord.Interaction, name: str, fury: int):
@@ -1522,9 +1525,9 @@ class CombatCog(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
-    # ── /combat_setinit ───────────────────────────────────────────────────────
+    # ── /combat setinit ───────────────────────────────────────────────────────
 
-    @app_commands.command(name="combat_setinit", description="Admin: nastaví iniciativu aktérovi")
+    @combat_group.command(name="setinit", description="Admin: nastaví iniciativu aktérovi")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(name="Jméno NPC nebo mention hráče", value="Nová iniciativa")
     async def combat_setinit(self, interaction: discord.Interaction, name: str, value: int):
@@ -1548,9 +1551,9 @@ class CombatCog(commands.Cog):
         await interaction.response.send_message(
             f"🎲 *Iniciativa {name}: {old if old is not None else '—'} → **{value}***")
 
-    # ── /combat_remove ────────────────────────────────────────────────────────
+    # ── /combat remove ────────────────────────────────────────────────────────
 
-    @app_commands.command(name="combat_remove", description="Odebere někoho z pořadí")
+    @combat_group.command(name="remove", description="Odebere někoho z pořadí")
     async def combat_remove(self, interaction: discord.Interaction, name: str):
         channel_id = interaction.channel_id
         if channel_id not in self.active_combats:
@@ -1590,10 +1593,10 @@ class CombatCog(commands.Cog):
             f"❌ *{to_remove} byl odstraněn z boje.*"
         )
 
-    # ── /combat_setorder ──────────────────────────────────────────────────────
+    # ── /combat setorder ──────────────────────────────────────────────────────
 
-    @app_commands.command(
-        name="combat_setorder",
+    @combat_group.command(
+        name="setorder",
         description="Uzavře pořadí do pevné smyčky a spustí combat"
     )
     @app_commands.checks.has_permissions(administrator=True)
@@ -1607,7 +1610,7 @@ class CombatCog(commands.Cog):
         combat = self.active_combats[channel_id]
 
         # Seřaď pořadí podle hozené iniciativy (nejvyšší jde první).
-        # Kdo nehodil, spadne na konec (init −1) — GM může dohodit /combat_remove.
+        # Kdo nehodil, spadne na konec (init −1) — GM může dohodit /combat remove.
         init = combat.get("initiative", {})
         combat["order"].sort(key=lambda nm: init.get(nm, -1), reverse=True)
 
@@ -1626,9 +1629,9 @@ class CombatCog(commands.Cog):
         await interaction.response.defer()
         await interaction.followup.send(embed=embed, view=view)
 
-    # ── /combat_end ───────────────────────────────────────────────────────────
+    # ── /combat end ───────────────────────────────────────────────────────────
 
-    @app_commands.command(name="combat_end", description="Ukončí combat a vymaže data")
+    @combat_group.command(name="end", description="Ukončí combat a vymaže data")
     async def combat_end(self, interaction: discord.Interaction):
         channel_id = interaction.channel_id
         combat = self.active_combats.pop(channel_id, None)
@@ -1640,8 +1643,8 @@ class CombatCog(commands.Cog):
         await interaction.response.send_message(
             embed=build_summary_embed(combat, "🏁  Combat ukončen"))
 
-    @app_commands.command(
-        name="combat_summary",
+    @combat_group.command(
+        name="summary",
         description="Shrnutí boje — kdo udělil a schytal nejvíc damage.")
     async def combat_summary(self, interaction: discord.Interaction):
         combat = self.active_combats.get(interaction.channel_id)
@@ -1860,10 +1863,10 @@ class CombatCog(commands.Cog):
         self._save_state()
         await interaction.response.send_message(embed=embed, view=view)
 
-    # ── /combat_log a /combat_undo ────────────────────────────────────
+    # ── /combat log a /combat undo ────────────────────────────────────
 
-    @app_commands.command(
-        name="combat_log",
+    @combat_group.command(
+        name="log",
         description="Historie změn HP v tomhle boji.")
     @app_commands.describe(pocet="Kolik posledních záznamů (výchozí 10).")
     async def combat_log(self, interaction: discord.Interaction, pocet: int = 10):
@@ -1880,11 +1883,11 @@ class CombatCog(commands.Cog):
             description="\n".join(format_log_event(e) for e in events),
             color=discord.Color.dark_gold(),
         )
-        embed.set_footer(text="Poslední změnu vrátíš přes /combat_undo")
+        embed.set_footer(text="Poslední změnu vrátíš přes /combat undo")
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(
-        name="combat_undo",
+    @combat_group.command(
+        name="undo",
         description="[GM] Vrátí poslední změnu HP zpět.")
     @app_commands.checks.has_permissions(administrator=True)
     async def combat_undo(self, interaction: discord.Interaction):
@@ -1910,8 +1913,8 @@ class CombatCog(commands.Cog):
         if combat.get("boss", {}).get("name") == target:
             asyncio.create_task(self._update_boss_bar(combat))
 
-    @app_commands.command(
-        name="combat_autoapply",
+    @combat_group.command(
+        name="autoapply",
         description="[GM] Aplikovat damage z /attack rovnou, bez potvrzení.")
     @app_commands.checks.has_permissions(administrator=True)
     async def combat_autoapply(self, interaction: discord.Interaction, zapnuto: bool):
@@ -1924,8 +1927,8 @@ class CombatCog(commands.Cog):
         await interaction.response.send_message(
             f"⚙️ Auto-aplikace útoků: **{'zapnuta' if zapnuto else 'vypnuta'}**.")
 
-    @app_commands.command(
-        name="combat_verbose",
+    @combat_group.command(
+        name="verbose",
         description="[GM] Dlouhé embedy místo krátkých hlášek při úpravě HP.")
     @app_commands.checks.has_permissions(administrator=True)
     async def combat_verbose(self, interaction: discord.Interaction, zapnuto: bool):
@@ -1938,9 +1941,9 @@ class CombatCog(commands.Cog):
         await interaction.response.send_message(
             f"⚙️ Dlouhé HP embedy: **{'zapnuty' if zapnuto else 'vypnuty'}**.")
 
-    # ── /combat_status ────────────────────────────────────────────────────────
+    # ── /combat status ────────────────────────────────────────────────────────
 
-    @app_commands.command(name="combat_status", description="Zobrazí aktuální pořadí a stats")
+    @combat_group.command(name="status", description="Zobrazí aktuální pořadí a stats")
     async def combat_status(self, interaction: discord.Interaction):
         channel_id = interaction.channel_id
         if channel_id not in self.active_combats:
