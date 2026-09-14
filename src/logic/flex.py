@@ -66,7 +66,7 @@ def _custom_item_embed(entry: dict) -> discord.Embed:
 
 
 def _flex_footer(embed: discord.Embed, author: discord.abc.User) -> discord.Embed:
-    embed.set_footer(text=f"💪 Flexuje {author.display_name}")
+    embed.set_footer(text=f"💪 Flex {author.display_name}")
     return embed
 
 
