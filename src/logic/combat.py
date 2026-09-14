@@ -159,12 +159,17 @@ def console(text: str) -> str:
 
 def hp_console(name: str, old_hp: int, new_hp: int, max_hp: int,
                change_str: str, attacker: str | None = None,
-               notes: list[str] | None = None) -> list[str]:
+               notes: list[str] | None = None, weapon: str | None = None,
+               roll_info: str | None = None) -> list[str]:
     """Hláška o změně HP rozepsaná na řádky konzole (vypisují se po jednom)."""
     bar = _make_bar(new_hp, max_hp, 8)
-    who = f"⚔️ {attacker} → " if attacker else ""
+    with_weapon = f" *{weapon}*" if weapon else ""
+    who = f"⚔️ {attacker}{with_weapon} → " if attacker else ""
     dead = "  💀" if new_hp == 0 else ""
-    lines = [
+    lines = []
+    if roll_info:
+        lines.append(console(f"*({roll_info})*"))
+    lines += [
         console(f"{who}❤️ **{name}**"),
         console(f"`{old_hp}` → `{new_hp}/{max_hp}` {bar}"),
         console(f"*({change_str})*{dead}"),
@@ -173,10 +178,13 @@ def hp_console(name: str, old_hp: int, new_hp: int, max_hp: int,
     return lines
 
 
-def miss_console(target: str, attacker: str, damage: int) -> list[str]:
+def miss_console(target: str, attacker: str, damage: int,
+                 weapon: str | None = None,
+                 roll_info: str | None = None) -> list[str]:
     """Uhnutí / minutí — stejný výpis jako zásah, jen bez ubraných HP."""
-    return [
-        console(f"🛡️ {attacker} → ❤️ **{target}**"),
+    with_weapon = f" *{weapon}*" if weapon else ""
+    return ([console(f"*({roll_info})*")] if roll_info else []) + [
+        console(f"🛡️ {attacker}{with_weapon} → ❤️ **{target}**"),
         console("`—` *uhnul / minul*"),
         console(f"*({damage} dmg se neaplikovalo)*"),
     ]
@@ -816,7 +824,8 @@ class AttackView(ui.View):
     def __init__(self, cog: "CombatCog", channel_id: int, attacker: str,
                  attacker_uid: int | None, target: str, damage: int,
                  weapon_id: str | None, mana_cost: int = 0,
-                 ammo_note: str = ""):
+                 ammo_note: str = "", weapon_label: str = "",
+                 roll_info: str = ""):
         super().__init__(timeout=600)
         self.cog = cog
         self.channel_id = channel_id
@@ -827,6 +836,8 @@ class AttackView(ui.View):
         self.weapon_id = weapon_id
         self.mana_cost = mana_cost
         self.ammo_note = ammo_note
+        self.weapon_label = weapon_label
+        self.roll_info = roll_info
         self.resolved = False
 
     # ── oprávnění ────────────────────────────────────────────────────────────
@@ -857,6 +868,10 @@ class AttackView(ui.View):
         max_hp = stat.get("max_hp", 0)
         log_event(combat, "attack", self.target, before, stat_snapshot(stat),
                   detail=result["change_str"], actor=self.attacker)
+
+        roll_info = self.roll_info
+        if roll_info and damage != self.damage:
+            roll_info += f" → upraveno na {damage}"
 
         notes = []
         if self.ammo_note:
@@ -890,7 +905,9 @@ class AttackView(ui.View):
 
         lines = hp_console(self.target, result["old_hp"], result["new_hp"], max_hp,
                            result["change_str"], attacker=self.attacker,
-                           notes=["  ·  ".join(notes)] if notes else None)
+                           notes=["  ·  ".join(notes)] if notes else None,
+                           weapon=self.weapon_label or None,
+                           roll_info=roll_info or None)
         await interaction.response.edit_message(content=lines[0], embed=None, view=self)
         asyncio.create_task(self.cog._stream(interaction, lines))
 
@@ -914,7 +931,9 @@ class AttackView(ui.View):
                 "❌ *Rozhodnout může GM, útočník nebo cíl.*", ephemeral=True)
         self.resolved = True
         self._disable()
-        lines = miss_console(self.target, self.attacker, self.damage)
+        lines = miss_console(self.target, self.attacker, self.damage,
+                             weapon=self.weapon_label or None,
+                             roll_info=self.roll_info or None)
         if self.ammo_note:
             lines.append(console(self.ammo_note))
         await interaction.response.edit_message(content=lines[0], embed=None, view=self)
@@ -1865,6 +1884,7 @@ class CombatCog(commands.Cog):
         ammo_total = 0
         ammo_line  = ""
         ammo_note  = ""
+        ammo_bit   = ""
         if ammo:
             db_ammo = items_db.get(ammo) or {}
             if db_ammo.get("category") != AMMO_CATEGORY:
@@ -1890,6 +1910,7 @@ class CombatCog(commands.Cog):
                         ephemeral=True)
                 ammo_total  = ammo_roll.total
                 ammo_detail = f" — `{ammo_expr}` → **+{ammo_total}**"
+                ammo_bit    = f"{ammo_expr} → {ammo_total}"
             _consume_ammo(profile, ammo)
             _save_profiles(profiles)
             ammo_line = (f"🎯 **{db_ammo.get('name', ammo)}**{ammo_detail}  "
@@ -1919,6 +1940,17 @@ class CombatCog(commands.Cog):
             buff_lines.append(f"✨ {buff['name']}: `{buff['dmg']}` → **+{buff_roll.total}**")
 
         damage = max(0, roll.total + ammo_total + int(bonus) + buff_total)
+
+        # Rozpis hodu nad konzolový výpis: `1d10 → 7 + 1d2 → 2 = 9`
+        roll_bits = [f"{expr} → {roll.total}"]
+        if ammo_bit:
+            roll_bits.append(ammo_bit)
+        for buff in buffs:
+            roll_bits.append(f"{buff['name']} → +{buff.get('dmg')}")
+        if bonus:
+            roll_bits.append(f"bonus {int(bonus):+d}")
+        roll_info = " + ".join(roll_bits) + (f" = {damage}" if len(roll_bits) > 1 else "")
+        weapon_label = db_item.get("name", weapon_id)
 
         # ── Runy: použití stojí manu; když nestačí, runa neprocne ─────────────
         entry = _weapon_entry(profile, weapon_id)
@@ -1952,7 +1984,7 @@ class CombatCog(commands.Cog):
 
         view = AttackView(self, interaction.channel_id, actor,
                           interaction.user.id, cil, damage, weapon_id, mana_cost,
-                          ammo_note)
+                          ammo_note, weapon_label, roll_info)
 
         if combat.get("auto_apply"):
             stat = combat["stats"][cil]
@@ -1986,7 +2018,8 @@ class CombatCog(commands.Cog):
             self._save_state()
             lines = hp_console(cil, result["old_hp"], result["new_hp"],
                                stat.get("max_hp", 0), result["change_str"],
-                               attacker=actor,
+                               attacker=actor, weapon=weapon_label,
+                               roll_info=roll_info,
                                notes=["  ·  ".join(notes)] if notes else None)
             header = f"{desc}\n"
             await interaction.response.send_message(header + lines[0])
