@@ -18,6 +18,7 @@ from src.core.dnd.perks import (
 from src.database.characters import pkey
 from src.database.profiles import load_items, load_profiles, profile_key
 from src.logic.inventory import (
+    _available_storages,
     _build_inspect_embed,
     _ensure_inv_fields,
     _item_display_name,
@@ -26,28 +27,37 @@ from src.logic.inventory import (
 from src.logic.memory import _get_memories, _memories_embed
 from src.logic.profile import _build_prukaz_embed, _ensure_player_fields
 
+EMBED_DESC_LIMIT = 4096
+
 
 def _get_profile(user_id: int) -> Optional[dict]:
     profiles = load_profiles()
     return profiles.get(profile_key(profiles, user_id))
 
 
-def _owned_entries(profile: dict) -> list[dict]:
-    """Všechny itemy hráče — inventář, úložiště i to, co má na sobě."""
+def _owned_entries(profile: dict, items_db: Optional[dict] = None) -> list[dict]:
+    """Všechny itemy hráče — inventář, dostupná úložiště i to, co má na sobě."""
     _ensure_inv_fields(profile)
     _migrate_storages(profile)
-    entries = list(profile.get("inventory", []))
-    for stored in (profile.get("storages", {}) or {}).values():
-        entries.extend(stored)
+    if items_db is None:
+        items_db = load_items()
+    storages = profile.get("storages", {}) or {}
+    entries  = list(profile.get("inventory", []))
+    # Jen úložiště, která hráč reálně vlastní — osiřelé seznamy po odebraném
+    # kontejneru nejsou v inventáři vidět, takže se nesmí dát ani flexit.
+    for key in _available_storages(profile, items_db):
+        if key == "inventory":
+            continue
+        entries.extend(storages.get(key, []))
     for item_id in (profile.get("equipment", {}) or {}).values():
         if item_id:
             entries.append({"type": "registered", "id": item_id})
     return entries
 
 
-def _find_owned(profile: dict, key: str) -> Optional[dict]:
+def _find_owned(profile: dict, key: str, items_db: Optional[dict] = None) -> Optional[dict]:
     key_low = key.lower()
-    for entry in _owned_entries(profile):
+    for entry in _owned_entries(profile, items_db):
         if entry.get("type") == "registered":
             if entry.get("id", "").lower() == key_low:
                 return entry
@@ -78,7 +88,7 @@ async def _ac_flex_item(interaction: discord.Interaction, current: str):
     cur      = current.lower()
     seen: set[str] = set()
     choices: list[app_commands.Choice[str]] = []
-    for entry in _owned_entries(profile):
+    for entry in _owned_entries(profile, items_db):
         name = _item_display_name(entry, items_db)
         key  = entry["id"] if entry.get("type") == "registered" else entry.get("name", "")
         if not key or key in seen:
@@ -121,14 +131,15 @@ class FlexCog(commands.Cog):
         if not profile:
             await interaction.response.send_message("❌ Nemáš profil.", ephemeral=True)
             return
-        entry = _find_owned(profile, item)
+        items_db = load_items()
+        entry    = _find_owned(profile, item, items_db)
         if not entry:
             await interaction.response.send_message(
                 f"❌ **{item}** nemáš u sebe — flexit jde jen to, co vlastníš.", ephemeral=True)
             return
 
         if entry.get("type") == "registered":
-            embed = _build_inspect_embed(entry["id"], load_items(), profile)
+            embed = _build_inspect_embed(entry["id"], items_db, profile)
             if embed is None:
                 await interaction.response.send_message(
                     f"❌ Předmět `{entry['id']}` už není v databázi.", ephemeral=True)
@@ -181,6 +192,11 @@ class FlexCog(commands.Cog):
             return
         if cislo is None:
             embed = _memories_embed(interaction.user, memories)
+            if len(embed.description or "") > EMBED_DESC_LIMIT:
+                await interaction.response.send_message(
+                    f"❌ Máš moc vzpomínek na jeden embed — vyber jednu přes "
+                    f"`/flex memory cislo:1`–`{len(memories)}`.", ephemeral=True)
+                return
         else:
             if not 1 <= cislo <= len(memories):
                 await interaction.response.send_message(
