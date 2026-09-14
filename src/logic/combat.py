@@ -168,7 +168,7 @@ def hp_console(name: str, old_hp: int, new_hp: int, max_hp: int,
     dead = "  💀" if new_hp == 0 else ""
     lines = []
     if roll_info:
-        lines.append(console(f"*({roll_info})*"))
+        lines.append(console(f"**HIT** *({roll_info})*"))
     lines += [
         console(f"{who}❤️ **{name}**"),
         console(f"`{old_hp}` → `{new_hp}/{max_hp}` {bar}"),
@@ -183,7 +183,7 @@ def miss_console(target: str, attacker: str, damage: int,
                  roll_info: str | None = None) -> list[str]:
     """Uhnutí / minutí — stejný výpis jako zásah, jen bez ubraných HP."""
     with_weapon = f" *{weapon}*" if weapon else ""
-    return ([console(f"*({roll_info})*")] if roll_info else []) + [
+    return ([console(f"**MISS** *({roll_info})*")] if roll_info else []) + [
         console(f"🛡️ {attacker}{with_weapon} → ❤️ **{target}**"),
         console("`—` *uhnul / minul*"),
         console(f"*({damage} dmg se neaplikovalo)*"),
@@ -854,6 +854,23 @@ class AttackView(ui.View):
         for child in self.children:
             child.disabled = True
 
+    async def _replace_with_console(self, interaction: discord.Interaction,
+                                    lines: list[str]) -> None:
+        """Smaže embed útoku a pošle výsledek jako novou zprávu konzole.
+
+        Mezi útokem a rozhodnutím bývají RP zprávy, takže by se přepsaný
+        embed ztratil v konverzaci — proto nová zpráva dole v kanálu.
+        """
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+        message = interaction.message or getattr(self, "message", None)
+        if message is not None:
+            try:
+                await message.delete()
+            except Exception:
+                logging.exception("[combat] embed útoku se nepodařilo smazat")
+        await self.cog.send_console(interaction.channel, lines)
+
     # ── aplikace zásahu ──────────────────────────────────────────────────────
 
     async def resolve_hit(self, interaction: discord.Interaction, damage: int):
@@ -908,8 +925,7 @@ class AttackView(ui.View):
                            notes=["  ·  ".join(notes)] if notes else None,
                            weapon=self.weapon_label or None,
                            roll_info=roll_info or None)
-        await interaction.response.edit_message(content=lines[0], embed=None, view=self)
-        asyncio.create_task(self.cog._stream(interaction, lines))
+        await self._replace_with_console(interaction, lines)
 
         if combat.get("boss", {}).get("name") == self.target:
             asyncio.create_task(self.cog._update_boss_bar(combat, flashing=True))
@@ -936,8 +952,7 @@ class AttackView(ui.View):
                              roll_info=self.roll_info or None)
         if self.ammo_note:
             lines.append(console(self.ammo_note))
-        await interaction.response.edit_message(content=lines[0], embed=None, view=self)
-        asyncio.create_task(self.cog._stream(interaction, lines))
+        await self._replace_with_console(interaction, lines)
 
     @ui.button(label="Upravit", emoji="✏️", style=discord.ButtonStyle.primary)
     async def edit(self, interaction: discord.Interaction, button: ui.Button):
@@ -982,6 +997,19 @@ class CombatCog(commands.Cog):
         self._save_state()
 
     # ── Konzole ───────────────────────────────────────────────────────────────
+
+    async def send_console(self, channel, lines: list[str],
+                           header: str = "") -> None:
+        """Pošle konzolový výpis jako novou zprávu a dopisuje zbytek řádků."""
+        if not lines:
+            return
+        try:
+            message = await channel.send(header + lines[0])
+        except Exception:
+            logging.exception("[combat] konzoli se nepodařilo odeslat")
+            return
+        if len(lines) > 1:
+            asyncio.create_task(stream_console(message, lines, header))
 
     async def _stream(self, interaction: discord.Interaction,
                       lines: list[str], header: str = "") -> None:
