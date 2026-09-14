@@ -48,8 +48,12 @@ class TestItemDamage(unittest.TestCase):
         item = {"desc": "Krásný meč.\nDMG: 2d6 + krvácení (1d4)"}
         self.assertEqual(item_damage_expr(item), "2d6")
 
-    def test_atk_fallback(self):
-        self.assertEqual(item_damage_expr({"atk": 7}), "7")
+    def test_atk_fallback_rolls_die(self):
+        self.assertEqual(item_damage_expr({"atk": 7}), "1d7")
+        self.assertEqual(item_damage_expr({"atk": "16"}), "1d16")
+
+    def test_flat_dmg_field_rolls_die(self):
+        self.assertEqual(item_damage_expr({"dmg": "12"}), "1d12")
 
     def test_atk_dice(self):
         self.assertEqual(item_damage_expr({"atk": "4d6+1"}), "4d6+1")
