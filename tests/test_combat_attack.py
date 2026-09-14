@@ -2,6 +2,7 @@
 
 import random
 import unittest
+from types import SimpleNamespace
 
 from src.logic.dice import DiceError, item_damage_expr, roll_expr
 
@@ -257,20 +258,87 @@ class TestConsoleHeader(unittest.TestCase):
         lines = self.combat.hp_console(
             "MegaMan", 10, 0, 10, "zásah 17", attacker="<@1>",
             weapon="Lovecký luk", roll_info="1d10 → 7 + 1d2 → 2 = 9")
-        self.assertEqual(lines[0], "-# *(1d10 → 7 + 1d2 → 2 = 9)*")
+        self.assertEqual(lines[0], "-# **HIT** *(1d10 → 7 + 1d2 → 2 = 9)*")
         self.assertIn("Lovecký luk", lines[1])
         self.assertIn("<@1>", lines[1])
 
     def test_weapon_and_roll_info_in_miss(self):
         lines = self.combat.miss_console(
             "MegaMan", "<@1>", 9, weapon="Lovecký luk", roll_info="1d10 → 9")
-        self.assertEqual(lines[0], "-# *(1d10 → 9)*")
+        self.assertEqual(lines[0], "-# **MISS** *(1d10 → 9)*")
         self.assertIn("Lovecký luk", lines[1])
 
     def test_without_weapon_layout_unchanged(self):
         lines = self.combat.hp_console("Goblin", 30, 10, 30, "zásah 20")
         self.assertEqual(len(lines), 3)
         self.assertEqual(lines[0], "-# ❤️ **Goblin**")
+
+
+class TestResultHeader(unittest.TestCase):
+    def setUp(self):
+        from src.logic import combat
+        self.combat = combat
+
+    def test_hit_header(self):
+        lines = self.combat.hp_console("MegaMan", 10, 0, 10, "zásah 10",
+                                       attacker="<@1>", weapon="Malý luk",
+                                       roll_info="1d16 → 9 + 1d1 → 1 = 10")
+        self.assertEqual(lines[0], "-# **HIT** *(1d16 → 9 + 1d1 → 1 = 10)*")
+
+    def test_miss_header(self):
+        lines = self.combat.miss_console("MegaMan", "<@1>", 10,
+                                         weapon="Malý luk",
+                                         roll_info="1d16 → 9 + 1d1 → 1 = 10")
+        self.assertEqual(lines[0], "-# **MISS** *(1d16 → 9 + 1d1 → 1 = 10)*")
+
+
+class TestReplaceWithConsole(unittest.IsolatedAsyncioTestCase):
+    class _Response:
+        def __init__(self):
+            self.deferred = False
+
+        def is_done(self):
+            return self.deferred
+
+        async def defer(self):
+            self.deferred = True
+
+    class _Message:
+        def __init__(self):
+            self.deleted = False
+
+        async def delete(self):
+            self.deleted = True
+
+    class _Cog:
+        def __init__(self):
+            self.sent = None
+
+        async def send_console(self, channel, lines, header=""):
+            self.sent = (channel, lines)
+
+    def _view(self, cog):
+        from src.logic.combat import AttackView
+        return AttackView(cog, 1, "<@1>", 1, "Goblin", 5, "luk")
+
+    async def test_embed_is_deleted_and_console_sent_as_new_message(self):
+        cog = self._Cog()
+        view = self._view(cog)
+        message = self._Message()
+        interaction = SimpleNamespace(response=self._Response(),
+                                      message=message, channel="kanal")
+        await view._replace_with_console(interaction, ["-# a", "-# b"])
+        self.assertTrue(interaction.response.deferred)
+        self.assertTrue(message.deleted)
+        self.assertEqual(cog.sent, ("kanal", ["-# a", "-# b"]))
+
+    async def test_missing_message_still_sends_console(self):
+        cog = self._Cog()
+        view = self._view(cog)
+        interaction = SimpleNamespace(response=self._Response(),
+                                      message=None, channel="kanal")
+        await view._replace_with_console(interaction, ["-# a"])
+        self.assertEqual(cog.sent, ("kanal", ["-# a"]))
 
 
 class TestReleaseAction(unittest.TestCase):

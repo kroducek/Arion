@@ -2481,6 +2481,8 @@ class PerksCog(commands.Cog):
             await interaction.response.send_message(
                 embed=embed, view=OdhaleniRollView(uid=str(interaction.user.id))
             )
+            if combat_note:
+                await interaction.followup.send(console(combat_note))
             return
 
         embed = _perk_announce_embed(interaction.user, perk_id, perk, used)
@@ -2505,13 +2507,13 @@ class PerksCog(commands.Cog):
             return False, "⛔ *Perk jsi v tomhle tahu už použil.*"
 
         effect = perk.get("combat") or {}
-        note = ""
+        note = f"✨ {actor} používá perk **{perk.get('name', perk_id)}**"
         if effect.get("dmg"):
             scope = effect.get("scope", "attack")
             add_perk_buff(combat, actor, perk_id, perk.get("name", perk_id),
                           str(effect["dmg"]), scope)
             kdy = "k nejbližšímu útoku" if scope == "attack" else "k útokům do konce tahu"
-            note = f"⚔️ **{perk.get('name', perk_id)}** — *přičte `{effect['dmg']}` {kdy}*"
+            note += f"  ·  *přičte `{effect['dmg']}` {kdy}*"
         cog.save_state()
         return True, note
 
