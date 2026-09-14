@@ -244,6 +244,31 @@ class TestAmmo(unittest.TestCase):
             self.assertTrue(2 <= weapon + ammo <= 12)
 
 
+class TestConsoleHeader(unittest.TestCase):
+    def setUp(self):
+        from src.logic import combat
+        self.combat = combat
+
+    def test_weapon_and_roll_info_in_hit(self):
+        lines = self.combat.hp_console(
+            "MegaMan", 10, 0, 10, "zásah 17", attacker="<@1>",
+            weapon="Lovecký luk", roll_info="1d10 → 7 + 1d2 → 2 = 9")
+        self.assertEqual(lines[0], "-# *(1d10 → 7 + 1d2 → 2 = 9)*")
+        self.assertIn("Lovecký luk", lines[1])
+        self.assertIn("<@1>", lines[1])
+
+    def test_weapon_and_roll_info_in_miss(self):
+        lines = self.combat.miss_console(
+            "MegaMan", "<@1>", 9, weapon="Lovecký luk", roll_info="1d10 → 9")
+        self.assertEqual(lines[0], "-# *(1d10 → 9)*")
+        self.assertIn("Lovecký luk", lines[1])
+
+    def test_without_weapon_layout_unchanged(self):
+        lines = self.combat.hp_console("Goblin", 30, 10, 30, "zásah 20")
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(lines[0], "-# ❤️ **Goblin**")
+
+
 class TestReleaseAction(unittest.TestCase):
     def setUp(self):
         from src.logic import combat
