@@ -338,6 +338,8 @@ SEED_CARDS = [
     {"id": 28, "name": "Žolo",       "description": "Vodní mág jenž byl vyvolený učastnit se turnaje", "image": "zolo.png",               "collection": "chosen"},
     {"id": 29, "name": "Levitující šašek",       "description": "Miluje chaos, často napodobuje emoce a výrazy ostatních", "image": "letajici_sasek.png",               "collection": "jesters"},
     {"id": 30, "name": "Remi",       "description": "Vyvolená služka jenž po smrti svého pána ztratila cestu", "image": "remi.png",               "collection": "chosen"},
+    {"id": 31, "name": "Hao",       "description": "Nejsilnější vyvolený jenž okolo sebe shromažďuje silné jedince", "image": "hao2.png",               "collection": "chosen"},
+
 ]
 
 # ---------------------------------------------------------------------------
