@@ -1,6 +1,7 @@
 """Dynamický render sběratelských karet přímo přes čistý artwork."""
 
 import io
+import math
 import os
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
@@ -160,3 +161,252 @@ def render_card_showcase(image, name, description, accent, chips, rows, unique_i
     canvas = _apply_frame(canvas, frame_id)
     
     return _save(canvas)
+
+
+# ---------------------------------------------------------------------------
+# Album renderer — mřížka karet pro /cards album
+# ---------------------------------------------------------------------------
+
+_COLS = 3          # počet karet na řádek
+_THUMB_W = 320     # šířka miniaturní karty
+_THUMB_H = 480     # výška miniaturní karty
+_GAP = 18          # mezera mezi kartami
+_HEADER_H = 120    # výška hlavičky alba
+_PAD_OUT = 36      # vnější padding vlevo/vpravo
+_BORDER_R = 14     # zaoblení rohu jednotlivé miniatury
+_QUALITY_ORDER = ["shiny", "gold", "normal", "damaged"]
+_RARITY_ORDER  = ["legendary", "epic", "rare", "common", "uncommon"]
+
+
+def _quality_key(q: str) -> int:
+    try:
+        return _QUALITY_ORDER.index(q)
+    except ValueError:
+        return len(_QUALITY_ORDER)
+
+
+def _rarity_key(r: str) -> int:
+    try:
+        return _RARITY_ORDER.index(r)
+    except ValueError:
+        return len(_RARITY_ORDER)
+
+
+def _rarity_color(rarity: str) -> tuple:
+    """Vrátí RGB barvu podle rarity."""
+    colors = {
+        "legendary": (255, 215, 0),
+        "epic":      (148, 0, 211),
+        "rare":      (30, 80, 220),
+        "common":    (60, 200, 60),
+        "uncommon":  (140, 140, 140),
+    }
+    return colors.get(rarity, (120, 120, 120))
+
+
+def _quality_label(quality: str) -> str:
+    labels = {"shiny": "✨ Shiny", "gold": "🥇 Gold", "normal": "Normal", "damaged": "💔 Damaged"}
+    return labels.get(quality, quality.capitalize())
+
+
+def _draw_nocard_thumb(nocard_path: str | None) -> Image.Image:
+    """Vykreslí placeholder miniaturu pro nevlastněnou kartu."""
+    thumb = Image.new("RGBA", (_THUMB_W, _THUMB_H), (14, 14, 22, 255))
+    draw = ImageDraw.Draw(thumb)
+
+    # Tmavý gradient
+    for y in range(_THUMB_H):
+        t = y / _THUMB_H
+        c = int(18 + 10 * t)
+        draw.line([(0, y), (_THUMB_W, y)], fill=(c, c, c + 8, 255))
+
+    # Rámeček
+    draw.rounded_rectangle(
+        (4, 4, _THUMB_W - 4, _THUMB_H - 4),
+        radius=_BORDER_R,
+        outline=(55, 55, 75, 255),
+        width=3,
+    )
+
+    # Pokud máme nocard.png, použijeme ho jako základ
+    if nocard_path and os.path.exists(nocard_path):
+        try:
+            nc = Image.open(nocard_path).convert("RGBA")
+            nc = nc.resize((_THUMB_W, _THUMB_H), Image.Resampling.LANCZOS)
+            # Ztmav ho trochu
+            from PIL import ImageEnhance
+            nc = ImageEnhance.Brightness(nc).enhance(0.85)
+            thumb.alpha_composite(nc)
+            return thumb
+        except Exception:
+            pass
+
+    # Fallback — malovaný placeholder
+    cx, cy = _THUMB_W // 2, _THUMB_H // 2
+
+    # Velký otazník
+    q_font = _font(180, serif=True)
+    draw.text((cx, cy - 40), "?", font=q_font, fill=(50, 50, 68, 255), anchor="mm")
+    draw.text((cx, cy - 40), "?", font=q_font, fill=(70, 70, 95, 200), anchor="mm")
+
+    # ???? dole
+    s_font = _font(38)
+    draw.text((cx, cy + 150), "????", font=s_font, fill=(75, 75, 100, 255), anchor="mm")
+
+    return thumb
+
+
+def _draw_card_thumb(art_path: str, rarity: str, quality: str, name: str) -> Image.Image:
+    """Vykreslí miniaturu pro vlastněnou kartu s art + barevným okrajem."""
+    rarity_col = _rarity_color(rarity)
+
+    # Základ z artworku
+    art = _open_image(art_path)
+    if art:
+        thumb = ImageOps.fit(art, (_THUMB_W, _THUMB_H), method=Image.Resampling.LANCZOS, centering=(0.5, 0.3))
+        thumb = ImageEnhance.Contrast(thumb).enhance(1.05)
+    else:
+        thumb = Image.new("RGBA", (_THUMB_W, _THUMB_H), (20, 20, 30, 255))
+
+    draw = ImageDraw.Draw(thumb)
+
+    # Spodní gradient — tmavý přechod pro text
+    shadow = Image.new("RGBA", (_THUMB_W, _THUMB_H), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow)
+    panel_top = int(_THUMB_H * 0.60)
+    for y in range(panel_top, _THUMB_H):
+        opacity = int(220 * ((y - panel_top) / (_THUMB_H - panel_top)) ** 0.5)
+        sd.line([(0, y), (_THUMB_W, y)], fill=(5, 8, 16, opacity))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(6))
+    thumb = Image.alpha_composite(thumb, shadow)
+    draw = ImageDraw.Draw(thumb)
+
+    # Jméno karty (zkrácené)
+    name_font = _font(22, serif=True)
+    max_w = _THUMB_W - 16
+    name_text = name or "?"
+    while draw.textlength(name_text, font=name_font) > max_w and len(name_text) > 3:
+        name_text = name_text[:-1]
+    if name_text != name:
+        name_text = name_text.rstrip() + "…"
+    draw.text((_THUMB_W // 2, _THUMB_H - 52), name_text, font=name_font, fill=(245, 240, 220), anchor="mm",
+              stroke_width=2, stroke_fill=(5, 5, 10))
+
+    # Kvalita / rarita chip dole
+    qual_font = _font(17)
+    qual_text = _quality_label(quality)
+    draw.text((_THUMB_W // 2, _THUMB_H - 24), qual_text, font=qual_font, fill=rarity_col, anchor="mm",
+              stroke_width=1, stroke_fill=(5, 5, 10))
+
+    # Barevný rámeček podle rarity
+    border_w = 4
+    draw.rounded_rectangle(
+        (border_w // 2, border_w // 2, _THUMB_W - border_w // 2, _THUMB_H - border_w // 2),
+        radius=_BORDER_R,
+        outline=rarity_col + (255,),
+        width=border_w,
+    )
+
+    return thumb
+
+
+def render_album_grid(
+    collection_name: str,
+    collection_emoji: str,
+    collection_desc: str,
+    collection_color: tuple,  # RGB
+    cards: list,              # list of (template_dict, best_instance_or_None)
+    nocard_path: str | None = None,
+) -> io.BytesIO:
+    """
+    Vykreslí kompletní PNG album kolekce jako mřížku karet.
+
+    Args:
+        collection_name:  Název kolekce (např. "Chosen")
+        collection_emoji: Emoji kolekce
+        collection_desc:  Popis kolekce
+        collection_color: (r, g, b) barva kolekce
+        cards:            Seřazený seznam (šablona, nejlepší_instance|None)
+        nocard_path:      Cesta k nocard.png (volitelné)
+
+    Returns:
+        BytesIO s PNG.
+    """
+    n = len(cards)
+    cols = min(_COLS, n) if n > 0 else 1
+    rows = max(1, math.ceil(n / cols))
+
+    total_w = _PAD_OUT * 2 + cols * _THUMB_W + (cols - 1) * _GAP
+    total_h = _HEADER_H + _PAD_OUT + rows * (_THUMB_H + _GAP) + _PAD_OUT
+
+    # Tmavé pozadí s barevným tónováním kolekce
+    bg = Image.new("RGBA", (total_w, total_h), (12, 12, 20, 255))
+    bg_draw = ImageDraw.Draw(bg)
+    r0, g0, b0 = collection_color
+    for y in range(total_h):
+        t = y / total_h
+        bg_draw.line(
+            [(0, y), (total_w, y)],
+            fill=(
+                int(12 + r0 * 0.06 * (1 - t)),
+                int(12 + g0 * 0.06 * (1 - t)),
+                int(20 + b0 * 0.06 * (1 - t)),
+                255,
+            ),
+        )
+
+    # ── Header ──────────────────────────────────────────────────────────────
+    owned = sum(1 for _, inst in cards if inst is not None)
+    title = f"{collection_emoji}  {collection_name.capitalize()}  •  {owned}/{n}"
+
+    title_font = _font(42, serif=True)
+    desc_font  = _font(22, serif=True)
+
+    bg_draw.text((_PAD_OUT, 28), title, font=title_font, fill=(245, 238, 210))
+    bg_draw.text((_PAD_OUT, 80), collection_desc, font=desc_font, fill=(160, 160, 175))
+
+    # Thin divider pod headerem
+    bg_draw.line(
+        [(_PAD_OUT, _HEADER_H - 8), (total_w - _PAD_OUT, _HEADER_H - 8)],
+        fill=collection_color + (140,),
+        width=2,
+    )
+
+    # ── Karta po kartě ───────────────────────────────────────────────────────
+    for i, (template, instance) in enumerate(cards):
+        col_i = i % cols
+        row_i = i // cols
+        x = _PAD_OUT + col_i * (_THUMB_W + _GAP)
+        y = _HEADER_H + _PAD_OUT + row_i * (_THUMB_H + _GAP)
+
+        if instance is not None:
+            art_filename = instance.get("image") or template.get("image")
+            art_path = None
+            if art_filename:
+                candidate = os.path.join(os.path.dirname(nocard_path or __file__), art_filename) if nocard_path else None
+                # Fallback — sestavíme cestu z CARDS_DIR (resolveno dynamicky)
+                from src.utils.paths import CARDS_DIR
+                art_path = os.path.join(CARDS_DIR, art_filename) if art_filename else None
+                if art_path and not os.path.exists(art_path):
+                    art_path = None
+
+            thumb = _draw_card_thumb(
+                art_path,
+                instance.get("rarity", "uncommon"),
+                instance.get("quality", "normal"),
+                instance.get("name") or template.get("name", "?"),
+            )
+        else:
+            thumb = _draw_nocard_thumb(nocard_path)
+
+        bg.paste(thumb, (x, y), thumb)
+
+    # Vnější rámeček celého alba
+    bg_draw.rounded_rectangle(
+        (6, 6, total_w - 6, total_h - 6),
+        radius=20,
+        outline=collection_color + (180,),
+        width=4,
+    )
+
+    return _save(bg)

@@ -14,7 +14,7 @@ import asyncio
 from functools import partial
 from src.utils.paths import CARDS_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES, FRAMES_INVENTORY, data as _data
 from src.utils.card_image import apply_frame_to_card
-from src.utils.card_render import render_card_showcase 
+from src.utils.card_render import render_card_showcase, render_album_grid
 from src.utils.json_utils import load_json, save_json
 from src.utils.embeds import create_error_embed
 from src.logic.profile import load_data as profile_load, save_data as profile_save
@@ -341,6 +341,106 @@ SEED_CARDS = [
     {"id": 31, "name": "Hao",       "description": "Nejsilnější vyvolený jenž okolo sebe shromažďuje silné jedince", "image": "hao2.png",               "collection": "chosen"},
 
 ]
+
+# ---------------------------------------------------------------------------
+# Rankovací tabulky pro album
+# ---------------------------------------------------------------------------
+
+QUALITY_RANK = {q: i for i, q in enumerate(["shiny", "gold", "normal", "damaged"])}
+RARITY_RANK  = {r: i for i, r in enumerate(["legendary", "epic", "rare", "common", "uncommon"])}
+
+
+def get_best_card_for_template(uid: str, card_id: int, inventory: dict) -> "dict | None":
+    """
+    Vrátí nejlepší instanci karty daného hráče pro šablonu card_id.
+    Nejlepší = nejnižší rank rarity, pak nejnižší rank kvality (shiny > gold > normal > damaged).
+    Vrátí None pokud hráč danou kartu nevlastní.
+    """
+    owned = [
+        inst for inst in inventory.values()
+        if inst.get("owner_id") == uid and inst.get("card_id") == card_id
+    ]
+    if not owned:
+        return None
+    return min(
+        owned,
+        key=lambda c: (
+            RARITY_RANK.get(c.get("rarity", "uncommon"), 99),
+            QUALITY_RANK.get(c.get("quality", "normal"), 99),
+        ),
+    )
+
+
+def _ensure_nocard_png() -> str:
+    """
+    Zajistí, že CARDS_DIR/nocard.png existuje. Pokud ne, vygeneruje ho programově.
+    Vrátí absolutní cestu k souboru.
+    """
+    path = os.path.join(CARDS_DIR, "nocard.png")
+    if os.path.exists(path):
+        return path
+
+    try:
+        from PIL import Image, ImageDraw
+        from src.logic.profile_render import _font
+
+        W, H = 1024, 1536
+        img = Image.new("RGBA", (W, H), (14, 14, 22, 255))
+        draw = ImageDraw.Draw(img)
+
+        # Tmavý gradient
+        for y in range(H):
+            t = y / H
+            c = int(14 + 12 * t)
+            draw.line([(0, y), (W, y)], fill=(c, c, c + 8, 255))
+
+        # Rámeček
+        draw.rounded_rectangle(
+            (18, 18, W - 18, H - 18),
+            radius=28,
+            outline=(55, 55, 75, 255),
+            width=6,
+        )
+        draw.rounded_rectangle(
+            (28, 28, W - 28, H - 28),
+            radius=22,
+            outline=(40, 40, 55, 180),
+            width=2,
+        )
+
+        # Velký otazník uprostřed
+        cx, cy = W // 2, H // 2
+        q_font_big = _font(360, serif=True)
+        draw.text((cx, cy - 80), "?", font=q_font_big, fill=(45, 45, 62, 255), anchor="mm")
+        draw.text((cx, cy - 80), "?", font=q_font_big, fill=(72, 72, 98, 220), anchor="mm")
+
+        # ???? text
+        q_font_med = _font(90)
+        draw.text((cx, cy + 330), "????", font=q_font_med, fill=(80, 80, 105, 255), anchor="mm")
+
+        # Vykřičník badge nahoře
+        badge_font = _font(60)
+        draw.rounded_rectangle(
+            (cx - 80, 60, cx + 80, 148),
+            radius=24,
+            fill=(22, 22, 32, 220),
+            outline=(60, 60, 82, 255),
+            width=2,
+        )
+        draw.text((cx, 104), "!", font=badge_font, fill=(100, 100, 125, 255), anchor="mm")
+
+        # Spodní nápis
+        footer_font = _font(50)
+        draw.text((cx, H - 70), "NEZNÁMÁ KARTA", font=footer_font, fill=(65, 65, 88, 255), anchor="mm")
+
+        os.makedirs(CARDS_DIR, exist_ok=True)
+        img.save(path)
+        print(f"[cards] nocard.png vygenerován: {path}")
+    except Exception as e:
+        print(f"[cards] Nepodařilo se vygenerovat nocard.png: {e}")
+
+    return path
+
 
 # ---------------------------------------------------------------------------
 # Pomocné funkce
@@ -1256,6 +1356,7 @@ class Cards(commands.Cog):
         commands_text = (
             "`/cards inventory` — tvé karty\n"
             "`/cards show <id>` — detail karty\n"
+            "`/cards album <kolekce>` — vizuální album kolekce\n"
             "`/cards profile` — profilová karta\n"
             "`/cards set_profile <id>` — nastav profilovou kartu\n"
             "`/cards burn <id>` — spálit kartu za prach\n"
@@ -1375,6 +1476,106 @@ class Cards(commands.Cog):
                 )
             embed.set_footer(text="⚜️ Aurionis Sběratelský Systém")
             await interaction.response.send_message(embed=embed)
+
+    @cards_group.command(name="album", description="Zobrazit své album karát dané kolekce")
+    @app_commands.describe(
+        collection="Kolekce k zobrazení",
+        user="Hráč (volitelné — výchozí jsi ty)",
+    )
+    @app_commands.choices(collection=[
+        app_commands.Choice(name="Unworthy — Nevolaní",             value="unworthy"),
+        app_commands.Choice(name="Worthy — Hrdinové Aurionisu",     value="worthy"),
+        app_commands.Choice(name="Queen — Královna a dvůr",         value="queen"),
+        app_commands.Choice(name="Chosen — Vyvolení",               value="chosen"),
+        app_commands.Choice(name="Jesters — Šašci",                 value="jesters"),
+        app_commands.Choice(name="First-beings — Původní bytosti",  value="first-beings"),
+        app_commands.Choice(name="Shadows — Stíny",                 value="shadows"),
+        app_commands.Choice(name="Witches — Čarodějky",             value="witches"),
+        app_commands.Choice(name="Angels — Andělé",                 value="angels"),
+    ])
+    async def show_album(
+        self,
+        interaction: discord.Interaction,
+        collection: str,
+        user: discord.Member = None,
+    ):
+        """Zobrazí osobní album hráče pro danou kolekci jako vizuální mřížku karet."""
+        target = user or interaction.user
+        uid = str(target.id)
+
+        collection = collection.lower()
+        coll_data = COLLECTIONS.get(collection)
+        if not coll_data:
+            await interaction.response.send_message(
+                f"Neznámá kolekce `{collection}`.", ephemeral=True
+            )
+            return
+
+        # Načteme šablony dané kolekce
+        cards_db = load_json(CARDS_DATA, default=[])
+        templates = [c for c in cards_db if c.get("collection") == collection]
+
+        if not templates:
+            await interaction.response.send_message(
+                f"Kolekce **{collection.capitalize()}** zatím neobsahuje žádné karty.", ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            inv = load_inventory()
+            nocard_path = os.path.join(CARDS_DIR, "nocard.png")
+
+            # Sestavíme seznam (šablona, nejlepší_instance|None)
+            album_cards = [
+                (tmpl, get_best_card_for_template(uid, tmpl["id"], inv))
+                for tmpl in templates
+            ]
+
+            owned_count = sum(1 for _, inst in album_cards if inst is not None)
+
+            # Barva kolekce jako RGB tuple
+            col_hex = coll_data["color"]
+            col_rgb = ((col_hex >> 16) & 255, (col_hex >> 8) & 255, col_hex & 255)
+
+            loop = asyncio.get_running_loop()
+            album_img = await loop.run_in_executor(
+                None,
+                partial(
+                    render_album_grid,
+                    collection.capitalize(),
+                    coll_data["emoji"],
+                    coll_data["description"],
+                    col_rgb,
+                    album_cards,
+                    nocard_path if os.path.exists(nocard_path) else None,
+                ),
+            )
+
+            embed = discord.Embed(
+                title=f"{coll_data['emoji']} Album — {collection.capitalize()}",
+                description=(
+                    f"*{coll_data['description']}*\n"
+                    f"**{owned_count}/{len(templates)}** karet získáno"
+                ),
+                color=coll_data["color"],
+            )
+            embed.set_author(
+                name=target.display_name,
+                icon_url=target.display_avatar.url,
+            )
+            embed.set_image(url="attachment://album.png")
+            embed.set_footer(text="⚜️ Aurionis  •  /cards album")
+
+            await interaction.followup.send(
+                embed=embed,
+                file=discord.File(album_img, filename="album.png"),
+                ephemeral=True,
+            )
+
+        except Exception as e:
+            await interaction.followup.send(f"❌ Chyba při generování alba: {e}", ephemeral=True)
 
     # -----------------------------------------------------------------------
     # Profil
@@ -1862,6 +2063,7 @@ async def setup(bot):
     """Registruje cog do bota."""
     ensure_cards_data()
     ensure_frames_data()
+    _ensure_nocard_png()
     _migrate_stardust_to_economy()
     await bot.add_cog(Cards(bot))
 
