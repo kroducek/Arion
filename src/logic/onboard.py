@@ -2515,31 +2515,42 @@ class FinalEnterView(TutorialView):
         try:
             from src.core.dnd.quests import (
                 load_quests, save_quests, load_diaries, save_diaries,
-                make_diary_entry, _migrate_entries, Category,
+                make_diary_entry, _migrate_entries,
             )
-            CITY_QUEST = {
-                "lumenie":     "Stíny v srdci",
-                "aquion":      "Šampion podsvětí",
-                "draci_skala": "Draci",
-            }
-            MAIN_QUEST = "Poslední Aurelion"
+
+            # "Volání hvězdy" je hlavní main quest nad vším ostatním — dává se
+            # jako jediný main všem hráčům při vstupu na server. Tady jde jen
+            # o záchrannou síť, kdyby hráč tutoriál dokončil dřív, než mu ho
+            # on_member_join stihl přidat.
+            MAIN_QUEST = "Volání hvězdy"
             uid_int    = interaction.user.id
             uid_str    = str(uid_int)
             quests     = load_quests()
-            diaries    = load_diaries()
-            entries    = _migrate_entries(diaries.get(uid_str, []))
+            main_data  = quests.get(MAIN_QUEST)
 
-            for qname in [MAIN_QUEST, CITY_QUEST.get(self.dest_key)]:
-                if qname and qname in quests:
-                    qdata = quests[qname]
-                    if uid_int not in qdata.get("members", []):
-                        qdata.setdefault("members", []).append(uid_int)
-                        entries.append(make_diary_entry(qname, qdata.get("info", ""), qdata.get("xp")))
-                        assigned.append((qname, qdata.get("xp", "")))
+            if main_data and uid_int not in main_data.get("members", []):
+                main_data.setdefault("members", []).append(uid_int)
+                diaries = load_diaries()
+                entries = _migrate_entries(diaries.get(uid_str, []))
+                entries.append(make_diary_entry(MAIN_QUEST, main_data.get("info", ""), main_data.get("xp")))
+                diaries[uid_str] = entries
+                save_diaries(diaries)
+                save_quests(quests)
+                assigned.append((MAIN_QUEST, main_data.get("xp", "")))
 
-            diaries[uid_str] = entries
-            save_diaries(diaries)
-            save_quests(quests)
+            # Side quest podle zvolené destinace (Lumenie/Aquion/Dračí skála) —
+            # sdílená logika z QuestsCog. notify=False, ať nepřijde DM navíc:
+            # quest se stejně ukáže v uvítacím embedu níž v městském chatu.
+            quests_cog = interaction.client.get_cog("QuestsCog")
+            if quests_cog:
+                result = await quests_cog.assign_destination_quest(
+                    interaction.user, self.dest_key, notify=False
+                )
+                if result:
+                    qname, qdata = result
+                    assigned.append((qname, qdata.get("xp", "")))
+            else:
+                logger.warning("[onboard] QuestsCog není načtený — side quest podle destinace se nepřiřadil.")
         except Exception as e:
             logger.exception(f"[onboard] Auto-quest chyba: {e}")
 

@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import json
 import os
+import unicodedata
 from datetime import datetime
 
 from src.utils.paths import QUESTS as QUESTS_FILE, QUEST_LOG as QUEST_LOG_FILE, DIARIES as DIARY_FILE
@@ -39,6 +40,33 @@ CATEGORY_META = {
     Category.SIDE: {"emoji": "🗺️", "label": "Side Quest"},
     Category.SOLO: {"emoji": "🎯", "label": "Solo Quest"},
 }
+
+# ── Destinace z tutoriálu → side quest větve "Volání hvězdy" ──────────────────
+# Hráč si v tutoriálu vybere jednu ze tří destinací a podle ní dostane JEN
+# odpovídající side quest (ne všechny tři) — viz assign_destination_quest níž.
+# Klíče jsou bez diakritiky a malými písmeny, porovnává se přes _normalize_destination.
+
+DESTINATION_SIDE_QUEST = {
+    "lumenie":      "Stíny v srdci",
+    "aquion":       "Šampion podsvětí",
+    "draci skala":  "Draci",
+    "dracia skala": "Draci",   # alternativní zápis, pro jistotu
+}
+
+
+def _normalize_destination(text: str) -> str:
+    """Odstraní diakritiku, sjednotí oddělovače a převede na malá písmena —
+    tolerantní porovnání jak lidsky psaného názvu ('Dračí skála'), tak
+    interního klíče ('draci_skala')."""
+    nfkd = unicodedata.normalize("NFKD", text.strip().lower())
+    stripped = "".join(ch for ch in nfkd if not unicodedata.combining(ch))
+    return stripped.replace("_", " ").replace("-", " ")
+
+
+def resolve_destination_quest(destination: str) -> str | None:
+    """Najde jméno side questu podle tutoriálové destinace, nebo None když neznámá."""
+    return DESTINATION_SIDE_QUEST.get(_normalize_destination(destination))
+
 
 # ── Pomocné funkce ─────────────────────────────────────────────────────────────
 
@@ -286,6 +314,36 @@ class DiaryQuestView(discord.ui.View):
         await interaction.response.send_message(embeds=[header] + embeds[:9], ephemeral=True)
 
 
+# ── View: tlačítko NÁSTĚNKA pod /quests ───────────────────────────────────────
+
+class BoardQuestsView(discord.ui.View):
+    """Tlačítko pod /quests — ukáže side questy bez main rodiče (z nástěnky) zvlášť, ať nezahlcují hlavní přehled."""
+
+    def __init__(self):
+        super().__init__(timeout=300)
+
+    @discord.ui.button(label="📋 Nástěnkové questy", style=discord.ButtonStyle.secondary)
+    async def show_board_quests(self, interaction: discord.Interaction, button: discord.ui.Button):
+        quests = load_quests()
+        board = {
+            n: d for n, d in quests.items()
+            if d.get("category") == Category.SIDE and not d.get("parent_quest")
+        }
+        if not board:
+            await interaction.response.send_message("📋 Nástěnka je momentálně prázdná.", ephemeral=True)
+            return
+
+        n     = len(board)
+        label = "quest" if n == 1 else "questy" if n <= 4 else "questů"
+        embed = discord.Embed(
+            title="📋  Nástěnkové questy",
+            description="\n\n".join(format_side_block(name, data) for name, data in board.items()),
+            color=STATUS_META[Status.ACTIVE]["color"],
+        )
+        embed.set_footer(text=f"⭐ {ARION_NAME}  ·  {n} {label} na nástěnce")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 # ── Migrace — seed nových questů při startu ────────────────────────────────────
 
 _SEED_QUESTS = {
@@ -295,6 +353,7 @@ _SEED_QUESTS = {
         "xp":           "160 000",
         "category":     Category.MAIN,
         "parent_quest": None,
+        "everyone":     True,   # jediný main quest, co jde automaticky úplně všem
         "members":      [],
         "added":        "06.05.",
     },
@@ -366,7 +425,7 @@ _SEED_QUESTS = {
     },
 }
 
-_SYNC_FIELDS = {"info", "xp", "category", "parent_quest"}
+_SYNC_FIELDS = {"info", "xp", "category", "parent_quest", "everyone"}
 
 def _migrate_quests():
     """Při startu přidá chybějící questy, synchronizuje metadata a opraví pořadí."""
@@ -445,16 +504,15 @@ class QuestsCog(commands.Cog):
                 used_sides.add(sn)
             blocks.append(format_main_block(main_name, main_data, interaction.guild, children))
 
-        # Side questy bez rodiče
-        for side_name, side_data in sides.items():
-            if side_name not in used_sides:
-                blocks.append(format_side_block(side_name, side_data))
+        # Side questy bez rodiče ("nástěnka") se sem NEDÁVAJÍ — mají vlastní
+        # tlačítko níž (BoardQuestsView), ať nezahlcují hlavní přehled.
+        has_board_quests = any(sn not in used_sides for sn in sides)
 
-        # Solo questy
+        # Solo questy — úplně naspodu
         for solo_name, solo_data in solos.items():
             blocks.append(format_side_block(solo_name, solo_data))
 
-        n     = len(quests)
+        n     = len(mains) + len(used_sides) + len(solos)
         label = "quest" if n == 1 else "questy" if n <= 4 else "questů"
         embed = discord.Embed(
             title="📜  Aktivní questy",
@@ -462,7 +520,10 @@ class QuestsCog(commands.Cog):
             color=STATUS_META[Status.ACTIVE]["color"],
         )
         embed.set_footer(text=f"⭐ {ARION_NAME}  ·  {n} {label} celkem")
-        await interaction.response.send_message(embed=embed)
+        if has_board_quests:
+            await interaction.response.send_message(embed=embed, view=BoardQuestsView())
+        else:
+            await interaction.response.send_message(embed=embed)
 
     # ── /quest add ────────────────────────────────────────────────────────────
 
@@ -471,14 +532,15 @@ class QuestsCog(commands.Cog):
     @app_commands.describe(
         name="Název questu",
         info="Popis / zadání questu",
-        category="Typ questu (Main = automaticky všichni hráči)",
+        category="Typ questu",
         xp="Odměna za splnění (volitelné)",
-        members="Hráči oddělení mezerou (@zmínka) — jen pro Side/Solo questy",
+        members="Hráči oddělení mezerou (@zmínka) — povinné, pokud nezaškrtneš everyone",
         parent_quest="Main quest ke kterému patří (jen pro side questy)",
         difficulty="Obtížnost — určuje rank body za splnění.",
+        everyone="Jen Main: dát opravdu úplně všem hned teď? (výchozí: ne — přiřaď přes members)",
     )
     @app_commands.choices(category=[
-        app_commands.Choice(name="⚔️ Main Quest — pro všechny", value=Category.MAIN),
+        app_commands.Choice(name="⚔️ Main Quest — hlavní dějová linka", value=Category.MAIN),
         app_commands.Choice(name="🗺️ Side Quest — pro vybrané (s hlavním questem)", value=Category.SIDE),
         app_commands.Choice(name="🏃 Solo Quest — pro vybrané (bez hlavního questu)", value=Category.SOLO),
     ])
@@ -496,6 +558,7 @@ class QuestsCog(commands.Cog):
         difficulty: str = DEFAULT_DIFFICULTY,
         members: str | None = None,
         parent_quest: str | None = None,
+        everyone: bool = False,
     ):
         await interaction.response.defer(ephemeral=True)
 
@@ -531,15 +594,17 @@ class QuestsCog(commands.Cog):
 
         guild = interaction.guild
 
-        if category == Category.MAIN:
-            # Main quest → automaticky všichni non-bot členové
+        if category == Category.MAIN and everyone:
+            # Main quest s everyone=True → automaticky všichni non-bot členové
+            # (tohle by měl mít jen jeden quest v celé kampani — "Volání hvězdy").
             member_ids = [m.id for m in guild.members if not m.bot]
-        elif category in (Category.SIDE, Category.SOLO):
-            # Side/Solo quest → povinný members parametr
-            quest_type = "Side" if category == Category.SIDE else "Solo"
+        else:
+            # Main quest bez everyone (i Side/Solo) → povinný members parametr
+            quest_type = {Category.MAIN: "Main", Category.SIDE: "Side", Category.SOLO: "Solo"}[category]
             if not members:
                 await interaction.followup.send(
-                    f"Pro {quest_type} quest musíš zadat `members:` (@zmínka hráčů).", ephemeral=True
+                    f"Pro {quest_type} quest bez `everyone:True` musíš zadat `members:` (@zmínka hráčů).",
+                    ephemeral=True,
                 )
                 return
             member_ids = _parse_member_mentions(members, guild)
@@ -555,6 +620,7 @@ class QuestsCog(commands.Cog):
             "category":     category,
             "difficulty":   difficulty,
             "parent_quest": parent_quest,
+            "everyone":     bool(category == Category.MAIN and everyone),
             "members":      member_ids,
             "added":        today(),
         }
@@ -565,7 +631,7 @@ class QuestsCog(commands.Cog):
         save_diaries(diaries)
 
         cat_meta = CATEGORY_META[category]
-        if category == Category.MAIN:
+        if category == Category.MAIN and everyone:
             assign_str = f"@everyone  ({len(member_ids)} hráčů)"
         else:
             assign_str = "  ·  ".join(
@@ -591,7 +657,7 @@ class QuestsCog(commands.Cog):
             msg += f"\n⚠️ DM se nepodařilo odeslat: {', '.join(dm_errors)}."
         await interaction.followup.send(msg, ephemeral=True)
 
-    # ── on_member_join — nový hráč dostane všechny aktivní main questy ────────
+    # ── on_member_join — nový hráč dostane hlavní main quest (everyone=True) ──
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
@@ -599,7 +665,13 @@ class QuestsCog(commands.Cog):
             return
 
         quests = load_quests()
-        main_quests = {n: d for n, d in quests.items() if d.get("category") == Category.MAIN}
+        # Jen main questy s příznakem everyone=True (aktuálně "Volání hvězdy").
+        # Ostatní main questy (Poslední Aurelion, Pomsta...) jsou dějové linky
+        # pro konkrétní hráče — přiřazují se ručně přes /quest add nebo /quest give.
+        main_quests = {
+            n: d for n, d in quests.items()
+            if d.get("category") == Category.MAIN and d.get("everyone")
+        }
         if not main_quests:
             return
 
@@ -636,6 +708,59 @@ class QuestsCog(commands.Cog):
             await member.send(embed=embed)
         except discord.Forbidden:
             pass
+
+    # ── Volání z tutoriálu — přiřazení side questu podle zvolené destinace ────
+
+    async def assign_destination_quest(self, member: discord.Member, destination: str,
+                                       *, notify: bool = True):
+        """
+        Zavolej z tutoriálu, jakmile si hráč vybere svou počáteční destinaci
+        (Lumenie / Aquion / Dračí skála) — přiřadí mu JEN odpovídající side
+        quest větve "Volání hvězdy" (ne všechny tři najednou).
+
+        notify=False potlačí DM (hodí se, když si volající staví vlastní
+        uvítací zprávu a nechce hráči poslat oznámení o questu dvakrát).
+
+        Vrací (quest_name, quest_data) při novém přiřazení, jinak None
+        (neznámá destinace, quest chybí v databázi, nebo ho hráč už měl).
+        """
+        quest_name = resolve_destination_quest(destination)
+        if quest_name is None:
+            return None
+
+        quests = load_quests()
+        quest_data = quests.get(quest_name)
+        if quest_data is None:
+            return None
+
+        if member.id in quest_data.get("members", []):
+            return None  # už ho má — nic nového k oznámení
+
+        quest_data.setdefault("members", []).append(member.id)
+        save_quests(quests)
+
+        diaries = load_diaries()
+        uid_str = str(member.id)
+        entries = _migrate_entries(diaries.get(uid_str, []))
+        entries.append(make_diary_entry(quest_name, quest_data.get("info", ""), quest_data.get("xp")))
+        diaries[uid_str] = entries
+        save_diaries(diaries)
+
+        if notify:
+            try:
+                embed = discord.Embed(
+                    title="📜  Nový quest v deníku",
+                    description=f"**{quest_name}**\n{quest_data.get('info', '')}",
+                    color=STATUS_META[Status.ACTIVE]["color"],
+                )
+                if quest_data.get("xp"):
+                    embed.add_field(name="✨ Odměna", value=quest_data["xp"], inline=True)
+                embed.set_footer(text=f"⭐ {ARION_NAME}  ·  Podle tvé zvolené destinace")
+                await member.send(embed=embed)
+            except discord.Forbidden:
+                pass
+
+        return quest_name, quest_data
 
     # ── /quest status ─────────────────────────────────────────────────────────
 
@@ -1004,7 +1129,7 @@ class QuestsCog(commands.Cog):
 
     # ── /quest-pokrok ─────────────────────────────────────────────────────────
 
-    @app_commands.command(name="quest-pokrok", description="Oznám pokrok v questu — embed do kanálu + zápis do deníků (admin)")
+    @app_commands.command(name="quest-pokrok", description="Oznám pokrok v questu — embed do kanálu (admin)")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(name="Název questu", note="Volitelná poznámka zobrazená v embedu")
     async def quest_pokrok(self, interaction: discord.Interaction, name: str, note: str | None = None):
@@ -1017,9 +1142,6 @@ class QuestsCog(commands.Cog):
         quest_data = quests[name]
         category   = quest_data.get("category", Category.SIDE)
         parent     = quest_data.get("parent_quest")
-        member_ids = quest_data.get("members", [])
-        if not isinstance(member_ids, list):
-            member_ids = []
 
         cat_label = "main" if category == Category.MAIN else "side"
         desc = f"📜 **Pokrok v questu: {name}** *({cat_label})*"
@@ -1032,21 +1154,11 @@ class QuestsCog(commands.Cog):
         embed.set_footer(text=f"⭐ {ARION_NAME}")
         await interaction.channel.send(embed=embed)
 
-        diaries = load_diaries()
-        for uid in member_ids:
-            uid_str = str(uid)
-            entries = _migrate_entries(diaries.get(uid_str, []))
-            diary_line = f"{today()} — 📜 Pokrok v questu: **{name}**"
-            if note:
-                diary_line += f" — {note}"
-            entries.append({"text": diary_line, "pinned": False, "tag": QUEST_TAG})
-            diaries[uid_str] = entries
-        save_diaries(diaries)
-
+        # Pokrok se do deníků NEZAPISUJE — ten dostává jen zahájení a
+        # dokončení/nesplnění questu (viz make_diary_entry a quest_status),
+        # ať se nezaplňuje spamem průběžných oznámení.
         log_action("quest_pokrok", interaction.user.display_name, name, note or "")
-        await interaction.followup.send(
-            f"✅ Pokrok oznámen. Zapsáno do deníku {len(member_ids)} hráčů.", ephemeral=True
-        )
+        await interaction.followup.send("✅ Pokrok oznámen v kanálu.", ephemeral=True)
 
     # ── Autocomplete (sdílené pro remove + status + give) ─────────────────────
 
