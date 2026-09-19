@@ -198,7 +198,7 @@ class KeepBurnView(discord.ui.View):
 # ---------------------------------------------------------------------------
 
 TRADE_MAX_CARDS = 15
-TRADE_TIMEOUT = 180.0  # 3 minuty na potvrzení obou stran
+TRADE_TIMEOUT = 600.0  # 10 minut na sestavení a potvrzení obchodu
 
 
 def _parse_trade_card_ids(raw: str) -> list:
@@ -211,14 +211,14 @@ def _parse_trade_card_ids(raw: str) -> list:
     return seen
 
 
-def _resolve_trade_cards(sender_uid: str, unique_ids: list) -> Tuple[dict, list]:
+def _resolve_trade_cards(owner_uid: str, unique_ids: list) -> Tuple[dict, list]:
     """
     Ověří vlastnictví a obchodovatelnost karet.
     Vrací (platné {unique_id: card}, chybové řádky pro neplatné).
     """
     inv = load_inventory()
     works = load_json(CARDS_WORK, default={})
-    user_work = works.get(sender_uid)
+    user_work = works.get(owner_uid)
     on_expedition = set(user_work.get("cards", [])) if user_work else set()
 
     valid = {}
@@ -227,7 +227,7 @@ def _resolve_trade_cards(sender_uid: str, unique_ids: list) -> Tuple[dict, list]
         card = inv.get(cid)
         if card is None:
             errors.append(f"`{cid}` — neexistuje.")
-        elif card.get("owner_id") != sender_uid:
+        elif card.get("owner_id") != owner_uid:
             errors.append(f"`{cid}` — není tvoje.")
         elif cid in on_expedition:
             errors.append(f"`{cid}` — je na výpravě, nejde obchodovat.")
@@ -238,54 +238,72 @@ def _resolve_trade_cards(sender_uid: str, unique_ids: list) -> Tuple[dict, list]
 
 class TradeView(discord.ui.View):
     """
-    Nabídka obchodu — odesílatel nabízí své karty příjemci. Karty se reálně
-    přepíšou, až obě strany klikněte na Potvrdit; kdokoliv z dvojice může
-    obchod kdykoliv zrušit. Bez odezvy do timeoutu se nic nepřesune.
+    Obousměrný obchod — kdokoliv z dvojice může přes `/cards trade` přidat
+    nebo přepsat svou nabídku (protinabídka), i poté co druhá strana napsala
+    jako první. Karty se reálně přepíšou, až obě strany klikněte na Potvrdit;
+    jakákoliv změna nabídky obě potvrzení zruší. Kdokoliv může obchod kdykoliv
+    zrušit. Bez odezvy do timeoutu se nic nepřesune.
     """
 
-    def __init__(self, sender: discord.abc.User, receiver: discord.abc.User,
-                 cards: dict, timeout: float = TRADE_TIMEOUT):
+    def __init__(self, cog: "Cards", key: frozenset,
+                 first_user: discord.abc.User, second_user: discord.abc.User,
+                 first_cards: dict, timeout: float = TRADE_TIMEOUT):
         super().__init__(timeout=timeout)
-        self.sender = sender
-        self.receiver = receiver
-        self.cards = cards  # {unique_id: card_snapshot}
-        self.confirmed = {str(sender.id): False, str(receiver.id): False}
+        self.cog = cog
+        self.key = key
+        self.users = {first_user.id: first_user, second_user.id: second_user}
+        self.offers = {first_user.id: first_cards, second_user.id: {}}
+        self.confirmed = {first_user.id: False, second_user.id: False}
         self.done = False
         self.message: Optional[discord.Message] = None
 
+    def other_id(self, uid: int) -> int:
+        return next(u for u in self.users if u != uid)
+
+    def set_offer(self, uid: int, cards: dict):
+        """Nastaví/přepíše nabídku hráče a zruší obě potvrzení — podmínky se změnily."""
+        self.offers[uid] = cards
+        for u in self.confirmed:
+            self.confirmed[u] = False
+
     def build_embed(self, *, note: str = None, color: int = 0x3498DB) -> discord.Embed:
-        embed = discord.Embed(
-            title="🤝 Nabídka obchodu",
-            description=f"{self.sender.mention} nabízí tyto karty hráči {self.receiver.mention}:",
-            color=color,
-        )
-        for cid, card in self.cards.items():
-            rarity = card.get("rarity", "uncommon")
-            rarity_emoji = RARITIES.get(rarity, RARITIES["uncommon"])["emoji"]
-            qual = card.get("quality", "normal")
-            qual_data = QUALITIES.get(qual, QUALITIES["normal"])
-            embed.add_field(
-                name=f"{card.get('name', '?')} (Print #{card.get('print_number', '?')})",
-                value=(
-                    f"ID: `{cid}`\n"
-                    f"Rarita: {rarity.capitalize()} {rarity_emoji}  ·  "
-                    f"Kvalita: {qual_data['emoji']} {qual_data['name']}"
-                ),
-                inline=False,
-            )
+        embed = discord.Embed(title="🤝 Obchod mezi hráči", color=color)
+        for uid, user in self.users.items():
+            cards = self.offers[uid]
+            if cards:
+                lines = []
+                for cid, card in cards.items():
+                    rarity = card.get("rarity", "uncommon")
+                    rarity_emoji = RARITIES.get(rarity, RARITIES["uncommon"])["emoji"]
+                    qual = card.get("quality", "normal")
+                    qual_emoji = QUALITIES.get(qual, QUALITIES["normal"])["emoji"]
+                    lines.append(
+                        f"{rarity_emoji}{qual_emoji} **{card.get('name', '?')}** "
+                        f"*(#{card.get('print_number', '?')})* — `{cid}`"
+                    )
+                value = "\n".join(lines)
+            else:
+                value = "*(zatím nic nenabídl/a)*"
+            embed.add_field(name=f"Nabídka — {user.display_name}", value=value, inline=False)
+
         embed.add_field(
             name="Potvrzení",
-            value=(
-                f"{'✅' if self.confirmed[str(self.sender.id)] else '⬜'} {self.sender.display_name}\n"
-                f"{'✅' if self.confirmed[str(self.receiver.id)] else '⬜'} {self.receiver.display_name}"
+            value="\n".join(
+                f"{'✅' if self.confirmed[uid] else '⬜'} {user.display_name}"
+                for uid, user in self.users.items()
             ),
             inline=False,
         )
-        embed.set_footer(text=note or "Obě strany musí potvrdit, jinak obchod za pár minut vyprší.")
+        embed.set_footer(
+            text=note or (
+                "Kdokoliv může přidat/upravit nabídku přes `/cards trade` — "
+                "obě strany pak musí znovu potvrdit."
+            )
+        )
         return embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id not in (self.sender.id, self.receiver.id):
+        if interaction.user.id not in self.users:
             await interaction.response.send_message("Tohle není tvůj obchod.", ephemeral=True)
             return False
         return True
@@ -294,21 +312,27 @@ class TradeView(discord.ui.View):
         for child in self.children:
             child.disabled = True
         self.done = True
+        self.cog.active_trades.pop(self.key, None)
         await interaction.response.edit_message(embed=embed, view=self)
         self.stop()
 
     @discord.ui.button(label="✅ Potvrdit", style=discord.ButtonStyle.success)
     async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.confirmed[str(interaction.user.id)] = True
+        self.confirmed[interaction.user.id] = True
 
         if not all(self.confirmed.values()):
             await interaction.response.edit_message(embed=self.build_embed())
             return
 
-        # Obě strany potvrdily — než se karty reálně přepíšou, ověř znovu,
-        # že mezitím nezmizely / neodešly na výpravu / nebyly spálené.
-        sender_uid = str(self.sender.id)
-        valid_cards, errors = _resolve_trade_cards(sender_uid, list(self.cards.keys()))
+        # Obě strany potvrdily — než se karty reálně přepíšou, ověř znovu obě
+        # nabídky (mezitím mohla karta zmizet / jít na výpravu / být spálena).
+        errors = []
+        revalidated = {}
+        for uid, cards in self.offers.items():
+            valid, uid_errors = _resolve_trade_cards(str(uid), list(cards.keys()))
+            revalidated[uid] = valid
+            errors.extend(uid_errors)
+
         if errors:
             embed = self.build_embed(
                 note="Obchod zrušen — některé karty už nejsou dostupné.", color=0xE74C3C,
@@ -318,16 +342,23 @@ class TradeView(discord.ui.View):
             return
 
         inv = load_inventory()
-        receiver_uid = str(self.receiver.id)
         profiles = profile_load()
-        sender_profile = profiles.get(sender_uid)
+        profiles_changed = False
 
-        for cid in self.cards:
-            inv[cid]["owner_id"] = receiver_uid
-            if sender_profile and sender_profile.get("active_card_id") == cid:
-                sender_profile["active_card_id"] = None
+        for uid, cards in revalidated.items():
+            if not cards:
+                continue
+            recipient_uid = str(self.other_id(uid))
+            owner_uid = str(uid)
+            owner_profile = profiles.get(owner_uid)
+            for cid in cards:
+                inv[cid]["owner_id"] = recipient_uid
+                if owner_profile and owner_profile.get("active_card_id") == cid:
+                    owner_profile["active_card_id"] = None
+                    profiles_changed = True
+
         save_json(CARDS_INVENTORY, inv)
-        if sender_profile:
+        if profiles_changed:
             profile_save(profiles)
 
         embed = self.build_embed(note="✅ Obchod dokončen!", color=0x2ECC71)
@@ -343,6 +374,7 @@ class TradeView(discord.ui.View):
     async def on_timeout(self):
         if self.done:
             return
+        self.cog.active_trades.pop(self.key, None)
         for child in self.children:
             child.disabled = True
         if self.message:
@@ -907,6 +939,7 @@ class Cards(commands.Cog):
  
     def __init__(self, bot):
         self.bot = bot
+        self.active_trades: Dict[frozenset, "TradeView"] = {}
  
     cards_group = app_commands.Group(name="cards", description="Sběratelský systém karet")
 
@@ -1877,16 +1910,19 @@ class Cards(commands.Cog):
         embed.add_field(name="Kvalita", value=f"{qual_data['emoji']} {qual_data['name']} (×{mult:.1f})",             inline=True)
         await interaction.response.send_message(embed=embed)
 
-    @cards_group.command(name="trade", description="Nabídnout obchod — pošli hráči své karty ke schválení")
+    @cards_group.command(name="trade", description="Nabídnout/upravit obchod s hráčem — obě strany musí potvrdit")
     @app_commands.describe(
-        user="Hráč, kterému karty nabízíš",
+        user="Hráč, se kterým obchoduješ",
         karty="ID karet oddělená čárkou, např. ab12cd34,ef56gh78",
     )
     async def trade_cards(self, interaction: discord.Interaction, user: discord.Member, karty: str):
-        """Založí obchod — obě strany musí kliknout na Potvrdit, než se karty přepíšou."""
-        sender = interaction.user
+        """
+        Založí obchod, nebo — pokud už mezi vámi jeden běží — přidá/přepíše
+        tvou nabídku jako protinabídku ve stejné zprávě.
+        """
+        me = interaction.user
 
-        if user.id == sender.id:
+        if user.id == me.id:
             await interaction.response.send_message("❌ Nemůžeš obchodovat sám se sebou.", ephemeral=True)
             return
         if user.bot:
@@ -1903,17 +1939,34 @@ class Cards(commands.Cog):
             )
             return
 
-        valid_cards, errors = _resolve_trade_cards(str(sender.id), unique_ids)
+        valid_cards, errors = _resolve_trade_cards(str(me.id), unique_ids)
         if errors:
             await interaction.response.send_message(
                 "❌ Tyhle karty nejde nabídnout:\n" + "\n".join(errors), ephemeral=True
             )
             return
 
-        view = TradeView(sender, user, valid_cards)
+        key = frozenset({me.id, user.id})
+        existing = self.active_trades.get(key)
+
+        if existing is not None and not existing.done:
+            # Protinabídka do už běžícího obchodu — přepíše mou předchozí
+            # nabídku (pokud jsem nějakou dal) a vynuluje obě potvrzení.
+            existing.set_offer(me.id, valid_cards)
+            try:
+                await existing.message.edit(embed=existing.build_embed(), view=existing)
+            except discord.HTTPException:
+                pass
+            await interaction.response.send_message(
+                "✏️ Nabídka aktualizována — mrkni na obchodní zprávu výše.", ephemeral=True
+            )
+            return
+
+        view = TradeView(self, key, me, user, valid_cards)
+        self.active_trades[key] = view
         embed = view.build_embed()
         await interaction.response.send_message(
-            content=f"{user.mention}, máš nabídku obchodu od {sender.mention}!",
+            content=f"{user.mention}, {me.mention} ti navrhuje obchod!",
             embed=embed,
             view=view,
         )
