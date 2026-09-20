@@ -13,6 +13,7 @@ from src.core.dnd.ranks import (
 )
 from src.utils.audit import log_action, get_recent
 from src.logic.stats import add_xp
+from src.database.characters import get_active_slot, use_slot
 
 ARION_NAME = "Aurionis"
 QUEST_TAG  = "📜"
@@ -93,16 +94,55 @@ def save_diaries(data: dict):
 def today() -> str:
     return datetime.now().strftime("%d.%m.")
 
-def _parse_xp(xp_str: str | None) -> int:
-    """Parsuje XP string (např. '160 000' → 160000) a vrátí int. Vrátí 0 pokud není validní."""
+def _parse_xp(xp_str) -> int:
+    """Parsuje XP zápis ('160 000', '2 500 XP', 12000) na int. 0 = nečitelné."""
     if not xp_str:
         return 0
-    # Odstraň mezery a parsuj
-    xp_clean = xp_str.strip().replace(" ", "").replace(",", "")
+    if isinstance(xp_str, (int, float)):
+        return max(0, int(xp_str))
+    text = str(xp_str).strip().lower()
+    for suffix in ("xp", "exp"):
+        if text.endswith(suffix):
+            text = text[: -len(suffix)].strip()
+    # Pryč s libovolnými mezerami (i nezlomitelnou) a oddělovači tisíců
+    digits = "".join(c for c in text if not c.isspace() and c not in ",.'\u00a0")
     try:
-        return int(xp_clean)
+        return int(digits)
     except ValueError:
         return 0
+
+def _xp_warning(xp) -> str:
+    """Varování pro admina, když je XP vyplněné, ale nedá se z něj udělat číslo."""
+    if xp and _parse_xp(xp) <= 0:
+        return f"\n⚠️ XP `{xp}` nejde přečíst jako číslo — při dokončení se nikomu nic nepřipíše."
+    return ""
+
+
+# ── Postavy: quest si pamatuje, které postavě patří ──────────────────────────
+# Per-postava data (deníky, XP, ranky) se klíčují '<uid>:<slot>'. Quest členy
+# eviduje jako čisté Discord ID, takže slot postavy se ukládá zvlášť.
+
+def _member_slots(quest_data: dict) -> dict:
+    slots = quest_data.get("member_slots")
+    if not isinstance(slots, dict):
+        slots = {}
+        quest_data["member_slots"] = slots
+    return slots
+
+def _remember_slot(quest_data: dict, uid: int) -> str:
+    """Uloží k questu postavu, která ho právě dostala, a vrátí její slot."""
+    slots = _member_slots(quest_data)
+    slot  = str(slots.get(str(uid)) or get_active_slot(uid))
+    slots[str(uid)] = slot
+    return slot
+
+def _quest_slot(quest_data: dict, uid: int) -> str:
+    """Slot postavy, která quest plní. Starší questy slot nemají → aktivní postava."""
+    slots = quest_data.get("member_slots") or {}
+    return str(slots.get(str(uid)) or get_active_slot(uid))
+
+def _diary_key(uid, slot) -> str:
+    return f"{uid}:{slot}"
 
 def _migrate_entries(raw) -> list:
     """Bezpečná migrace — vždy vrátí list bez ohledu na vstup."""
@@ -148,7 +188,7 @@ def _status_line(added: str, closed: str | None) -> str:
 
 def _parse_member_mentions(text: str, guild: discord.Guild, exclude_ids: set[int] | None = None) -> list[int]:
     """Parsuje Discord @zmínky ze stringu. Volitelně vynechá ID která jsou už v listu."""
-    exclude = exclude_ids or set()
+    exclude = set(exclude_ids or set())
     ids = []
     for word in text.split():
         uid_str = word.strip("<@!>")
@@ -156,6 +196,7 @@ def _parse_member_mentions(text: str, guild: discord.Guild, exclude_ids: set[int
             m = guild.get_member(int(uid_str))
             if m and m.id not in exclude:
                 ids.append(m.id)
+                exclude.add(m.id)
     return ids
 
 
@@ -167,16 +208,22 @@ async def _assign_and_notify(
     quest_info: str,
     category: str,
     xp: str | None,
+    slots: dict | None = None,
 ) -> list[str]:
-    """Zapíše quest do deníků a pošle DM každému hráči. Vrátí jména kde DM selhalo."""
-    entry    = make_diary_entry(quest_name, quest_info, xp)
+    """Zapíše quest do deníků a pošle DM každému hráči. Vrátí jména kde DM selhalo.
+
+    slots: dict questu {uid: slot} — doplní se o postavu, která quest dostala.
+    """
     cat_meta = CATEGORY_META.get(category, CATEGORY_META[Category.SIDE])
     errors: list[str] = []
     for uid in member_ids:
-        uid_str = str(uid)
-        entries = _migrate_entries(diaries.get(uid_str, []))
-        entries.append(entry)
-        diaries[uid_str] = entries
+        slot = str((slots or {}).get(str(uid)) or get_active_slot(uid))
+        if slots is not None:
+            slots[str(uid)] = slot
+        key     = _diary_key(uid, slot)
+        entries = _migrate_entries(diaries.get(key, []))
+        entries.append(make_diary_entry(quest_name, quest_info, xp))
+        diaries[key] = entries
         member = guild.get_member(uid)
         if member:
             try:
@@ -233,6 +280,35 @@ def format_main_block(name: str, data: dict, guild: discord.Guild | None,
             lines.append(f"-# ╚ 📌 Quest získán: **{s_added}**")
 
     return "\n".join(lines)
+
+MAX_DESC = 4000   # limit popisu embedu je 4096 — necháváme si rezervu
+
+def _pages(blocks: list[str], per_page: int) -> list[list[str]]:
+    """Rozdělí bloky na stránky podle počtu i délky, ať se popis vejde do embedu."""
+    pages: list[list[str]] = []
+    current: list[str]     = []
+    length                 = 0
+    for block in blocks:
+        if len(block) > MAX_DESC:
+            block = block[:MAX_DESC - 1] + "…"
+        if current and (len(current) >= per_page or length + len(block) + 2 > MAX_DESC):
+            pages.append(current)
+            current, length = [], 0
+        current.append(block)
+        length += len(block) + 2
+    if current:
+        pages.append(current)
+    return pages
+
+
+def _fit_description(blocks: list[str]) -> str:
+    """Spojí bloky do popisu embedu a případný zbytek nahradí poznámkou."""
+    pages = _pages(blocks, per_page=len(blocks) or 1)
+    if len(pages) == 1:
+        return "\n\n".join(pages[0])
+    hidden = len(blocks) - len(pages[0])
+    return "\n\n".join(pages[0]) + f"\n\n-# … a dalších {hidden} questů se sem nevešlo."
+
 
 def format_side_block(name: str, data: dict, status: str = Status.ACTIVE) -> str:
     """Side quest bez rodiče — samostatný blok."""
@@ -314,30 +390,45 @@ class DiaryQuestView(discord.ui.View):
         await interaction.response.send_message(embeds=[header] + embeds[:9], ephemeral=True)
 
 
+# ── Nástěnkové questy ─────────────────────────────────────────────────────────
+
+# Značka questu vzatého z nástěnky (zapisuje ji board.py při přijetí zakázky).
+BOARD_SOURCE = "board"
+
+def board_quests(quests: dict) -> dict:
+    """Zakázky z nástěnky + side questy, které nevisí pod žádným existujícím mainem.
+
+    Tyhle questy se v /quests neukazují v hlavním přehledu, ale pod tlačítkem.
+    """
+    mains = {n for n, d in quests.items() if d.get("category") == Category.MAIN}
+    return {
+        n: d for n, d in quests.items()
+        if d.get("source") == BOARD_SOURCE
+        or (d.get("category") == Category.SIDE and d.get("parent_quest") not in mains)
+    }
+
+
 # ── View: tlačítko NÁSTĚNKA pod /quests ───────────────────────────────────────
 
 class BoardQuestsView(discord.ui.View):
-    """Tlačítko pod /quests — ukáže side questy bez main rodiče (z nástěnky) zvlášť, ať nezahlcují hlavní přehled."""
+    """Tlačítko pod /quests — ukáže nástěnkové questy zvlášť, ať nezahlcují hlavní přehled."""
 
     def __init__(self):
         super().__init__(timeout=300)
 
     @discord.ui.button(label="📋 Nástěnkové questy", style=discord.ButtonStyle.secondary)
     async def show_board_quests(self, interaction: discord.Interaction, button: discord.ui.Button):
-        quests = load_quests()
-        board = {
-            n: d for n, d in quests.items()
-            if d.get("category") == Category.SIDE and not d.get("parent_quest")
-        }
+        board = board_quests(load_quests())
         if not board:
             await interaction.response.send_message("📋 Nástěnka je momentálně prázdná.", ephemeral=True)
             return
 
         n     = len(board)
         label = "quest" if n == 1 else "questy" if n <= 4 else "questů"
-        embed = discord.Embed(
+        blocks = [format_side_block(name, data) for name, data in board.items()]
+        embed  = discord.Embed(
             title="📋  Nástěnkové questy",
-            description="\n\n".join(format_side_block(name, data) for name, data in board.items()),
+            description=_fit_description(blocks),
             color=STATUS_META[Status.ACTIVE]["color"],
         )
         embed.set_footer(text=f"⭐ {ARION_NAME}  ·  {n} {label} na nástěnce")
@@ -426,6 +517,40 @@ _SEED_QUESTS = {
 }
 
 _SYNC_FIELDS = {"info", "xp", "category", "parent_quest", "everyone"}
+# Otisk hodnot, které do questu naposledy zapsal seed — podle něj poznáme,
+# co admin změnil ručně a co se smí dotáhnout z kódu.
+_SEED_STAMP = "_seed"
+
+def _sync_seed_fields(quest: dict, seed: dict) -> bool:
+    """Dotažení metadat ze seedu, ale bez přepisování ručních úprav.
+
+    Pole se přepíše jen tehdy, když ho od posledního seedu nikdo nezměnil
+    (aktuální hodnota == otisk). První běh jen vyrobí otisk z toho, co je
+    v datech teď — aby migrace nesmazala úpravy z `/quest edit`.
+    """
+    stamp   = quest.get(_SEED_STAMP)
+    first   = not isinstance(stamp, dict)
+    stamp   = {} if first else dict(stamp)
+    changed = False
+
+    for field in _SYNC_FIELDS:
+        current = quest.get(field)
+        if first or field not in stamp:
+            stamp[field] = current
+            continue
+        if current != stamp[field]:      # admin to změnil ručně → necháváme
+            stamp[field] = current
+            continue
+        if current != seed.get(field):   # změnil se seed v kódu → dotažeme
+            quest[field] = seed.get(field)
+            stamp[field] = seed.get(field)
+            changed = True
+
+    if quest.get(_SEED_STAMP) != stamp:
+        quest[_SEED_STAMP] = stamp
+        changed = True
+    return changed
+
 
 def _migrate_quests():
     """Při startu přidá chybějící questy, synchronizuje metadata a opraví pořadí."""
@@ -440,13 +565,10 @@ def _migrate_quests():
     # Přidej chybějící + synchronizuj metadata
     for name, seed in _SEED_QUESTS.items():
         if name not in quests:
-            quests[name] = seed
+            quests[name] = {**seed, _SEED_STAMP: {f: seed.get(f) for f in _SYNC_FIELDS}}
             changed = True
-        else:
-            for field in _SYNC_FIELDS:
-                if quests[name].get(field) != seed.get(field):
-                    quests[name][field] = seed[field]
-                    changed = True
+        elif _sync_seed_fields(quests[name], seed):
+            changed = True
 
     # Oprav pořadí: ne-seedované questy napřed (Chapter I atd.), pak seedované v seed pořadí
     non_seed  = {n: d for n, d in quests.items() if n not in _SEED_QUESTS}
@@ -461,12 +583,31 @@ def _migrate_quests():
         print("[quests] Migrace dokončena.")
 
 
+def _migrate_diaries():
+    """Quest zápisy dřív mířily na holé '<uid>', deník je ale čte na '<uid>:<slot>'.
+    Jednorázově je slije do první postavy, ať hráčům nechybí v /diary."""
+    diaries = load_diaries()
+    legacy  = [k for k in diaries if ":" not in str(k)]
+    if not legacy:
+        return
+    for key in legacy:
+        entries = _migrate_entries(diaries.pop(key))
+        target  = f"{key}:1"
+        merged  = _migrate_entries(diaries.get(target, []))
+        known   = {e.get("text") for e in merged}
+        merged.extend(e for e in entries if e.get("text") not in known)
+        diaries[target] = merged
+    save_diaries(diaries)
+    print(f"[quests] Deníky: sloučeno {len(legacy)} legacy záznamů do postavy 1.")
+
+
 # ── Quests Cog ────────────────────────────────────────────────────────────────
 
 class QuestsCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         _migrate_quests()
+        _migrate_diaries()
 
     quest_group = app_commands.Group(name="quest", description="Správa questů")
 
@@ -486,9 +627,13 @@ class QuestsCog(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
+        # Zakázky z nástěnky (vč. těch vedených jako solo) mají vlastní tlačítko níž.
+        board = board_quests(quests)
         mains = {n: d for n, d in quests.items() if d.get("category") == Category.MAIN}
-        sides = {n: d for n, d in quests.items() if d.get("category") == Category.SIDE}
-        solos = {n: d for n, d in quests.items() if d.get("category") == Category.SOLO}
+        sides = {n: d for n, d in quests.items()
+                 if d.get("category") == Category.SIDE and n not in board}
+        solos = {n: d for n, d in quests.items()
+                 if d.get("category") == Category.SOLO and n not in board}
 
         blocks   = []
         used_sides = set()
@@ -504,10 +649,6 @@ class QuestsCog(commands.Cog):
                 used_sides.add(sn)
             blocks.append(format_main_block(main_name, main_data, interaction.guild, children))
 
-        # Side questy bez rodiče ("nástěnka") se sem NEDÁVAJÍ — mají vlastní
-        # tlačítko níž (BoardQuestsView), ať nezahlcují hlavní přehled.
-        has_board_quests = any(sn not in used_sides for sn in sides)
-
         # Solo questy — úplně naspodu
         for solo_name, solo_data in solos.items():
             blocks.append(format_side_block(solo_name, solo_data))
@@ -516,11 +657,11 @@ class QuestsCog(commands.Cog):
         label = "quest" if n == 1 else "questy" if n <= 4 else "questů"
         embed = discord.Embed(
             title="📜  Aktivní questy",
-            description="\n\n".join(blocks),
+            description=_fit_description(blocks),
             color=STATUS_META[Status.ACTIVE]["color"],
         )
         embed.set_footer(text=f"⭐ {ARION_NAME}  ·  {n} {label} celkem")
-        if has_board_quests:
+        if board:
             await interaction.response.send_message(embed=embed, view=BoardQuestsView())
         else:
             await interaction.response.send_message(embed=embed)
@@ -627,8 +768,12 @@ class QuestsCog(commands.Cog):
         save_quests(quests)
 
         diaries   = load_diaries()
-        dm_errors = await _assign_and_notify(guild, member_ids, diaries, name, info, category, xp)
+        dm_errors = await _assign_and_notify(
+            guild, member_ids, diaries, name, info, category, xp,
+            slots=_member_slots(quests[name]),
+        )
         save_diaries(diaries)
+        save_quests(quests)
 
         cat_meta = CATEGORY_META[category]
         if category == Category.MAIN and everyone:
@@ -652,7 +797,7 @@ class QuestsCog(commands.Cog):
         announce.set_footer(text=f"⭐ {ARION_NAME}  ·  Quest byl zapsán do deníků hráčů")
         await interaction.channel.send(embed=announce)
 
-        msg = f"✅ Quest **{name}** přidán a zapsán do {len(member_ids)} deníků."
+        msg = f"✅ Quest **{name}** přidán a zapsán do {len(member_ids)} deníků." + _xp_warning(xp)
         if dm_errors:
             msg += f"\n⚠️ DM se nepodařilo odeslat: {', '.join(dm_errors)}."
         await interaction.followup.send(msg, ephemeral=True)
@@ -676,7 +821,7 @@ class QuestsCog(commands.Cog):
             return
 
         diaries = load_diaries()
-        uid_str = str(member.id)
+        uid_str = _diary_key(member.id, get_active_slot(member.id))
         entries = _migrate_entries(diaries.get(uid_str, []))
 
         # Přidej každý aktivní main quest do deníku nového hráče
@@ -686,6 +831,7 @@ class QuestsCog(commands.Cog):
             # Přidej hráče do member listu questu
             if member.id not in qdata.get("members", []):
                 qdata.setdefault("members", []).append(member.id)
+            _remember_slot(qdata, member.id)
 
         diaries[uid_str] = entries
         save_diaries(diaries)
@@ -737,10 +883,11 @@ class QuestsCog(commands.Cog):
             return None  # už ho má — nic nového k oznámení
 
         quest_data.setdefault("members", []).append(member.id)
+        slot = _remember_slot(quest_data, member.id)
         save_quests(quests)
 
         diaries = load_diaries()
-        uid_str = str(member.id)
+        uid_str = _diary_key(member.id, slot)
         entries = _migrate_entries(diaries.get(uid_str, []))
         entries.append(make_diary_entry(quest_name, quest_data.get("info", ""), quest_data.get("xp")))
         diaries[uid_str] = entries
@@ -781,6 +928,10 @@ class QuestsCog(commands.Cog):
 
         quests = load_quests()
         if name not in quests:
+            # Uzavřený quest už v quests.json není — tohle je jediná cesta, jak ho
+            # vrátit z logu mezi aktivní (např. když se admin ukliknul).
+            if status == Status.ACTIVE and await self._reopen_quest(interaction, name):
+                return
             await interaction.followup.send(f"Quest **{name}** neexistuje.", ephemeral=True)
             return
 
@@ -829,7 +980,8 @@ class QuestsCog(commands.Cog):
                 u_status  = Status.FAILED if is_loser else status
                 u_meta    = STATUS_META[u_status]
 
-                uid_str = str(uid)
+                slot    = _quest_slot(quest_data, uid)
+                uid_str = _diary_key(uid, slot)
                 entries = _migrate_entries(diaries.get(uid_str, []))
                 if not update_diary_quest_status(entries, name, u_status):
                     entries.append({
@@ -859,7 +1011,8 @@ class QuestsCog(commands.Cog):
 
                 # XP jen tomu, kdo quest doopravdy splnil
                 if earns and xp_reward > 0:
-                    xp_result = add_xp(uid, xp_reward)
+                    with use_slot(uid, slot):
+                        xp_result = add_xp(uid, xp_reward, reason=f"Quest: {name}")
                     if xp_result["leveled_up"]:
                         dm_embed.add_field(
                             name="✨ Odměna",
@@ -878,7 +1031,8 @@ class QuestsCog(commands.Cog):
                 # nevyhodí výjimku — uzavření questu nesmí spadnout kvůli ranku.
                 if earns and member:
                     diff = quest_data.get("difficulty", DEFAULT_DIFFICULTY)
-                    rk   = await award_quest_rank(member, diff, interaction.channel)
+                    with use_slot(uid, slot):
+                        rk = await award_quest_rank(member, diff, interaction.channel)
                     if rk:
                         pts = DIFFICULTY.get(diff, {}).get("points", 0)
                         if rk["ranked_up"]:
@@ -936,6 +1090,39 @@ class QuestsCog(commands.Cog):
             quests[name] = quest_data
             save_quests(quests)
             await interaction.followup.send(f"🟢 Quest **{name}** označen jako **aktivní**.", ephemeral=True)
+
+    async def _reopen_quest(self, interaction: discord.Interaction, name: str) -> bool:
+        """Vrátí naposledy uzavřený quest z logu mezi aktivní. False = v logu není."""
+        log = load_quest_log()
+        idx = next((i for i in range(len(log) - 1, -1, -1)
+                    if log[i].get("name") == name), None)
+        if idx is None:
+            return False
+
+        entry      = log.pop(idx)
+        quest_data = {k: v for k, v in entry.items() if k != "name"}
+        quest_data["status"] = Status.ACTIVE
+        quest_data.pop("closed", None)
+
+        quests = load_quests()
+        quests[name] = quest_data
+        save_quests(quests)
+        save_quest_log(log)
+
+        diaries = load_diaries()
+        for uid in quest_data.get("members", []) or []:
+            key     = _diary_key(uid, _quest_slot(quest_data, uid))
+            entries = _migrate_entries(diaries.get(key, []))
+            if update_diary_quest_status(entries, name, Status.ACTIVE):
+                diaries[key] = entries
+        save_diaries(diaries)
+
+        await interaction.followup.send(
+            f"🟢 Quest **{name}** vrácen z logu mezi aktivní.\n"
+            f"-# Už vyplacené XP a rank body se neodebírají — při opětovném dokončení by se připsaly znovu.",
+            ephemeral=True,
+        )
+        return True
 
     # ── /quest log ────────────────────────────────────────────────────────────
 
@@ -1015,11 +1202,13 @@ class QuestsCog(commands.Cog):
             if s.get("name") not in used_sides and s.get("name"):
                 blocks.append(format_side_block(s["name"], s, s.get("status", Status.ACTIVE)))
 
-        # Rozděl na stránky — každý blok může mít 3-5 řádků, bezpečný limit je 8 bloků/stránku
-        page_size = 8
-        pages     = [blocks[i:i + page_size] for i in range(0, len(blocks), page_size)]
-        total     = len(all_quests)
-        n_pages   = len(pages)
+        # Rozděl na stránky — podle počtu bloků i podle délky popisu (limit embedu)
+        pages   = _pages(blocks, per_page=8)
+        total   = len(all_quests)
+        # V jedné zprávě smí být maximálně 10 embedů — zbytek radši zařízne filtr
+        dropped = max(0, len(pages) - 10)
+        pages   = pages[:10]
+        n_pages = len(pages)
 
         embeds = []
         for pi, page_blocks in enumerate(pages, 1):
@@ -1032,10 +1221,12 @@ class QuestsCog(commands.Cog):
             footer = f"⭐ {ARION_NAME}  ·  {total} questů celkem"
             if n_pages > 1:
                 footer += f"  ·  strana {pi}/{n_pages}"
+            if dropped and pi == n_pages:
+                footer += "  ·  zbytek se nevlezl, zuž filtr"
             embed.set_footer(text=footer)
             embeds.append(embed)
 
-        await interaction.response.send_message(embeds=embeds[:10], ephemeral=True)
+        await interaction.response.send_message(embeds=embeds, ephemeral=True)
 
     # ── /quest remove ─────────────────────────────────────────────────────────
 
@@ -1050,14 +1241,15 @@ class QuestsCog(commands.Cog):
             await interaction.followup.send(f"Quest **{name}** neexistuje.", ephemeral=True)
             return
 
-        member_ids = quests[name].get("members", [])
+        quest_data = quests[name]
+        member_ids = quest_data.get("members", [])
         del quests[name]
         save_quests(quests)
 
         diaries = load_diaries()
         removed_from = 0
         for uid in member_ids:
-            uid_str = str(uid)
+            uid_str = _diary_key(uid, _quest_slot(quest_data, uid))
             if uid_str not in diaries:
                 continue
             before   = len(diaries[uid_str])
@@ -1104,8 +1296,10 @@ class QuestsCog(commands.Cog):
         dm_errors = await _assign_and_notify(
             guild, new_ids, diaries, name,
             quest_data.get("info", ""), quest_data.get("category", Category.SIDE), quest_data.get("xp"),
+            slots=_member_slots(quest_data),
         )
         save_diaries(diaries)
+        save_quests(quests)
 
         mentions = [guild.get_member(uid).mention if guild.get_member(uid) else f"<@{uid}>" for uid in new_ids]
         cat_meta = CATEGORY_META[quest_data.get("category", Category.SIDE)]
@@ -1122,7 +1316,7 @@ class QuestsCog(commands.Cog):
 
         members_str = ", ".join(guild.get_member(uid).display_name if guild.get_member(uid) else str(uid) for uid in new_ids)
         log_action("quest_give", interaction.user.display_name, name, members_str)
-        msg = f"✅ Quest **{name}** přiřazen {len(new_ids)} hráčům."
+        msg = f"✅ Quest **{name}** přiřazen {len(new_ids)} hráčům." + _xp_warning(quest_data.get("xp"))
         if dm_errors:
             msg += f"\n⚠️ DM se nepodařilo odeslat: {', '.join(dm_errors)}."
         await interaction.followup.send(msg, ephemeral=True)
@@ -1163,7 +1357,6 @@ class QuestsCog(commands.Cog):
     # ── Autocomplete (sdílené pro remove + status + give) ─────────────────────
 
     @quest_remove.autocomplete("name")
-    @quest_status.autocomplete("name")
     @quest_give.autocomplete("name")
     @quest_pokrok.autocomplete("name")
     async def quest_name_autocomplete(self, interaction: discord.Interaction, current: str):
@@ -1172,6 +1365,23 @@ class QuestsCog(commands.Cog):
             app_commands.Choice(name=n, value=n)
             for n in quests if current.lower() in n.lower()
         ][:25]
+
+    @quest_status.autocomplete("name")
+    async def quest_status_autocomplete(self, interaction: discord.Interaction, current: str):
+        """Aktivní questy + nedávno uzavřené, ať jde quest vrátit zpět na aktivní."""
+        needle  = current.lower()
+        choices = [app_commands.Choice(name=n, value=n)
+                   for n in load_quests() if needle in n.lower()]
+
+        seen = {c.value for c in choices}
+        for entry in reversed(load_quest_log()):
+            n = entry.get("name")
+            if not n or n in seen or needle not in n.lower():
+                continue
+            seen.add(n)
+            meta = STATUS_META.get(entry.get("status", Status.COMPLETED), STATUS_META[Status.COMPLETED])
+            choices.append(app_commands.Choice(name=f"{meta['emoji']} {n} (v logu)"[:100], value=n))
+        return choices[:25]
 
     @quest_add.autocomplete("parent_quest")
     async def parent_quest_autocomplete(self, interaction: discord.Interaction, current: str):

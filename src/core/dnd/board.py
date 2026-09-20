@@ -11,8 +11,8 @@ from src.utils.audit import log_action
 from src.database.characters import pkey
 
 from src.core.dnd.quests import (
-    load_quests, save_quests, today, Category, Status,
-    _assign_and_notify, load_diaries, save_diaries,
+    load_quests, save_quests, today, Category, Status, BOARD_SOURCE,
+    _assign_and_notify, _member_slots, _xp_warning, load_diaries, save_diaries,
 )
 from src.core.dnd.ranks import (
     DIFFICULTY, DEFAULT_DIFFICULTY, RANK_LADDER, STARTING_RANK,
@@ -59,9 +59,8 @@ DEFAULT_QTYPE = QType.EXCLUSIVE
 MIN_GROUP_SIZE  = 2      # kolik dobrodruhů minimálně na skupinovou zakázku
 GROUP_TIMEOUT   = 600    # kolik vteřin má parta na sesbírání (10 min)
 
-# Značka, podle které poznáme quest vzatý z nástěnky. Díky ní NEPOTŘEBUJEME
+# Značku BOARD_SOURCE drží quests.py (potřebuje ji i /quests). Díky ní NEPOTŘEBUJEME
 # druhý stav — limit se odvodí z quests.json a po uzavření questu se uvolní SÁM.
-BOARD_SOURCE = "board"
 
 # Data vedle ostatních JSONů (stejný adresář jako quests.json).
 _DATA_DIR        = os.path.dirname(QUESTS_FILE)
@@ -376,9 +375,10 @@ class BoardView(discord.ui.View):
                     existing.setdefault("members", []).append(uid)
                 else:
                     quests[name] = _new_quest(q, [uid], qtype)
+                await _write_diary(interaction.guild, [uid], name, q,
+                                   slots=_member_slots(quests[name]))
                 save_quests(quests)
 
-                await _write_diary(interaction.guild, [uid], name, q)
                 await refresh_all_boards(interaction.client, boards)   # jen přepočet počtu
 
                 racers = len(quests[name]["members"])
@@ -440,8 +440,9 @@ class BoardView(discord.ui.View):
                 return
 
             quests[name] = _new_quest(q, [uid], qtype)
+            await _write_diary(interaction.guild, [uid], name, q,
+                               slots=_member_slots(quests[name]))
             save_quests(quests)
-            await _write_diary(interaction.guild, [uid], name, q)
 
             # Univerzální zakázka visí na VÍC nástěnkách → sundej ji ze všech
             # a všechny překresli, ať si ji nikdo nezkusí vzít podruhé.
@@ -479,15 +480,20 @@ def _new_quest(q: dict, members: list[int], qtype: str) -> dict:
     }
 
 
-async def _write_diary(guild, member_ids: list[int], name: str, q: dict) -> None:
-    """Zápis do deníku + DM (recyklujeme helper z quests.py)."""
+async def _write_diary(guild, member_ids: list[int], name: str, q: dict,
+                       slots: dict | None = None) -> None:
+    """Zápis do deníku + DM (recyklujeme helper z quests.py).
+
+    slots: dict questu {uid: slot} — zapamatuje si postavu, která zakázku vzala.
+    """
     _dest = q.get("destination")
     _info = q.get("info", "")
     if _dest and _dest != ANYWHERE:
         _info = f"{_info}\n📍 {dest_label(_dest)}".strip()
     diaries = load_diaries()
     await _assign_and_notify(
-        guild, member_ids, diaries, name, _info, Category.SOLO, q.get("xp"))
+        guild, member_ids, diaries, name, _info, Category.SOLO, q.get("xp"),
+        slots=slots)
     save_diaries(diaries)
 
 
@@ -612,8 +618,9 @@ class GroupTakeView(discord.ui.View):
         members = list(self.confirmed)
         quests[self.name] = _new_quest(q, members, QType.GROUP)
         quests[self.name]["party"] = self.party_name
+        await _write_diary(interaction.guild, members, self.name, q,
+                           slots=_member_slots(quests[self.name]))
         save_quests(quests)
-        await _write_diary(interaction.guild, members, self.name, q)
 
         boards = load_boards()
         _drop_from_boards(boards, self.name)
@@ -926,7 +933,7 @@ class BoardCog(commands.Cog):
             f"✅ Zakázka **{name}** {'upravena' if existed else 'přidána'} "
             f"({len(pool)} v zásobníku).\n"
             f"-# {qm['emoji']} {qm['label']} · visí {where}.\n"
-            f"-# Na nástěnku se dostane při `/nastenka reload`.",
+            f"-# Na nástěnku se dostane při `/nastenka reload`." + _xp_warning(xp),
             ephemeral=True)
 
     @nastenka.command(name="remove", description="[DM] Odebere zakázku ze zásobníku.")
