@@ -281,6 +281,35 @@ def format_main_block(name: str, data: dict, guild: discord.Guild | None,
 
     return "\n".join(lines)
 
+MAX_DESC = 4000   # limit popisu embedu je 4096 — necháváme si rezervu
+
+def _pages(blocks: list[str], per_page: int) -> list[list[str]]:
+    """Rozdělí bloky na stránky podle počtu i délky, ať se popis vejde do embedu."""
+    pages: list[list[str]] = []
+    current: list[str]     = []
+    length                 = 0
+    for block in blocks:
+        if len(block) > MAX_DESC:
+            block = block[:MAX_DESC - 1] + "…"
+        if current and (len(current) >= per_page or length + len(block) + 2 > MAX_DESC):
+            pages.append(current)
+            current, length = [], 0
+        current.append(block)
+        length += len(block) + 2
+    if current:
+        pages.append(current)
+    return pages
+
+
+def _fit_description(blocks: list[str]) -> str:
+    """Spojí bloky do popisu embedu a případný zbytek nahradí poznámkou."""
+    pages = _pages(blocks, per_page=len(blocks) or 1)
+    if len(pages) == 1:
+        return "\n\n".join(pages[0])
+    hidden = len(blocks) - len(pages[0])
+    return "\n\n".join(pages[0]) + f"\n\n-# … a dalších {hidden} questů se sem nevešlo."
+
+
 def format_side_block(name: str, data: dict, status: str = Status.ACTIVE) -> str:
     """Side quest bez rodiče — samostatný blok."""
     meta   = STATUS_META.get(status, STATUS_META[Status.ACTIVE])
@@ -361,30 +390,45 @@ class DiaryQuestView(discord.ui.View):
         await interaction.response.send_message(embeds=[header] + embeds[:9], ephemeral=True)
 
 
+# ── Nástěnkové questy ─────────────────────────────────────────────────────────
+
+# Značka questu vzatého z nástěnky (zapisuje ji board.py při přijetí zakázky).
+BOARD_SOURCE = "board"
+
+def board_quests(quests: dict) -> dict:
+    """Zakázky z nástěnky + side questy, které nevisí pod žádným existujícím mainem.
+
+    Tyhle questy se v /quests neukazují v hlavním přehledu, ale pod tlačítkem.
+    """
+    mains = {n for n, d in quests.items() if d.get("category") == Category.MAIN}
+    return {
+        n: d for n, d in quests.items()
+        if d.get("source") == BOARD_SOURCE
+        or (d.get("category") == Category.SIDE and d.get("parent_quest") not in mains)
+    }
+
+
 # ── View: tlačítko NÁSTĚNKA pod /quests ───────────────────────────────────────
 
 class BoardQuestsView(discord.ui.View):
-    """Tlačítko pod /quests — ukáže side questy bez main rodiče (z nástěnky) zvlášť, ať nezahlcují hlavní přehled."""
+    """Tlačítko pod /quests — ukáže nástěnkové questy zvlášť, ať nezahlcují hlavní přehled."""
 
     def __init__(self):
         super().__init__(timeout=300)
 
     @discord.ui.button(label="📋 Nástěnkové questy", style=discord.ButtonStyle.secondary)
     async def show_board_quests(self, interaction: discord.Interaction, button: discord.ui.Button):
-        quests = load_quests()
-        board = {
-            n: d for n, d in quests.items()
-            if d.get("category") == Category.SIDE and not d.get("parent_quest")
-        }
+        board = board_quests(load_quests())
         if not board:
             await interaction.response.send_message("📋 Nástěnka je momentálně prázdná.", ephemeral=True)
             return
 
         n     = len(board)
         label = "quest" if n == 1 else "questy" if n <= 4 else "questů"
-        embed = discord.Embed(
+        blocks = [format_side_block(name, data) for name, data in board.items()]
+        embed  = discord.Embed(
             title="📋  Nástěnkové questy",
-            description="\n\n".join(format_side_block(name, data) for name, data in board.items()),
+            description=_fit_description(blocks),
             color=STATUS_META[Status.ACTIVE]["color"],
         )
         embed.set_footer(text=f"⭐ {ARION_NAME}  ·  {n} {label} na nástěnce")
@@ -473,6 +517,40 @@ _SEED_QUESTS = {
 }
 
 _SYNC_FIELDS = {"info", "xp", "category", "parent_quest", "everyone"}
+# Otisk hodnot, které do questu naposledy zapsal seed — podle něj poznáme,
+# co admin změnil ručně a co se smí dotáhnout z kódu.
+_SEED_STAMP = "_seed"
+
+def _sync_seed_fields(quest: dict, seed: dict) -> bool:
+    """Dotažení metadat ze seedu, ale bez přepisování ručních úprav.
+
+    Pole se přepíše jen tehdy, když ho od posledního seedu nikdo nezměnil
+    (aktuální hodnota == otisk). První běh jen vyrobí otisk z toho, co je
+    v datech teď — aby migrace nesmazala úpravy z `/quest edit`.
+    """
+    stamp   = quest.get(_SEED_STAMP)
+    first   = not isinstance(stamp, dict)
+    stamp   = {} if first else dict(stamp)
+    changed = False
+
+    for field in _SYNC_FIELDS:
+        current = quest.get(field)
+        if first or field not in stamp:
+            stamp[field] = current
+            continue
+        if current != stamp[field]:      # admin to změnil ručně → necháváme
+            stamp[field] = current
+            continue
+        if current != seed.get(field):   # změnil se seed v kódu → dotažeme
+            quest[field] = seed.get(field)
+            stamp[field] = seed.get(field)
+            changed = True
+
+    if quest.get(_SEED_STAMP) != stamp:
+        quest[_SEED_STAMP] = stamp
+        changed = True
+    return changed
+
 
 def _migrate_quests():
     """Při startu přidá chybějící questy, synchronizuje metadata a opraví pořadí."""
@@ -487,13 +565,10 @@ def _migrate_quests():
     # Přidej chybějící + synchronizuj metadata
     for name, seed in _SEED_QUESTS.items():
         if name not in quests:
-            quests[name] = seed
+            quests[name] = {**seed, _SEED_STAMP: {f: seed.get(f) for f in _SYNC_FIELDS}}
             changed = True
-        else:
-            for field in _SYNC_FIELDS:
-                if quests[name].get(field) != seed.get(field):
-                    quests[name][field] = seed[field]
-                    changed = True
+        elif _sync_seed_fields(quests[name], seed):
+            changed = True
 
     # Oprav pořadí: ne-seedované questy napřed (Chapter I atd.), pak seedované v seed pořadí
     non_seed  = {n: d for n, d in quests.items() if n not in _SEED_QUESTS}
@@ -552,9 +627,13 @@ class QuestsCog(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
+        # Zakázky z nástěnky (vč. těch vedených jako solo) mají vlastní tlačítko níž.
+        board = board_quests(quests)
         mains = {n: d for n, d in quests.items() if d.get("category") == Category.MAIN}
-        sides = {n: d for n, d in quests.items() if d.get("category") == Category.SIDE}
-        solos = {n: d for n, d in quests.items() if d.get("category") == Category.SOLO}
+        sides = {n: d for n, d in quests.items()
+                 if d.get("category") == Category.SIDE and n not in board}
+        solos = {n: d for n, d in quests.items()
+                 if d.get("category") == Category.SOLO and n not in board}
 
         blocks   = []
         used_sides = set()
@@ -570,10 +649,6 @@ class QuestsCog(commands.Cog):
                 used_sides.add(sn)
             blocks.append(format_main_block(main_name, main_data, interaction.guild, children))
 
-        # Side questy bez rodiče ("nástěnka") se sem NEDÁVAJÍ — mají vlastní
-        # tlačítko níž (BoardQuestsView), ať nezahlcují hlavní přehled.
-        has_board_quests = any(sn not in used_sides for sn in sides)
-
         # Solo questy — úplně naspodu
         for solo_name, solo_data in solos.items():
             blocks.append(format_side_block(solo_name, solo_data))
@@ -582,11 +657,11 @@ class QuestsCog(commands.Cog):
         label = "quest" if n == 1 else "questy" if n <= 4 else "questů"
         embed = discord.Embed(
             title="📜  Aktivní questy",
-            description="\n\n".join(blocks),
+            description=_fit_description(blocks),
             color=STATUS_META[Status.ACTIVE]["color"],
         )
         embed.set_footer(text=f"⭐ {ARION_NAME}  ·  {n} {label} celkem")
-        if has_board_quests:
+        if board:
             await interaction.response.send_message(embed=embed, view=BoardQuestsView())
         else:
             await interaction.response.send_message(embed=embed)
@@ -853,6 +928,10 @@ class QuestsCog(commands.Cog):
 
         quests = load_quests()
         if name not in quests:
+            # Uzavřený quest už v quests.json není — tohle je jediná cesta, jak ho
+            # vrátit z logu mezi aktivní (např. když se admin ukliknul).
+            if status == Status.ACTIVE and await self._reopen_quest(interaction, name):
+                return
             await interaction.followup.send(f"Quest **{name}** neexistuje.", ephemeral=True)
             return
 
@@ -1012,6 +1091,39 @@ class QuestsCog(commands.Cog):
             save_quests(quests)
             await interaction.followup.send(f"🟢 Quest **{name}** označen jako **aktivní**.", ephemeral=True)
 
+    async def _reopen_quest(self, interaction: discord.Interaction, name: str) -> bool:
+        """Vrátí naposledy uzavřený quest z logu mezi aktivní. False = v logu není."""
+        log = load_quest_log()
+        idx = next((i for i in range(len(log) - 1, -1, -1)
+                    if log[i].get("name") == name), None)
+        if idx is None:
+            return False
+
+        entry      = log.pop(idx)
+        quest_data = {k: v for k, v in entry.items() if k != "name"}
+        quest_data["status"] = Status.ACTIVE
+        quest_data.pop("closed", None)
+
+        quests = load_quests()
+        quests[name] = quest_data
+        save_quests(quests)
+        save_quest_log(log)
+
+        diaries = load_diaries()
+        for uid in quest_data.get("members", []) or []:
+            key     = _diary_key(uid, _quest_slot(quest_data, uid))
+            entries = _migrate_entries(diaries.get(key, []))
+            if update_diary_quest_status(entries, name, Status.ACTIVE):
+                diaries[key] = entries
+        save_diaries(diaries)
+
+        await interaction.followup.send(
+            f"🟢 Quest **{name}** vrácen z logu mezi aktivní.\n"
+            f"-# Už vyplacené XP a rank body se neodebírají — při opětovném dokončení by se připsaly znovu.",
+            ephemeral=True,
+        )
+        return True
+
     # ── /quest log ────────────────────────────────────────────────────────────
 
     @quest_group.command(name="log", description="Zobraz historii všech questů (aktivní i uzavřené)")
@@ -1090,11 +1202,13 @@ class QuestsCog(commands.Cog):
             if s.get("name") not in used_sides and s.get("name"):
                 blocks.append(format_side_block(s["name"], s, s.get("status", Status.ACTIVE)))
 
-        # Rozděl na stránky — každý blok může mít 3-5 řádků, bezpečný limit je 8 bloků/stránku
-        page_size = 8
-        pages     = [blocks[i:i + page_size] for i in range(0, len(blocks), page_size)]
-        total     = len(all_quests)
-        n_pages   = len(pages)
+        # Rozděl na stránky — podle počtu bloků i podle délky popisu (limit embedu)
+        pages   = _pages(blocks, per_page=8)
+        total   = len(all_quests)
+        # V jedné zprávě smí být maximálně 10 embedů — zbytek radši zařízne filtr
+        dropped = max(0, len(pages) - 10)
+        pages   = pages[:10]
+        n_pages = len(pages)
 
         embeds = []
         for pi, page_blocks in enumerate(pages, 1):
@@ -1107,10 +1221,12 @@ class QuestsCog(commands.Cog):
             footer = f"⭐ {ARION_NAME}  ·  {total} questů celkem"
             if n_pages > 1:
                 footer += f"  ·  strana {pi}/{n_pages}"
+            if dropped and pi == n_pages:
+                footer += "  ·  zbytek se nevlezl, zuž filtr"
             embed.set_footer(text=footer)
             embeds.append(embed)
 
-        await interaction.response.send_message(embeds=embeds[:10], ephemeral=True)
+        await interaction.response.send_message(embeds=embeds, ephemeral=True)
 
     # ── /quest remove ─────────────────────────────────────────────────────────
 
@@ -1241,7 +1357,6 @@ class QuestsCog(commands.Cog):
     # ── Autocomplete (sdílené pro remove + status + give) ─────────────────────
 
     @quest_remove.autocomplete("name")
-    @quest_status.autocomplete("name")
     @quest_give.autocomplete("name")
     @quest_pokrok.autocomplete("name")
     async def quest_name_autocomplete(self, interaction: discord.Interaction, current: str):
@@ -1250,6 +1365,23 @@ class QuestsCog(commands.Cog):
             app_commands.Choice(name=n, value=n)
             for n in quests if current.lower() in n.lower()
         ][:25]
+
+    @quest_status.autocomplete("name")
+    async def quest_status_autocomplete(self, interaction: discord.Interaction, current: str):
+        """Aktivní questy + nedávno uzavřené, ať jde quest vrátit zpět na aktivní."""
+        needle  = current.lower()
+        choices = [app_commands.Choice(name=n, value=n)
+                   for n in load_quests() if needle in n.lower()]
+
+        seen = {c.value for c in choices}
+        for entry in reversed(load_quest_log()):
+            n = entry.get("name")
+            if not n or n in seen or needle not in n.lower():
+                continue
+            seen.add(n)
+            meta = STATUS_META.get(entry.get("status", Status.COMPLETED), STATUS_META[Status.COMPLETED])
+            choices.append(app_commands.Choice(name=f"{meta['emoji']} {n} (v logu)"[:100], value=n))
+        return choices[:25]
 
     @quest_add.autocomplete("parent_quest")
     async def parent_quest_autocomplete(self, interaction: discord.Interaction, current: str):

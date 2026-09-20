@@ -11,7 +11,7 @@ from src.utils.audit import log_action
 from src.database.characters import pkey
 
 from src.core.dnd.quests import (
-    load_quests, save_quests, today, Category, Status,
+    load_quests, save_quests, today, Category, Status, BOARD_SOURCE,
     _assign_and_notify, _member_slots, _xp_warning, load_diaries, save_diaries,
 )
 from src.core.dnd.ranks import (
@@ -59,9 +59,8 @@ DEFAULT_QTYPE = QType.EXCLUSIVE
 MIN_GROUP_SIZE  = 2      # kolik dobrodruhů minimálně na skupinovou zakázku
 GROUP_TIMEOUT   = 600    # kolik vteřin má parta na sesbírání (10 min)
 
-# Značka, podle které poznáme quest vzatý z nástěnky. Díky ní NEPOTŘEBUJEME
+# Značku BOARD_SOURCE drží quests.py (potřebuje ji i /quests). Díky ní NEPOTŘEBUJEME
 # druhý stav — limit se odvodí z quests.json a po uzavření questu se uvolní SÁM.
-BOARD_SOURCE = "board"
 
 # Data vedle ostatních JSONů (stejný adresář jako quests.json).
 _DATA_DIR        = os.path.dirname(QUESTS_FILE)

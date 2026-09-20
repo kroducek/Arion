@@ -89,5 +89,61 @@ class TestMemberMentions(unittest.TestCase):
         self.assertEqual(ids, [42, 7])
 
 
+class TestSeedSync(unittest.TestCase):
+    def test_manual_edit_survives_restart(self):
+        seed  = {"info": "původní", "xp": "1000", "category": "side",
+                 "parent_quest": None, "everyone": False}
+        quest = dict(seed)
+        q._sync_seed_fields(quest, seed)          # první start → jen otisk
+
+        quest["xp"] = "5000"                      # admin upravil přes /quest edit
+        q._sync_seed_fields(quest, seed)
+        self.assertEqual(quest["xp"], "5000")
+
+    def test_seed_change_reaches_untouched_field(self):
+        seed  = {"info": "původní", "xp": "1000", "category": "side",
+                 "parent_quest": None, "everyone": False}
+        quest = dict(seed)
+        q._sync_seed_fields(quest, seed)
+
+        q._sync_seed_fields(quest, {**seed, "info": "nový popis"})
+        self.assertEqual(quest["info"], "nový popis")
+
+    def test_seed_change_does_not_beat_manual_edit(self):
+        seed  = {"info": "původní", "xp": "1000", "category": "side",
+                 "parent_quest": None, "everyone": False}
+        quest = dict(seed)
+        q._sync_seed_fields(quest, seed)
+
+        quest["info"] = "ruční popis"
+        q._sync_seed_fields(quest, {**seed, "info": "nový popis"})
+        self.assertEqual(quest["info"], "ruční popis")
+
+
+class TestBoardQuests(unittest.TestCase):
+    def test_board_source_and_orphan_sides(self):
+        quests = {
+            "Volání hvězdy":  {"category": "main"},
+            "Stíny v srdci":  {"category": "side", "parent_quest": "Volání hvězdy"},
+            "Ztracený rodič": {"category": "side", "parent_quest": "Neexistuje"},
+            "Krysy ve sklepě": {"category": "solo", "source": "board"},
+            "Osobní výprava": {"category": "solo"},
+        }
+        board = q.board_quests(quests)
+        self.assertEqual(set(board), {"Ztracený rodič", "Krysy ve sklepě"})
+
+
+class TestEmbedFit(unittest.TestCase):
+    def test_pages_split_on_length(self):
+        blocks = ["x" * 2500] * 3
+        pages  = q._pages(blocks, per_page=8)
+        self.assertEqual([len(p) for p in pages], [1, 1, 1])
+
+    def test_fit_description_notes_overflow(self):
+        desc = q._fit_description(["x" * 2500] * 3)
+        self.assertLessEqual(len(desc), 4096)
+        self.assertIn("a dalších 2 questů", desc)
+
+
 if __name__ == "__main__":
     unittest.main()
