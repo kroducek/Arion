@@ -12,6 +12,7 @@ from src.core.bot.cards import (
     build_showcase_image,
     get_card_image_path,
     grant_random_card,
+    check_collection_achievement,
 )
 from src.utils.json_utils import load_json, save_json
 from src.utils.paths import CARDS_CRATES, CARDS_DATA, CARDS_DIR, CRATES_DIR, data as _data
@@ -697,6 +698,7 @@ class Summon(commands.Cog):
                     view=view,
                 )
                 view.message = message
+                await check_collection_achievement(interaction.user, interaction.channel)
                 return
 
             await message.edit(
@@ -706,6 +708,7 @@ class Summon(commands.Cog):
                 view=view,
             )
             view.message = message
+            await check_collection_achievement(interaction.user, interaction.channel)
         except Exception:
             await self._fail_opening(message)
             raise

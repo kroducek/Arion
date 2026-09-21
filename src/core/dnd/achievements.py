@@ -84,6 +84,12 @@ ACHIEVEMENTS_DEF: dict[str, dict] = {
         "auto":        True,
         "rarity":      "Rare",
     },
+    "Začátek kolekce": {
+        "emoji":       "📚",
+        "description": "Dokončil jsi svou první kolekci v albu karet.",
+        "auto":        True,
+        "rarity":      "Epic",
+    },
 }
 
 RARITY_COLOR = {
