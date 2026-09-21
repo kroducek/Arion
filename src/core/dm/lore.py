@@ -1,8 +1,7 @@
 """
 lore.py — pool lore střípků měst s rotací á 12 h.
 
-Cesta: src/core/dnd/lore.py
-Přidej do main_dnd.py DND_COGS:  "src.core.dnd.lore"
+Cesta: src/core/dm/lore.py (běží v ArionDM, DM_COGS v main_dm.py)
 
 Každé město má vlastní pool. Zobrazený střípek se přepíná podle času —
 každých 12 h se ukáže další z poolu (deterministicky, bez cronu), takže se
@@ -143,7 +142,7 @@ class LoreCog(commands.Cog):
         h, m = secs // 3600, (secs % 3600) // 60
         msg = f"⏳ Další střípek se objeví sám za **{h} h {m} min**."
         try:
-            from src.core.dnd.board import refresh_all_boards
+            from src.core.dm.board import refresh_all_boards
             errs = await refresh_all_boards(self.bot)
             msg += "\n-# Nástěnky překresleny (aktuální okno)."
             if errs:

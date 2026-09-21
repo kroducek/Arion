@@ -249,7 +249,7 @@ def hub_embed(dest: str, offers: list[str], pool: dict) -> discord.Embed:
 
     # ── Lore střípek (rotace á 12 h) ──
     try:
-        from src.core.dnd.lore import current_fragment
+        from src.core.dm.lore import current_fragment
         frag = current_fragment(dest)
         if frag:
             embed.description = f"*{frag}*"

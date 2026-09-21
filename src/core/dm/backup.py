@@ -1,9 +1,7 @@
 """
 DOČASNÉ — /backup_data : zazipuje celý DATA_DIR a pošle ho adminovi do DM.
 
-Umístění:  src/core/bot/admin_backup.py
-Aktivace:  přidej řádek  "src.core.bot.admin_backup",  do seznamu BOT_COGS v main_bot.py
-Po migraci: smaž tento soubor a odeber ten řádek ze seznamu.
+Běží v ArionDM (`DM_COGS` v main_dm.py).
 
 Pozn.: zip jde do DM (ne do kanálu), protože obsahuje data všech hráčů.
 """
