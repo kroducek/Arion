@@ -1,4 +1,4 @@
-"""Ověří, že každý modul v src/ jde naimportovat a že cogy v BOT_COGS/DND_COGS existují."""
+"""Ověří, že každý modul v src/ jde naimportovat a že cogy v *_COGS existují."""
 import importlib
 import pathlib
 import re
@@ -14,6 +14,9 @@ def _iter_modules():
         yield ".".join(path.relative_to(ROOT).with_suffix("").parts)
 
 
+ENTRYPOINTS = ("main_bot.py", "main_dnd.py", "main_dm.py")
+
+
 def _cog_list(entrypoint: str):
     text = (ROOT / entrypoint).read_text(encoding="utf-8")
     body = re.search(r"COGS = \[(.*?)\]", text, re.S).group(1)
@@ -27,7 +30,7 @@ class TestImports(unittest.TestCase):
                 importlib.import_module(module)
 
     def test_listed_cogs_exist(self):
-        for entrypoint in ("main_bot.py", "main_dnd.py"):
+        for entrypoint in ENTRYPOINTS:
             for cog in _cog_list(entrypoint):
                 with self.subTest(entrypoint=entrypoint, cog=cog):
                     self.assertTrue(
@@ -36,7 +39,7 @@ class TestImports(unittest.TestCase):
                     )
 
     def test_listed_cogs_have_setup(self):
-        for entrypoint in ("main_bot.py", "main_dnd.py"):
+        for entrypoint in ENTRYPOINTS:
             for cog in _cog_list(entrypoint):
                 with self.subTest(entrypoint=entrypoint, cog=cog):
                     self.assertTrue(
