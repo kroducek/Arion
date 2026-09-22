@@ -1238,7 +1238,7 @@ class Cards(commands.Cog):
         return out[:25]
 
     @cards_group.command(name="list_frames", description="[ADMIN] Zobrazit všechny rámečky v databázi")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def list_frames(self, interaction: discord.Interaction):
         """[ADMIN] Přehled všech rámečků — obrázek, exkluzivita, kolik karet/hráčů je používá."""
         frames = load_json(CARDS_FRAMES, default=[])
@@ -1274,7 +1274,7 @@ class Cards(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @cards_group.command(name="delete_frame", description="[ADMIN] Smazat rámeček z databáze")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         frame_id="Rámeček ke smazání",
         force="Smazat i když je nasazený na kartách nebo v inventářích hráčů (výchozí: ne)",

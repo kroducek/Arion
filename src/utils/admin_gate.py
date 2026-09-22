@@ -33,6 +33,10 @@ SHARED_COGS = [
     "src.logic.reputation",
     "src.logic.rpmanage",
     "src.logic.spirits",
+    "src.core.bot.cards",
+    "src.core.bot.summon",
+    "src.core.bot.kostky",
+    "src.core.bot.leaderboards",
 ]
 
 _ADMIN_CALLBACKS: set[Callable] = set()
@@ -53,6 +57,16 @@ def admin_only() -> Callable[[F], F]:
     """`@admin_only()` = kontrola na administrátora + značka pro ArionDM."""
     def decorator(func: F) -> F:
         mark_admin(func)
+        return app_commands.checks.has_permissions(administrator=True)(func)
+    return decorator
+
+
+def local_admin() -> Callable[[F], F]:
+    """Admin příkaz, který sahá na běhový stav svého procesu (rozehraná hra).
+
+    Zůstává u bota, který hru drží — ArionDM by měl jen prázdný stav.
+    """
+    def decorator(func: F) -> F:
         return app_commands.checks.has_permissions(administrator=True)(func)
     return decorator
 
@@ -115,6 +129,7 @@ def drop_listeners(bot: commands.Bot) -> None:
 __all__ = [
     "SHARED_COGS",
     "admin_only",
+    "local_admin",
     "mark_admin",
     "is_admin_command",
     "drop_admin_commands",
