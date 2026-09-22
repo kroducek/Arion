@@ -9,7 +9,7 @@ from datetime import datetime
 # ── Konfigurace ──────────────────────────────────────────────────────────────
 from src.utils.paths import STORY_LIB as LIBRARY_FILE, STORY_SAVE as SAVE_FILE
 from src.utils.json_utils import load_json, save_json
-from src.utils.admin_gate import admin_only
+from src.utils.admin_gate import local_admin
 
 PLOT_TWISTS = [
     "gumová kachnička", "motorová pila", "záchodové prkénko", "plameňák", "ponožky v sandálech",
@@ -576,7 +576,7 @@ class StoryCog(commands.Cog):
 
     @story_group.command(name="resume", description="Obnoví rozehranou hru po pádu bota")
     @app_commands.describe(index="Číslo kola od kterého pokračovat (nech prázdné = pokračuj od posledního uloženého)")
-    @admin_only()
+    @local_admin()
     async def story_resume(self, interaction: discord.Interaction, index: int = None):
         if interaction.channel.id in self.active_games:
             await interaction.response.send_message("Tady už hra běží!", ephemeral=True)

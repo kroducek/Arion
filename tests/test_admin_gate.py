@@ -66,11 +66,16 @@ class AdminGateTest(unittest.TestCase):
         self.assertFalse(dnd_names & dm_names)
 
     def test_vybrane_prikazy_konci_spravne(self):
-        for name in ("gadd", "quest add", "perk give", "inv-db add", "dmset", "sp give"):
+        for name in ("gadd", "quest add", "perk give", "inv-db add", "dmset", "sp give",
+                     "cards print", "summon give", "admin-kostky add", "leaderboards setup"):
             self.assertIn(name, self.admin, f"{name} má být admin příkaz")
-        for name in ("inv", "quests", "profile", "duch equip"):
+        for name in ("inv", "quests", "profile", "duch equip", "cards album", "summon open"):
             if name in self.all_commands:
                 self.assertIn(name, self.player, f"{name} má zůstat hráčům")
+
+    def test_prikazy_na_behovy_stav_zustavaji_hostiteli(self):
+        """`/kostky cancel` ruší hru drženou v paměti ArionBOTu — v ArionDM nemá co dělat."""
+        self.assertIn("kostky cancel", self.player)
 
 
 if __name__ == "__main__":
