@@ -21,6 +21,7 @@ import logging
 
 from src.utils.json_utils import load_json, save_json
 from src.database.profiles import load_profiles
+from src.utils.admin_gate import admin_only
 
 logger = logging.getLogger("Leaderboards")
 
@@ -372,7 +373,7 @@ class Leaderboards(commands.Cog):
     lb = app_commands.Group(name="leaderboards", description="Žebříčky (admin)")
 
     @lb.command(name="setup", description="[Admin] Vyvěsí/obnoví hub zprávu žebříčků v tomto kanálu.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def lb_setup(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         state = _load_state()

@@ -5,6 +5,7 @@ from discord import app_commands
 from src.utils.paths import REPUTATION as DATA_FILE
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey
+from src.utils.admin_gate import mark_admin
 
 DM_ROLE_NAME = "DM"
 
@@ -60,6 +61,7 @@ class ReputationCog(commands.Cog):
     # ── /rep create ──────────────────────────────────────────────────────────
     @rep.command(name="create", description="[DM] Vytvoří novou frakci reputace")
     @app_commands.describe(nazev="Název frakce (např. Lumenie)")
+    @mark_admin
     async def rep_create(self, interaction: discord.Interaction, nazev: str):
         if not _is_dm(interaction):
             await interaction.response.send_message("❌ Jen DM.", ephemeral=True)
@@ -79,6 +81,7 @@ class ReputationCog(commands.Cog):
     @rep.command(name="delete", description="[DM] Smaže frakci i veškerou reputaci hráčů v ní")
     @app_commands.describe(frakce="Frakce k smazání")
     @app_commands.autocomplete(frakce=_faction_autocomplete)
+    @mark_admin
     async def rep_delete(self, interaction: discord.Interaction, frakce: str):
         if not _is_dm(interaction):
             await interaction.response.send_message("❌ Jen DM.", ephemeral=True)
@@ -104,6 +107,7 @@ class ReputationCog(commands.Cog):
         hodnota="Počet bodů (záporné číslo = odebere)",
     )
     @app_commands.autocomplete(frakce=_faction_autocomplete)
+    @mark_admin
     async def rep_add(
         self,
         interaction: discord.Interaction,
@@ -140,6 +144,7 @@ class ReputationCog(commands.Cog):
     @rep.command(name="set", description="[DM] Nastaví hráči reputaci ve frakci na přesnou hodnotu")
     @app_commands.describe(hrac="Hráč", frakce="Frakce", hodnota="Nová hodnota")
     @app_commands.autocomplete(frakce=_faction_autocomplete)
+    @mark_admin
     async def rep_set(
         self,
         interaction: discord.Interaction,
@@ -203,6 +208,7 @@ class ReputationCog(commands.Cog):
     @rep.command(name="list", description="[DM] Zobrazí všechny hráče a jejich reputaci u frakce")
     @app_commands.describe(frakce="Frakce")
     @app_commands.autocomplete(frakce=_faction_autocomplete)
+    @mark_admin
     async def rep_list(self, interaction: discord.Interaction, frakce: str):
         if not _is_dm(interaction):
             await interaction.response.send_message("❌ Jen DM.", ephemeral=True)

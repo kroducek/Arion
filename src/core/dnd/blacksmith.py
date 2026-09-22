@@ -27,6 +27,7 @@ from src.utils.paths import PROFILES as PROFILES_FILE
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey
 from src.database.profiles import load_profiles as _load_profiles, save_profiles as _save_profiles
+from src.utils.admin_gate import mark_admin
 
 logger = logging.getLogger(__name__)
 
@@ -438,6 +439,7 @@ class BlacksmithCog(commands.Cog):
         cure=[app_commands.Choice(name=c, value=c) for c in CURES],
         tick=[app_commands.Choice(name="každé kolo", value="kazde_kolo"),
               app_commands.Choice(name="při zásahu", value="pri_zasahu")])
+    @mark_admin
     async def status_create(
         self, interaction: discord.Interaction,
         status_id: str, name: str, kind: str, cure: str,
@@ -464,6 +466,7 @@ class BlacksmithCog(commands.Cog):
     @blacksmith.command(name="status-delete", description="[DM] Smaž status z registru.")
     @app_commands.describe(status="Status ke smazání.")
     @app_commands.autocomplete(status=_ac_status)
+    @mark_admin
     async def status_delete(self, interaction: discord.Interaction, status: str):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -481,6 +484,7 @@ class BlacksmithCog(commands.Cog):
                            proc_roll="Hod na proc (prázdné = dle statusu).", emoji="Emoji.",
                            desc="Popis runy (ukáže se u zbraně).")
     @app_commands.autocomplete(status=_ac_status)
+    @mark_admin
     async def rune_create(self, interaction: discord.Interaction,
                           rune_id: str, name: str, status: str,
                           proc_roll: Optional[str] = None, emoji: Optional[str] = None,
@@ -503,6 +507,7 @@ class BlacksmithCog(commands.Cog):
                            status="Nový status.", proc_roll="Nový proc roll ('-' = smazat).",
                            emoji="Nové emoji.", desc="Nový popis ('-' = smazat).")
     @app_commands.autocomplete(rune=_ac_rune, status=_ac_status)
+    @mark_admin
     async def rune_edit(self, interaction: discord.Interaction, rune: str,
                         name: Optional[str] = None, status: Optional[str] = None,
                         proc_roll: Optional[str] = None, emoji: Optional[str] = None,
@@ -532,6 +537,7 @@ class BlacksmithCog(commands.Cog):
     @blacksmith.command(name="rune-delete", description="[DM] Smaž runu.")
     @app_commands.describe(rune="Runa ke smazání.")
     @app_commands.autocomplete(rune=_ac_rune)
+    @mark_admin
     async def rune_delete(self, interaction: discord.Interaction, rune: str):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -546,6 +552,7 @@ class BlacksmithCog(commands.Cog):
     @blacksmith.command(name="engrave", description="[DM] Vyryj runu na zbraň hráče.")
     @app_commands.describe(member="Hráč.", item="ID itemu hráče.", rune="Runa.")
     @app_commands.autocomplete(item=_ac_member_item, rune=_ac_rune)
+    @mark_admin
     async def engrave(self, interaction: discord.Interaction,
                       member: discord.Member, item: str, rune: str):
         await interaction.response.defer(ephemeral=True)
@@ -586,6 +593,7 @@ class BlacksmithCog(commands.Cog):
     @blacksmith.command(name="unengrave", description="[DM] Odstraň runu ze zbraně hráče.")
     @app_commands.describe(member="Hráč.", item="ID itemu.", rune="Runa.")
     @app_commands.autocomplete(item=_ac_member_item, rune=_ac_rune)
+    @mark_admin
     async def unengrave(self, interaction: discord.Interaction,
                         member: discord.Member, item: str, rune: str):
         await interaction.response.defer(ephemeral=True)

@@ -57,6 +57,8 @@ _run_migration()
 
 _paths.bootstrap_items()
 
+from src.utils.admin_gate import drop_admin_commands
+
 BOT_COGS = [
     # Minihry & karty
     "src.core.bot.duel",
@@ -130,6 +132,10 @@ class ArionBOT(commands.Bot):
             except Exception as e:
                 logger.exception(f'❌ {cog} selhal: {e}')
                 print(f'   ❌ {cog} selhal — viz log výše.')
+
+        # Admin příkazy ze sdílených cogů (ekonomika) patří ArionDM.
+        dropped = drop_admin_commands(self)
+        logger.info(f"[admin_gate] odebráno {len(dropped)} admin příkazů (má je ArionDM).")
 
         print("🔄 Synchronizuji slash commandy...")
         try:

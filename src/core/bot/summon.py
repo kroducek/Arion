@@ -15,6 +15,7 @@ from src.core.bot.cards import (
 )
 from src.utils.json_utils import load_json, save_json
 from src.utils.paths import CARDS_CRATES, CARDS_DATA, CARDS_DIR, CRATES_DIR, data as _data
+from src.utils.admin_gate import admin_only
 
 # ---------------------------------------------------------------------------
 # Konstanty
@@ -373,7 +374,7 @@ class Summon(commands.Cog):
             self._claiming_daily.discard(uid)
 
     @summon_group.command(name="give", description="[ADMIN] Přidat bedny více hráčům najednou")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         users="Hráči oddělení mezerou nebo zatagování",
         crate="Typ bedny",
@@ -433,7 +434,7 @@ class Summon(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @summon_group.command(name="admin-jackpot", description="[ADMIN] Otestovat 5/5 jackpot bez změny reálného luck metru")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(crate="Typ bedny, na které chceš jackpot otestovat")
     @app_commands.choices(crate=[
         app_commands.Choice(name="Základní bedna", value="basic"),

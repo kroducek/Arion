@@ -9,6 +9,7 @@ from src.utils.paths import (
 )
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import list_chars, ckey
+from src.utils.admin_gate import mark_admin
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS
@@ -154,6 +155,7 @@ class TakedownCog(commands.Cog):
 
     @app_commands.command(name="takedown", description="[DM] Arion provede Takedown na hráče.")
     @app_commands.describe(member="Hráč, který se zprotivil Arion")
+    @mark_admin
     async def takedown(self, interaction: discord.Interaction, member: discord.Member):
         if not _is_dm(interaction):
             await interaction.response.send_message("❌ Nemáš oprávnění.", ephemeral=True)

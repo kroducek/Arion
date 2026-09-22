@@ -42,6 +42,9 @@ from src.utils import paths as _paths
 
 os.makedirs(_paths.DATA_DIR, exist_ok=True)
 
+from src.utils.admin_gate import SHARED_COGS, drop_listeners, keep_only_admin
+
+# Cogy, které patří výhradně ArionDM.
 DM_COGS = [
     "src.core.dm.board",
     "src.core.dm.lore",
@@ -50,6 +53,9 @@ DM_COGS = [
     "src.core.dm.news_admin",
     "src.core.dm.aurionis_admin",
 ]
+
+# `SHARED_COGS` (admin_gate) načítá i ArionDND — tady z nich po startu zůstanou
+# jen příkazy označené `@admin_only()` / `@mark_admin`.
 
 
 class ArionDM(commands.Bot):
@@ -77,7 +83,7 @@ class ArionDM(commands.Bot):
     async def setup_hook(self):
         print("--- 🎲 Načítám ArionDM Cogs ---")
 
-        for cog in DM_COGS:
+        for cog in DM_COGS + SHARED_COGS:
             try:
                 await self.load_extension(cog)
                 logger.info(f'✅ {cog} načten.')
@@ -85,6 +91,12 @@ class ArionDM(commands.Bot):
             except Exception as e:
                 logger.exception(f'❌ {cog} selhal: {e}')
                 print(f'   ❌ {cog} selhal — viz log výše.')
+
+        # Ze sdílených cogů si nech jen admin příkazy a vypni jejich listenery,
+        # ať na stejnou událost nereagují dva boti naráz.
+        dropped = keep_only_admin(self)
+        drop_listeners(self)
+        logger.info(f"[admin_gate] odebráno {len(dropped)} hráčských příkazů.")
 
         print("🔄 Synchronizuji slash commandy...")
         try:
