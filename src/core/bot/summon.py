@@ -569,7 +569,7 @@ class Summon(commands.Cog):
         embed = discord.Embed(
             title=f"{crate_data['emoji']} Otevíráš: {crate_data['name']}",
             description="*Pečeť praská…*",
-            color=crate_data["color"],
+            color=BRAND_PURPLE,
         )
         embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
 
@@ -634,7 +634,7 @@ class Summon(commands.Cog):
                 roll_embed = discord.Embed(
                     title="🌀 Karty se točí…",
                     description=f"{ticket_bar(tickets, MAX_TICKETS)}\n🍀 {clover_bar(clovers_after, MAX_CLOVERS)}",
-                    color=crate_data["color"],
+                    color=BRAND_PURPLE,
                 )
                 roll_embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
                 roll_embed.set_image(url=f"attachment://{os.path.basename(frame)}")
