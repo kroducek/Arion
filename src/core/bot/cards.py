@@ -20,6 +20,7 @@ from src.utils.embeds import create_error_embed
 from src.logic.profile import load_data as profile_load, save_data as profile_save
 from src.logic.inventory import _load_profiles as inv_load, _save_profiles as inv_save
 from src.logic.economy import _load_economy as load_economy, _save_economy as save_economy, add_balance
+from src.core.dnd.achievements import grant_achievement, announce_achievement, has_achievement
 from src.utils.admin_gate import admin_only
 
 CARDS_WORK = _data("cards_work.json")
@@ -369,6 +370,10 @@ class TradeView(discord.ui.View):
         embed = self.build_embed(note="✅ Obchod dokončen!", color=0x2ECC71)
         await self._finish(interaction, embed)
 
+        for uid in self.offers:
+            member = interaction.guild.get_member(int(uid)) if interaction.guild else None
+            await check_collection_achievement(member, interaction.channel, inv)
+
     @discord.ui.button(label="❌ Zrušit", style=discord.ButtonStyle.danger)
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = self.build_embed(
@@ -566,6 +571,37 @@ def get_best_card_for_template(uid: str, card_id: int, inventory: dict) -> "dict
             QUALITY_RANK.get(c.get("quality", "normal"), 99),
         ),
     )
+
+
+COLLECTION_ACHIEVEMENT = "Začátek kolekce"
+
+
+def completed_collections(uid: str, inventory: "dict | None" = None,
+                          cards_db: "list | None" = None) -> list[str]:
+    """Kolekce, ze kterých hráč vlastní všechny vzory (duplikáty se nepočítají)."""
+    inv = load_inventory() if inventory is None else inventory
+    db  = load_json(CARDS_DATA, default=[]) if cards_db is None else cards_db
+
+    owned = {c.get("card_id") for c in inv.values() if c.get("owner_id") == str(uid)}
+    by_collection: dict[str, set] = {}
+    for tmpl in db:
+        coll = tmpl.get("collection")
+        if coll:
+            by_collection.setdefault(coll, set()).add(tmpl.get("id"))
+
+    return [coll for coll, ids in by_collection.items() if ids <= owned]
+
+
+async def check_collection_achievement(member, channel, inventory: "dict | None" = None) -> bool:
+    """Udělí „Začátek kolekce“ za první kompletně dokončenou kolekci v albu."""
+    if member is None or has_achievement(member.id, COLLECTION_ACHIEVEMENT):
+        return False
+    if not completed_collections(str(member.id), inventory):
+        return False
+    if not grant_achievement(member.id, COLLECTION_ACHIEVEMENT):
+        return False
+    await announce_achievement(member, channel, COLLECTION_ACHIEVEMENT)
+    return True
 
 
 def _ensure_nocard_png() -> str:
@@ -1038,6 +1074,9 @@ class Cards(commands.Cog):
             ids_value = ids_value[:1000] + f"\n… a {len(created) - ids_value[:1000].count(',') - 1} dalších"
         embed.add_field(name="🆔 Unikátní IDs", value=ids_value, inline=False)
         await interaction.response.send_message(embed=embed)
+
+        if owner:
+            await check_collection_achievement(owner, interaction.channel, inventory)
 
     @cards_group.command(name="db_add", description="[ADMIN] Přidat novou kartu do databáze vzorů")
     @admin_only()
@@ -1897,6 +1936,8 @@ class Cards(commands.Cog):
                 ephemeral=True,
             )
 
+            await check_collection_achievement(target, interaction.channel, inv)
+
         except Exception as e:
             await interaction.followup.send(f"❌ Chyba při generování alba: {e}", ephemeral=True)
 
@@ -2184,6 +2225,7 @@ class Cards(commands.Cog):
         embed.set_thumbnail(url=user.display_avatar.url)
 
         await interaction.response.send_message(embed=embed)
+        await check_collection_achievement(user, interaction.channel, inventory)
 
     @cards_group.command(name="work", description="Přehled výpravy — stav nebo dostupné expedice")
     async def work_hub(self, interaction: discord.Interaction):
