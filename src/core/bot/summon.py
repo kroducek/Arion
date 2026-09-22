@@ -8,6 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from src.core.bot.cards import (
+    BRAND_PURPLE,
     KeepBurnView,
     build_showcase_image,
     get_card_image_path,
@@ -256,7 +257,7 @@ class Summon(commands.Cog):
         embed = discord.Embed(
             title="📦 Tvé bedny",
             description="Otevři je příkazem `/summon open`.",
-            color=0xC27C0E,
+            color=BRAND_PURPLE,
         )
         for crate_id, crate in CRATES.items():
             embed.add_field(
@@ -322,7 +323,7 @@ class Summon(commands.Cog):
             embed = discord.Embed(
                 title="📅 Denní odměna",
                 description="*Kalendář se s vrzáním otáčí…*",
-                color=0x3498DB,
+                color=BRAND_PURPLE,
             )
             embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
             if gif_path:
@@ -343,7 +344,7 @@ class Summon(commands.Cog):
                     f"### +1× {crate_data['emoji']} {crate_data['name']}\n"
                     f"-# {crate_data['description']}"
                 ),
-                color=0xF5B942,
+                color=BRAND_PURPLE,
             )
             final_embed.set_author(name=f"{interaction.user.display_name} • Denní odměna", icon_url=interaction.user.display_avatar.url)
             final_embed.set_thumbnail(url=interaction.user.display_avatar.url)

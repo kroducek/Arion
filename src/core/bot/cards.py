@@ -27,6 +27,10 @@ CARDS_REBORN_STATE = _data("cards_reborn_state")
 # Konstanty
 # ---------------------------------------------------------------------------
 
+# Jednotná fialová pro obecné/dekorativní embedy (přehledy, potvrzení, hlavičky).
+# Rarity/kolekce/bedny/rámečky si nechávají svou vlastní barvu — ta nese význam.
+BRAND_PURPLE = 0x9B59B6
+
 RARITIES = {
     "uncommon":  {"color": 0x808080, "emoji": "⚪"},
     "common":    {"color": 0xFFFFFF, "emoji": "🟢"},
@@ -266,7 +270,7 @@ class TradeView(discord.ui.View):
         for u in self.confirmed:
             self.confirmed[u] = False
 
-    def build_embed(self, *, note: str = None, color: int = 0x3498DB) -> discord.Embed:
+    def build_embed(self, *, note: str = None, color: int = BRAND_PURPLE) -> discord.Embed:
         embed = discord.Embed(title="🤝 Obchod mezi hráči", color=color)
         for uid, user in self.users.items():
             cards = self.offers[uid]
@@ -367,7 +371,7 @@ class TradeView(discord.ui.View):
     @discord.ui.button(label="❌ Zrušit", style=discord.ButtonStyle.danger)
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = self.build_embed(
-            note=f"❌ Obchod zrušil/a {interaction.user.display_name}.", color=0x95A5A6,
+            note=f"❌ Obchod zrušil/a {interaction.user.display_name}.", color=BRAND_PURPLE,
         )
         await self._finish(interaction, embed)
 
@@ -378,7 +382,7 @@ class TradeView(discord.ui.View):
         for child in self.children:
             child.disabled = True
         if self.message:
-            embed = self.build_embed(note="⌛ Obchod vypršel — nic se nepřesunulo.", color=0x95A5A6)
+            embed = self.build_embed(note="⌛ Obchod vypršel — nic se nepřesunulo.", color=BRAND_PURPLE)
             try:
                 await self.message.edit(embed=embed, view=self)
             except discord.HTTPException:
@@ -403,7 +407,7 @@ def build_inventory_embed(target, sorted_cards: list, page: int, page_size: int 
     embed = discord.Embed(
         title=f"🎴 Karty — {target.display_name}",
         description=f"Celkem: **{total}** karet",
-        color=0xFFA500,
+        color=BRAND_PURPLE,
     )
     for i, (unique_id, card) in enumerate(chunk, start=start + 1):
         rarity = card.get("rarity", "uncommon")
@@ -1219,12 +1223,26 @@ class Cards(commands.Cog):
         embed.set_footer(text=f"Otestuj přes /cards give_frame @hráč {frame_id}")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
+    async def _ac_frame_id(self, interaction: discord.Interaction, current: str):
+        """Autocomplete pro frame_id — hledá podle jména i ID rámečku."""
+        frames = load_json(CARDS_FRAMES, default=[])
+        cur = current.lower().strip()
+        out = []
+        for f in frames:
+            fid  = f.get("id", "")
+            name = f.get("name", fid)
+            if cur and cur not in fid.lower() and cur not in name.lower():
+                continue
+            out.append(app_commands.Choice(name=f"{name} ({fid})"[:100], value=fid))
+        return out[:25]
+
     @cards_group.command(name="give_frame", description="[ADMIN] Dát rámeček jednomu nebo více hráčům")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
         users="Hráči oddělení mezerou nebo zatagování (např. @hráč1 @hráč2 ...)",
-        frame_id="ID rámečku",
+        frame_id="Rámeček — napiš pár písmen jména a vyber z nabídky",
     )
+    @app_commands.autocomplete(frame_id=_ac_frame_id)
     async def give_frame(self, interaction: discord.Interaction, users: str, frame_id: str):
         """Admin příkaz pro přidání rámečku do inventáře jednoho nebo více hráčů."""
         frame = get_frame_by_id(frame_id)
@@ -1403,8 +1421,23 @@ class Cards(commands.Cog):
         except Exception as e:
             await interaction.followup.send(f"❌ Chyba při zobrazení karty: {e}", ephemeral=True)
 
+    async def _ac_owned_frame_id(self, interaction: discord.Interaction, current: str):
+        """Autocomplete pro /cards upgrade — nabídne jen rámečky, co hráč doopravdy vlastní."""
+        frames_inv = load_json(FRAMES_INVENTORY, default={})
+        owned = frames_inv.get(str(interaction.user.id), [])
+        cur = current.lower().strip()
+        out = []
+        for f in owned:
+            fid  = f.get("id", "")
+            name = f.get("name", fid)
+            if cur and cur not in fid.lower() and cur not in name.lower():
+                continue
+            out.append(app_commands.Choice(name=f"{name} ({fid})"[:100], value=fid))
+        return out[:25]
+
     @cards_group.command(name="upgrade", description="Nasadit rámeček na kartu")
-    @app_commands.describe(unique_id="ID karty", frame="ID rámečku z tvého inventáře")
+    @app_commands.describe(unique_id="ID karty", frame="Rámeček z tvého inventáře")
+    @app_commands.autocomplete(frame=_ac_owned_frame_id)
     async def upgrade_frame(self, interaction: discord.Interaction, unique_id: str, frame: str):
         """Aplikuje rámeček na kartu (rámeček se spotřebuje)."""
         uid = str(interaction.user.id)
@@ -1468,7 +1501,7 @@ class Cards(commands.Cog):
             await interaction.response.send_message("Žádné rámečky nejsou v databázi.", ephemeral=True)
             return
 
-        embed = discord.Embed(title="📦 Rámečky", color=0xFF6B9D)
+        embed = discord.Embed(title="📦 Rámečky", color=BRAND_PURPLE)
 
         owned_ids = {f.get("id") for f in user_frames}
         for f in all_frames:
@@ -1507,7 +1540,7 @@ class Cards(commands.Cog):
                 "*Sbírej, vyměňuj a obdivuj karty z říše Aurionisu.*\n"
                 "*Každá karta je unikátní a nese příběh svého světa.*\n\u200b"
             ),
-            color=0xFFD700,
+            color=BRAND_PURPLE,
         )
 
         embed.add_field(name="🖨️ Celkem vytisknuto", value=f"**{len(inv)}** karet",      inline=True)
@@ -1575,7 +1608,7 @@ class Cards(commands.Cog):
         embed = discord.Embed(
             title="🎴 Databáze karet",
             description="Použij `/cards print <id> <rarita>` pro vytisknutí kopie.",
-            color=0xFFA500,
+            color=BRAND_PURPLE,
         )
         for card in cards:
             coll = card.get("collection", "—")
@@ -1653,7 +1686,7 @@ class Cards(commands.Cog):
             embed = discord.Embed(
                 title="📚  Galerie Aurionisu",
                 description="*Přehled všech kolekcí — jejich obsah a stav v oběhu.*",
-                color=0xFFD700,
+                color=BRAND_PURPLE,
             )
             for cid, cdata in COLLECTIONS.items():
                 templates_count = sum(1 for c in cards_db if c.get("collection") == cid)
@@ -1903,7 +1936,7 @@ class Cards(commands.Cog):
                 f"Spálil jsi **{result['name']}** (ID: `{unique_id}`).\n"
                 f"Duše karty se rozpadla na **{total_dust}× Hvězdný prach**."
             ),
-            color=0xFF8C00,
+            color=BRAND_PURPLE,
         )
         qual_data = QUALITIES.get(qual, QUALITIES["normal"])
         embed.add_field(name="Rarita",  value=f"{RARITIES.get(rarity, {}).get('emoji', '')} {rarity.capitalize()}", inline=True)
@@ -2083,7 +2116,7 @@ class Cards(commands.Cog):
             embed = discord.Embed(
                 title=f"{exp['emoji']} Probíhá výprava: {exp['name']}",
                 description=f"*{exp['description']}*",
-                color=0x2ecc71 if finished else 0x3498db,
+                color=0x2ecc71 if finished else BRAND_PURPLE,
             )
             embed.add_field(name="🎴 Počet karet", value=f"**{card_count}**", inline=True)
             embed.add_field(name="💵 Odměna/kartu", value=f"**{exp['reward']}** zl", inline=True)
@@ -2107,7 +2140,7 @@ class Cards(commands.Cog):
             embed = discord.Embed(
                 title="⚔️ Výpravné centrum",
                 description="Nemáš žádnou aktivní výpravu. Vyšli karty pomocí `/cards work_send`.\n🎁 **Bonus: Pošli více karet = více zisku!** (+10% za 2, +25% za 3)\n\u200b",
-                color=0x3498db,
+                color=BRAND_PURPLE,
             )
             for exp_id, exp in EXPEDITIONS.items():
                 embed.add_field(
@@ -2192,7 +2225,7 @@ class Cards(commands.Cog):
         embed = discord.Embed(
             title=f"{exp['emoji']} Výprava zahájena: {exp['name']}",
             description=f"*{exp['description']}*",
-            color=0x3498db,
+            color=BRAND_PURPLE,
         )
         embed.add_field(name="🎴 Vyslané karty", value=card_names, inline=False)
         embed.add_field(name="⏱️ Trvání", value=f"**{exp['hours']}h**", inline=True)
@@ -2233,7 +2266,7 @@ class Cards(commands.Cog):
         embed = discord.Embed(
             title=f"{exp['emoji']} Probíhá výprava: {exp['name']}",
             description=f"*{exp['description']}*",
-            color=0x2ecc71 if finished else 0x3498db,
+            color=0x2ecc71 if finished else BRAND_PURPLE,
         )
         embed.add_field(name="🎴 Počet karet", value=f"**{card_count}**", inline=True)
         embed.add_field(name="💵 Odměna/kartu", value=f"**{exp['reward']}** zl", inline=True)
@@ -2298,7 +2331,7 @@ class Cards(commands.Cog):
         embed = discord.Embed(
             title="💰 Výprava dokončena",
             description=f"Tvé karty se v pořádku vrátily z **{exp['name']}**!",
-            color=0xFFD700,
+            color=BRAND_PURPLE,
         )
         embed.add_field(name="🎴 Počet karet", value=f"**{card_count}**", inline=True)
         embed.add_field(name="💵 Odměna na kartu", value=f"**{exp['reward']}** zl", inline=True)
