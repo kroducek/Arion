@@ -1236,6 +1236,102 @@ class Cards(commands.Cog):
             out.append(app_commands.Choice(name=f"{name} ({fid})"[:100], value=fid))
         return out[:25]
 
+    @cards_group.command(name="list_frames", description="[ADMIN] Zobrazit všechny rámečky v databázi")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def list_frames(self, interaction: discord.Interaction):
+        """[ADMIN] Přehled všech rámečků — obrázek, exkluzivita, kolik karet/hráčů je používá."""
+        frames = load_json(CARDS_FRAMES, default=[])
+        if not frames:
+            await interaction.response.send_message("Databáze rámečků je prázdná.", ephemeral=True)
+            return
+
+        inv = load_inventory()
+        frames_inv = load_json(FRAMES_INVENTORY, default={})
+
+        embed = discord.Embed(
+            title="🖼️ Databáze rámečků",
+            description=f"Celkem: **{len(frames)}** rámečků",
+            color=BRAND_PURPLE,
+        )
+        for f in frames[:25]:
+            fid = f.get("id", "?")
+            equipped_count = sum(1 for c in inv.values() if c.get("frame") == fid)
+            holding_count  = sum(1 for owned in frames_inv.values() if any(x.get("id") == fid for x in owned))
+            image_status = "✅" if get_card_image_path(f.get("image", "")) else "⚠️ soubor chybí"
+            rarity_text = f.get("rarity_exclusive", "").capitalize() if f.get("rarity_exclusive") else "Žádná"
+            embed.add_field(
+                name=f"{f.get('name', '?')}  ·  `{fid}`",
+                value=(
+                    f"🖼️ `{f.get('image', '?')}` {image_status}\n"
+                    f"🎨 {f.get('color', '#FFFFFF')}  ·  🔒 Rarita: {rarity_text}\n"
+                    f"🎴 Nasazeno na kartách: **{equipped_count}**  ·  🎒 V inventářích: **{holding_count}**"
+                ),
+                inline=False,
+            )
+        if len(frames) > 25:
+            embed.set_footer(text=f"⚠️ Zobrazeno prvních 25 z {len(frames)} rámečků")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @cards_group.command(name="delete_frame", description="[ADMIN] Smazat rámeček z databáze")
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(
+        frame_id="Rámeček ke smazání",
+        force="Smazat i když je nasazený na kartách nebo v inventářích hráčů (výchozí: ne)",
+    )
+    @app_commands.autocomplete(frame_id=_ac_frame_id)
+    async def delete_frame(self, interaction: discord.Interaction, frame_id: str, force: bool = False):
+        """
+        [ADMIN] Odstraní rámeček z CARDS_FRAMES. Bez `force` odmítne smazání,
+        pokud je rámeček zrovna nasazený na nějaké kartě (ať ho nejde ztratit
+        omylem) — s `force:True` ho z těch karet i inventářů čistě odebere.
+
+        Slouží i jako obchozí cesta pro "edit": smaž a založ znovu přes
+        /cards create_frame se stejným ID.
+        """
+        frames = load_json(CARDS_FRAMES, default=[])
+        frame = next((f for f in frames if f.get("id") == frame_id), None)
+        if frame is None:
+            await interaction.response.send_message(f"Rámeček `{frame_id}` neexistuje.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        inv = load_inventory()
+        equipped_on = [cid for cid, card in inv.items() if card.get("frame") == frame_id]
+
+        frames_inv = load_json(FRAMES_INVENTORY, default={})
+        holders = [uid for uid, owned in frames_inv.items() if any(f.get("id") == frame_id for f in owned)]
+
+        if equipped_on and not force:
+            preview = ", ".join(f"`{cid}`" for cid in equipped_on[:10])
+            more = f" (+{len(equipped_on) - 10} dalších)" if len(equipped_on) > 10 else ""
+            await interaction.followup.send(
+                f"⚠️ Rámeček **{frame.get('name')}** je nasazený na {len(equipped_on)} kartě/kartách: "
+                f"{preview}{more}\nPoužij `force: True`, pokud ho chceš i tak smazat — kartám se rámeček odebere.",
+                ephemeral=True,
+            )
+            return
+
+        if equipped_on:
+            for cid in equipped_on:
+                inv[cid]["frame"] = None
+            save_json(CARDS_INVENTORY, inv)
+
+        if holders:
+            for uid in holders:
+                frames_inv[uid] = [f for f in frames_inv[uid] if f.get("id") != frame_id]
+            save_json(FRAMES_INVENTORY, frames_inv)
+
+        frames.remove(frame)
+        save_json(CARDS_FRAMES, frames)
+
+        msg = f"🗑️ Rámeček **{frame.get('name')}** (`{frame_id}`) byl smazán z databáze."
+        if equipped_on:
+            msg += f"\n↩️ Odebrán z {len(equipped_on)} karet."
+        if holders:
+            msg += f"\n🎒 Odstraněn z inventáře {len(holders)} hráčů."
+        await interaction.followup.send(msg, ephemeral=True)
+
     @cards_group.command(name="give_frame", description="[ADMIN] Dát rámeček jednomu nebo více hráčům")
     @app_commands.checks.has_permissions(administrator=True)
     @app_commands.describe(
