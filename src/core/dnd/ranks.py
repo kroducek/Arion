@@ -7,6 +7,7 @@ from src.utils.paths import PROFILES as PROFILES_FILE
 from src.utils.json_utils import load_json, save_json
 from src.utils.audit import log_action
 from src.database.characters import pkey
+from src.utils.admin_gate import admin_only
 
 logger = logging.getLogger("Ranks")
 
@@ -312,7 +313,7 @@ class RanksCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @rank_group.command(name="set", description="[Admin] Nastaví rank hráči.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(member="Hráč", rank="Nový rank")
     async def rank_set(self, interaction: discord.Interaction,
                        member: discord.Member, rank: str):
@@ -328,7 +329,7 @@ class RanksCog(commands.Cog):
         await interaction.followup.send(msg, ephemeral=True)
 
     @rank_group.command(name="points", description="[Admin] Přidá body ranku hráči.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(member="Hráč", points="Kolik bodů přidat")
     async def rank_points(self, interaction: discord.Interaction,
                           member: discord.Member, points: int):
@@ -353,7 +354,7 @@ class RanksCog(commands.Cog):
 
     @rank_group.command(name="roles-check",
                         description="[Admin] Zkontroluje, které rank role na serveru chybí.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def rank_roles_check(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         found, missing = [], []

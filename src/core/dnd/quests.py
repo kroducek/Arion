@@ -14,6 +14,7 @@ from src.core.dnd.ranks import (
 from src.utils.audit import log_action, get_recent
 from src.logic.stats import add_xp
 from src.database.characters import get_active_slot, use_slot
+from src.utils.admin_gate import admin_only
 
 ARION_NAME = "Aurionis"
 QUEST_TAG  = "📜"
@@ -669,7 +670,7 @@ class QuestsCog(commands.Cog):
     # ── /quest add ────────────────────────────────────────────────────────────
 
     @quest_group.command(name="add", description="Vytvoř nový quest a přidej ho hráčům do deníků")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         name="Název questu",
         info="Popis / zadání questu",
@@ -912,7 +913,7 @@ class QuestsCog(commands.Cog):
     # ── /quest status ─────────────────────────────────────────────────────────
 
     @quest_group.command(name="status", description="Změň stav questu")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         name="Název questu", status="Nový stav",
         winner="Jen u ZÁVODNÍCH zakázek: kdo splnil první. Ostatní dostanou nesplněno.",
@@ -1231,7 +1232,7 @@ class QuestsCog(commands.Cog):
     # ── /quest remove ─────────────────────────────────────────────────────────
 
     @quest_group.command(name="remove", description="Odeber quest z databáze a ze všech deníků")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(name="Název questu k odebrání")
     async def quest_remove(self, interaction: discord.Interaction, name: str):
         await interaction.response.defer(ephemeral=True)
@@ -1273,7 +1274,7 @@ class QuestsCog(commands.Cog):
     # ── /quest give ───────────────────────────────────────────────────────────
 
     @quest_group.command(name="give", description="Přiřaď existující quest hráčům")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(name="Název questu", members="Hráči oddělení mezerou (@zmínka)")
     async def quest_give(self, interaction: discord.Interaction, name: str, members: str):
         await interaction.response.defer(ephemeral=True)
@@ -1325,6 +1326,7 @@ class QuestsCog(commands.Cog):
 
     @app_commands.command(name="quest-pokrok", description="Oznám pokrok v questu — embed do kanálu (admin)")
     @app_commands.default_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(name="Název questu", note="Volitelná poznámka zobrazená v embedu")
     async def quest_pokrok(self, interaction: discord.Interaction, name: str, note: str | None = None):
         await interaction.response.defer(ephemeral=True)
@@ -1396,6 +1398,7 @@ class QuestsCog(commands.Cog):
 
     @app_commands.command(name="audit-log", description="Zobrazí posledních 20 admin akcí (jen DM)")
     @app_commands.default_permissions(administrator=True)
+    @admin_only()
     async def audit_log_cmd(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         entries = get_recent(20)

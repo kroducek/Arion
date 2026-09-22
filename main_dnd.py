@@ -61,6 +61,8 @@ _run_migration()
 
 _paths.bootstrap_items()
 
+from src.utils.admin_gate import drop_admin_commands
+
 DND_COGS = [
     # D&D core
     "src.core.dnd.aurionis",
@@ -138,6 +140,10 @@ class ArionDND(commands.Bot):
 
         from src.logic.onboard import TutorialWarningView
         self.add_view(TutorialWarningView())
+
+        # Admin příkazy ze sdílených cogů patří ArionDM — tady je neregistrujeme.
+        dropped = drop_admin_commands(self)
+        logger.info(f"[admin_gate] odebráno {len(dropped)} admin příkazů (má je ArionDM).")
 
         print("🔄 Synchronizuji slash commandy...")
         try:

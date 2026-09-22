@@ -20,6 +20,7 @@ from src.utils.embeds import create_error_embed
 from src.logic.profile import load_data as profile_load, save_data as profile_save
 from src.logic.inventory import _load_profiles as inv_load, _save_profiles as inv_save
 from src.logic.economy import _load_economy as load_economy, _save_economy as save_economy, add_balance
+from src.utils.admin_gate import admin_only
 
 CARDS_WORK = _data("cards_work.json")
 CARDS_REBORN_STATE = _data("cards_reborn_state")
@@ -952,7 +953,7 @@ class Cards(commands.Cog):
     # -----------------------------------------------------------------------
 
     @cards_group.command(name="print", description="[ADMIN] Vytisknout novou kartu")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         card_id="ID karty z databáze",
         rarity="Rarita karty",
@@ -1039,7 +1040,7 @@ class Cards(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @cards_group.command(name="db_add", description="[ADMIN] Přidat novou kartu do databáze vzorů")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         name="Jméno karty",
         description="Popis karty",
@@ -1125,7 +1126,7 @@ class Cards(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @cards_group.command(name="create_frame", description="[ADMIN] Přidat nový rámeček do databáze")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         frame_id="Unikátní ID rámečku (použije se v /cards give_frame a /cards upgrade_frame)",
         name="Zobrazovaný název rámečku",
@@ -1333,7 +1334,7 @@ class Cards(commands.Cog):
         await interaction.followup.send(msg, ephemeral=True)
 
     @cards_group.command(name="give_frame", description="[ADMIN] Dát rámeček jednomu nebo více hráčům")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         users="Hráči oddělení mezerou nebo zatagování (např. @hráč1 @hráč2 ...)",
         frame_id="Rámeček — napiš pár písmen jména a vyber z nabídky",
@@ -1390,7 +1391,7 @@ class Cards(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @cards_group.command(name="remove_card", description="[ADMIN] Smazat kartu úplně z inventáře")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(unique_id="Unikátní ID karty k odstranění")
     async def remove_card(self, interaction: discord.Interaction, unique_id: str):
         """Admin příkaz pro úplné smazání instance karty z inventáře."""
@@ -2106,7 +2107,7 @@ class Cards(commands.Cog):
     # -----------------------------------------------------------------------
 
     @cards_group.command(name="pool", description="Dej hráči jednu náhodnou kartu z pool")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(user="Hráč, kterému chceš kartu dát")
     async def pool_card(self, interaction: discord.Interaction, user: discord.Member):
         """[ADMIN] Dá hráči jednu náhodnou kartu z dostupného pool."""

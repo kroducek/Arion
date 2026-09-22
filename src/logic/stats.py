@@ -14,6 +14,7 @@ from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey, use_slot
 from src.utils.char_target import POSTAVA_DESC, char_note, postava_autocomplete, resolve_postava
 import datetime
+from src.utils.admin_gate import admin_only
 
 logger = logging.getLogger("Stats")
 
@@ -931,7 +932,7 @@ class Stats(commands.Cog):
     sp_group = app_commands.Group(name="sp", description="[Admin] Správa skill pointů")
 
     @sp_group.command(name="give", description="[Admin] Dej hráči SP za výkon v RP.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         member="Hráč, který SP dostane.",
         reason="Za co SP dostal (uloží se do logu).",
@@ -973,7 +974,7 @@ class Stats(commands.Cog):
                                         ephemeral=True)
 
     @sp_group.command(name="log", description="[Admin] Historie SP hráče — kolik, kdy a za co.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(member="Hráč (výchozí: ty)")
     async def sp_log_cmd(self, interaction: discord.Interaction,
                          member: discord.Member = None):
@@ -1014,7 +1015,7 @@ class Stats(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @sp_group.command(name="edit", description="[Admin] Nastav hráči SP na konkrétní hodnotu.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         member="Hráč, kterému se SP nastaví.",
         amount="Nová hodnota SP.",
@@ -1073,7 +1074,7 @@ class Stats(commands.Cog):
 
     @sp_group.command(name="reset", description="[Admin] Vynuluje rozdané staty/skilly a vrátí body dle levelu.")
     @app_commands.describe(member="Hráč (výchozí: všichni)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def reset_stats_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
         try:
             data    = _load()
@@ -1180,7 +1181,7 @@ class Stats(commands.Cog):
         app_commands.Choice(name="remove", value="remove"),
     ])
     @app_commands.autocomplete(postava=postava_autocomplete)
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def admin_luck(
         self,
         interaction: discord.Interaction,
@@ -1225,7 +1226,7 @@ class Stats(commands.Cog):
         postava=POSTAVA_DESC,
     )
     @app_commands.autocomplete(postava=postava_autocomplete)
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def admin_xp(self, interaction: discord.Interaction, member: discord.Member,
                        amount: int, reason: str = "", postava: str | None = None):
         try:
@@ -1295,7 +1296,7 @@ class Stats(commands.Cog):
     )
     @app_commands.choices(stat=[app_commands.Choice(name=s, value=s) for s in STAT_LABELS])
     @app_commands.autocomplete(postava=postava_autocomplete)
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def admin_stats(
         self,
         interaction: discord.Interaction,

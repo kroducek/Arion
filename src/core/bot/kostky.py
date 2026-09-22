@@ -33,6 +33,7 @@ except Exception:
 from src.utils.paths import ECONOMY as ECONOMY_PATH, KOSTKY_LB as STATS_PATH, KOSTKY_MAGIC as MAGIC_DICE_PATH
 from src.logic.economy import minigame_file, minigame_coin, get_minigame_currency, COIN_GOLD, COIN_SILVER
 from src.utils.json_utils import load_json, save_json
+from src.utils.admin_gate import admin_only
 
 def _econ_load() -> dict:
     return load_json(minigame_file(), default={})
@@ -1361,7 +1362,7 @@ class Kostky(commands.Cog):
     # ── /kostky cancel ────────────────────────────────────────────────────────
 
     @kostky_group.command(name="cancel", description="Zruší aktuální hru (jen admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def kostky_cancel(self, interaction: discord.Interaction):
         gid = interaction.guild_id
         if gid not in active_games:
@@ -1412,7 +1413,7 @@ class Kostky(commands.Cog):
         app_commands.Choice(name="🟦 Hot Dice (+6) — hod znovu všemi 6", value=MagicDie.HOT_DICE),
         app_commands.Choice(name="🟩 SAFE — zachrání před Farklem",   value=MagicDie.SAFE),
     ])
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def admin_add(self, interaction: discord.Interaction, uzivatel: discord.Member, kostka: str):
         add_magic_die(interaction.guild_id, uzivatel.id, kostka)
         info = MAGIC_DIE_INFO[kostka]
@@ -1430,7 +1431,7 @@ class Kostky(commands.Cog):
         app_commands.Choice(name="🟦 Hot Dice (+6) — hod znovu všemi 6", value=MagicDie.HOT_DICE),
         app_commands.Choice(name="🟩 SAFE — zachrání před Farklem",   value=MagicDie.SAFE),
     ])
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def admin_remove(self, interaction: discord.Interaction, uzivatel: discord.Member, kostka: str):
         removed = remove_magic_die(interaction.guild_id, uzivatel.id, kostka)
         info    = MAGIC_DIE_INFO[kostka]
