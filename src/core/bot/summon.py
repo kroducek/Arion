@@ -26,7 +26,7 @@ CRATES = {
         "name": "Základní bedna",
         "emoji": "📦",
         "color": 0xC27C0E,
-        "description": "Obyčejná bedna z Aurionisu — uvnitř čeká jedna karta.",
+        "description": "Uvnitř tě čeká jedna karta.",
         "gifs": [
             "crate_open.gif",
             "crate_open2.gif",
@@ -333,7 +333,7 @@ class Summon(commands.Cog):
             message = await interaction.original_response()
             await asyncio.sleep(0.9)
 
-            embed.description = "✨ Prach se sype ven, odměna je skoro tady…"
+            embed.description = "✨ ...A prach se sype ven, odměna je skoro tady."
             await message.edit(embed=embed)
             await asyncio.sleep(0.9)
 
