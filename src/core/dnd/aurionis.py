@@ -13,12 +13,12 @@ from discord import app_commands
 from src.utils.paths import TOURNAMENT as TOURNAMENT_FILE, data as _data
 from src.utils.json_utils import load_json, save_json
 
-def _load_tournament() -> list:
+def load_tournament() -> list:
     """Thread-safe load tournament data."""
     data = load_json(TOURNAMENT_FILE, default=[])
     return data if isinstance(data, list) else []
 
-def _save_tournament(data: list):
+def save_tournament(data: list):
     """Thread-safe save tournament data."""
     save_json(TOURNAMENT_FILE, data)
 
@@ -331,12 +331,13 @@ KRONIKA = {
 }
 
 # --- Admin sekce (zamčená) -------------------------------------------------
+# Část těchto příkazů už běží pod ArionDM (červená vypravěčská aplikace).
 KRONIKA_ADMIN = [
     ("🌍 Postavy & svět", (
         "`/vliv` — Uděl hráči Vliv (Světlo/Temnota/Rovnováha)\n"
         "`/takedown` — Arion provede Takedown\n"
         "`/timeskip` — Přeskok v čase (narativní utilita)\n"
-        "`/erase all` — Smaže všechny zprávy v místnosti\n"
+        "`/erase all` — Smaže všechny zprávy v místnosti *(ArionDM)*\n"
         "`/hunger-balance` — Simulace hladu v čase\n"
         "`/profile-admin-hp/mana/fury/vliv` — Nastav staty hráče"
     )),
@@ -353,7 +354,7 @@ KRONIKA_ADMIN = [
     ("💰 Ekonomika & turnaj", (
         "`/gshop create/edit/close` — Správa shopu\n"
         "`/gadd` `/gremove` — Zlato hráčům\n"
-        "`/tournament add/remove` — Správa turnaje\n"
+        "`/admin_tournament add/remove` — Správa turnaje *(ArionDM)*\n"
         "`/admin-tutorial-reset` — Reset tutoriálu hráče\n"
         "`/memory admin` — Správa vzpomínek hráčů"
     )),
@@ -699,37 +700,6 @@ class Aurionis(commands.Cog):
         ]
         await interaction.response.send_message(random.choice(responses))
 
-    @app_commands.command(name="erase", description="Smaže všechny zprávy v této místnosti")
-    @app_commands.describe(confirmation="Potvrzení smazání všech zpráv (napiš 'all')")
-    async def erase(self, interaction: discord.Interaction, confirmation: str):
-        if confirmation.lower() != "all":
-            await interaction.response.send_message("Pro smazání všech zpráv použij '/erase all'", ephemeral=True)
-            return
-
-        # Kontrola oprávnění
-        if not interaction.user.guild_permissions.manage_messages:
-            await interaction.response.send_message("Nemáš oprávnění mazat zprávy.", ephemeral=True)
-            return
-
-        channel = interaction.channel
-
-        # Defer odpověď, protože mazání může trvat
-        await interaction.response.defer(ephemeral=True)
-
-        try:
-            # Smaž všechny zprávy (loop kvůli limitu Discordu)
-            deleted_count = 0
-            while True:
-                deleted = await channel.purge(limit=100)
-                deleted_count += len(deleted)
-                if len(deleted) < 100:
-                    break
-            await interaction.followup.send(f"✅ Smazáno {deleted_count} zpráv v této místnosti.", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.followup.send("❌ Nemám oprávnění mazat zprávy v této místnosti.", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Chyba při mazání: {str(e)}", ephemeral=True)
-
     @app_commands.command(name="kronika", description="Otevři Kroniku Aurionis — rozcestník všech příkazů")
     async def help(self, interaction: discord.Interaction):
         view = KronikaView(author_id=interaction.user.id)
@@ -789,7 +759,7 @@ class Aurionis(commands.Cog):
 
     @tournament_group.command(name="list", description="Zobrazí vyvolené ve druhém kole")
     async def tournament_list(self, interaction: discord.Interaction):
-        players = _load_tournament()
+        players = load_tournament()
         if players:
             lines = []
             for entry in players:
@@ -810,83 +780,6 @@ class Aurionis(commands.Cog):
         embed.add_field(name=f"Postupující ({len(players)})", value=players_list, inline=False)
         embed.set_footer(text="Arion bedlivě sleduje Turnaj o Krále hvězdy")
         await interaction.response.send_message(embed=embed)
-
-    @tournament_group.command(name="add", description="[ADMIN] Přidá hráče nebo jméno do turnaje")
-    @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(
-        jmeno="Jméno NPC nebo vlastní text",
-        hrac="Discord hráč (volitelné — místo jména)"
-    )
-    async def tournament_add(
-        self,
-        interaction: discord.Interaction,
-        jmeno: str = None,
-        hrac: discord.Member = None,
-    ):
-        if not jmeno and not hrac:
-            await interaction.response.send_message("Zadej jméno nebo vyber hráče.", ephemeral=True)
-            return
-
-        players = _load_tournament()
-        entry   = str(hrac.id) if hrac else jmeno
-        label   = hrac.display_name if hrac else jmeno
-
-        if entry in players or (hrac and str(hrac.id) in [str(p) for p in players]):
-            await interaction.response.send_message(
-                f"🐾 *Mňau?* `{label}` už v kronice zapsaného mám!", ephemeral=True
-            )
-            return
-
-        players.append(entry)
-        _save_tournament(players)
-        await interaction.response.send_message(
-            f"✅ *Arion zapsala nové jméno do kroniky.* `{label}` postoupil/a do druhého kola!"
-        )
-
-    @tournament_group.command(name="remove", description="[ADMIN] Odebere hráče nebo jméno z turnaje")
-    @app_commands.checks.has_permissions(administrator=True)
-    @app_commands.describe(
-        jmeno="Jméno NPC nebo vlastní text",
-        hrac="Discord hráč (volitelné)"
-    )
-    async def tournament_remove(
-        self,
-        interaction: discord.Interaction,
-        jmeno: str = None,
-        hrac: discord.Member = None,
-    ):
-        if not jmeno and not hrac:
-            await interaction.response.send_message("Zadej jméno nebo vyber hráče.", ephemeral=True)
-            return
-
-        players = _load_tournament()
-        entry   = str(hrac.id) if hrac else jmeno
-        label   = hrac.display_name if hrac else jmeno
-
-        # Hledej v seznamu jako string nebo int
-        match = None
-        for p in players:
-            if str(p) == str(entry):
-                match = p
-                break
-
-        if match is None:
-            await interaction.response.send_message(
-                f"🐾 *Mňau?* `{label}` v mém seznamu není.", ephemeral=True
-            )
-            return
-
-        players.remove(match)
-        _save_tournament(players)
-        await interaction.response.send_message(
-            f"❌ *Arion přemázla jméno tlapkou.* `{label}` byl/a z turnaje vyřazen/a."
-        )
-
-    @tournament_add.error
-    @tournament_remove.error
-    async def tournament_admin_error(self, interaction: discord.Interaction, error):
-        if isinstance(error, app_commands.MissingPermissions):
-            await interaction.response.send_message("Nemáš oprávnění spravovat turnaj.", ephemeral=True)
 
     # --- TIMESKIP ---
 

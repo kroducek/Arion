@@ -8,6 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from src.core.bot.cards import (
+    BRAND_PURPLE,
     KeepBurnView,
     build_showcase_image,
     get_card_image_path,
@@ -16,6 +17,7 @@ from src.core.bot.cards import (
 )
 from src.utils.json_utils import load_json, save_json
 from src.utils.paths import CARDS_CRATES, CARDS_DATA, CARDS_DIR, CRATES_DIR, data as _data
+from src.utils.admin_gate import admin_only
 
 # ---------------------------------------------------------------------------
 # Konstanty
@@ -257,7 +259,7 @@ class Summon(commands.Cog):
         embed = discord.Embed(
             title="📦 Tvé bedny",
             description="Otevři je příkazem `/summon open`.",
-            color=0xC27C0E,
+            color=BRAND_PURPLE,
         )
         for crate_id, crate in CRATES.items():
             embed.add_field(
@@ -323,7 +325,7 @@ class Summon(commands.Cog):
             embed = discord.Embed(
                 title="📅 Denní odměna",
                 description="*Kalendář se s vrzáním otáčí…*",
-                color=0x3498DB,
+                color=BRAND_PURPLE,
             )
             embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
             if gif_path:
@@ -344,7 +346,7 @@ class Summon(commands.Cog):
                     f"### +1× {crate_data['emoji']} {crate_data['name']}\n"
                     f"-# {crate_data['description']}"
                 ),
-                color=0xF5B942,
+                color=BRAND_PURPLE,
             )
             final_embed.set_author(name=f"{interaction.user.display_name} • Denní odměna", icon_url=interaction.user.display_avatar.url)
             final_embed.set_thumbnail(url=interaction.user.display_avatar.url)
@@ -374,7 +376,7 @@ class Summon(commands.Cog):
             self._claiming_daily.discard(uid)
 
     @summon_group.command(name="give", description="[ADMIN] Přidat bedny více hráčům najednou")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         users="Hráči oddělení mezerou nebo zatagování",
         crate="Typ bedny",
@@ -434,7 +436,7 @@ class Summon(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     @summon_group.command(name="admin-jackpot", description="[ADMIN] Otestovat 5/5 jackpot bez změny reálného luck metru")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(crate="Typ bedny, na které chceš jackpot otestovat")
     @app_commands.choices(crate=[
         app_commands.Choice(name="Základní bedna", value="basic"),
@@ -569,7 +571,7 @@ class Summon(commands.Cog):
         embed = discord.Embed(
             title=f"{crate_data['emoji']} Otevíráš: {crate_data['name']}",
             description="*Pečeť praská…*",
-            color=crate_data["color"],
+            color=BRAND_PURPLE,
         )
         embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
 
@@ -634,7 +636,7 @@ class Summon(commands.Cog):
                 roll_embed = discord.Embed(
                     title="🌀 Karty se točí…",
                     description=f"{ticket_bar(tickets, MAX_TICKETS)}\n🍀 {clover_bar(clovers_after, MAX_CLOVERS)}",
-                    color=crate_data["color"],
+                    color=BRAND_PURPLE,
                 )
                 roll_embed.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
                 roll_embed.set_image(url=f"attachment://{os.path.basename(frame)}")

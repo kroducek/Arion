@@ -11,6 +11,7 @@ logger = logging.getLogger("Spirits")
 from src.utils.paths import PROFILES as DATA_FILE
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey
+from src.utils.admin_gate import mark_admin
 
 # ══════════════════════════════════════════════════════════════════════════════
 # KONFIGURACE
@@ -679,6 +680,7 @@ class Spirits(commands.Cog):
         app_commands.Choice(name=f"{v['emoji']} {k.capitalize()}", value=k)
         for k, v in ELEMENTS.items()
     ])
+    @mark_admin
     async def duch_pridat(
         self, interaction: discord.Interaction,
         member: discord.Member, name: str, rank: int, fury: int,
@@ -713,6 +715,7 @@ class Spirits(commands.Cog):
 
     @duch.command(name="xp", description="[DM] Přidej duchovi XP.")
     @app_commands.describe(member="Hráč", amount="Množství XP")
+    @mark_admin
     async def duch_xp(
         self, interaction: discord.Interaction,
         member: discord.Member, amount: int,
@@ -976,6 +979,7 @@ class Spirits(commands.Cog):
         novy_popis="Nový popis",
         nove_jmeno="Přejmenovat ducha",
     )
+    @mark_admin
     async def duch_upravit(
         self, interaction: discord.Interaction,
         member: discord.Member, name: str,
@@ -1037,6 +1041,7 @@ class Spirits(commands.Cog):
 
     @duch.command(name="odebrat", description="[DM] Trvale odebere ducha z kolekce hráče.")
     @app_commands.describe(member="Hráč", name="Jméno ducha")
+    @mark_admin
     async def duch_odebrat(
         self, interaction: discord.Interaction,
         member: discord.Member, name: str,

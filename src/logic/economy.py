@@ -17,6 +17,7 @@ from src.utils.paths import (
 from src.utils.json_utils import load_json, save_json, update_json
 from src.database.characters import pkey, use_slot
 from src.utils.char_target import POSTAVA_DESC, char_note, postava_autocomplete, resolve_postava
+from src.utils.admin_gate import admin_only
 
 # Destinace pro lokaci obchodů — čteno LÍNĚ (až za běhu), aby nezáleželo na
 # pořadí načítání cogů. Statické choices se vyhodnotí při importu, kdy onboard
@@ -648,7 +649,7 @@ class Economy(commands.Cog):
     # ── /gadd ─────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="gadd", description="Admin: Přidá měnu hráči")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         member="Hráč",
         amount="Kolik přidat",
@@ -691,7 +692,7 @@ class Economy(commands.Cog):
 
     @app_commands.command(name="dmgold",
                           description="Admin: Rozdá měnu více hráčům (split rozdělí, jinak každý dostane plnou částku)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         members="Zmiň hráče (@Enel @Kaiser …) — komu se má dát.",
         amount="Částka. Se split se rozdělí mezi hráče, bez split ji dostane každý.",
@@ -759,7 +760,7 @@ class Economy(commands.Cog):
         await interaction.followup.send(f"✅ Rozdáno {len(lines)} hráčům.")
 
     @app_commands.command(name="gremove", description="Admin: Odebere měnu hráči (může jít do mínusu)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         member = "Hráč, kterému chceš odebrat měnu",
         amount = "Kolik odebrat (nebo 0 pro reset na nulu)",
@@ -835,7 +836,7 @@ class Economy(commands.Cog):
     # ── /minihry_mena ─────────────────────────────────────────────────────────
 
     @app_commands.command(name="minihry_mena", description="Admin: Přepni měnu miniher (silver/gold)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(mena="Na co přepnout minihry (výchozí stav: stříbrňáky)")
     @app_commands.choices(mena=[
         app_commands.Choice(name="⚪ Stříbrňáky (normální)", value="silver"),
@@ -857,7 +858,7 @@ class Economy(commands.Cog):
     shop_group = app_commands.Group(name="gshop", description="Admin: Správa shopů")
 
     @shop_group.command(name="create", description="Admin: Vytvoř nový preset shopu")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         preset  = "Unikátní ID presetu (např. kovarna_lumenie)",
         nazev   = "Zobrazovaný název shopu",
@@ -949,7 +950,7 @@ class Economy(commands.Cog):
         )
 
     @shop_group.command(name="edit", description="Admin: Uprav existující preset shopu")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         preset  = "Preset k úpravě",
         nazev   = "Nový název (ponech prázdné pro beze změny)",
@@ -1024,7 +1025,7 @@ class Economy(commands.Cog):
         await interaction.followup.send(f"✅ Preset `{preset}` upraven.", ephemeral=True)
 
     @shop_group.command(name="open", description="Admin: Zveřejni preset shopu do kanálu")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(preset="Preset k otevření")
     @app_commands.autocomplete(preset=_ac_preset)
     async def gshop_open(self, interaction: discord.Interaction, preset: str):
@@ -1057,7 +1058,7 @@ class Economy(commands.Cog):
         await interaction.followup.send(f"🏪 **{shop['nazev']}** otevřen.", ephemeral=True)
 
     @shop_group.command(name="close", description="Admin: Zavři preset shopu")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(preset="Preset k zavření")
     @app_commands.autocomplete(preset=_ac_preset)
     async def gshop_close(self, interaction: discord.Interaction, preset: str):
@@ -1088,7 +1089,7 @@ class Economy(commands.Cog):
         await interaction.followup.send(f"🔒 **{shop['nazev']}** zavřen.", ephemeral=True)
 
     @shop_group.command(name="presets", description="Admin: Seznam všech shopů a jejich stav")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def gshop_presets(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         shops = _load_shops()
@@ -1130,7 +1131,7 @@ class Economy(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @shop_group.command(name="delete", description="Admin: Smaž preset shopu")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(preset="Preset ke smazání")
     @app_commands.autocomplete(preset=_ac_preset)
     async def gshop_delete(self, interaction: discord.Interaction, preset: str):
@@ -1163,7 +1164,7 @@ class Economy(commands.Cog):
     pool_group = app_commands.Group(name="gpool", description="Admin: Zásobníky zboží podle typu")
 
     @pool_group.command(name="add", description="Admin: Přidá item do poolu typu (kovar, pekarna…)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         typ="Typ obchodu (volný — kovar, pekarna, alchymie…). Nový se založí sám.",
         item="Item: `emoji;název;cena` nebo `emoji;název;cena;item_id`",
@@ -1183,7 +1184,7 @@ class Economy(commands.Cog):
             f"· {parsed['price']} zl.  (celkem **{len(pools[typ])}**)", ephemeral=True)
 
     @pool_group.command(name="list", description="Admin: Vypíše pool typu")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(typ="Typ obchodu")
     @app_commands.autocomplete(typ=_ac_pooltype)
     async def gpool_list(self, interaction: discord.Interaction, typ: str):
@@ -1204,7 +1205,7 @@ class Economy(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @pool_group.command(name="remove", description="Admin: Odebere item z poolu podle čísla z /gpool list")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(typ="Typ obchodu", cislo="Pořadí z /gpool list")
     @app_commands.autocomplete(typ=_ac_pooltype)
     async def gpool_remove(self, interaction: discord.Interaction, typ: str, cislo: int):
@@ -1221,7 +1222,7 @@ class Economy(commands.Cog):
             f"🗑️ Odebráno z **{typ}**: {removed['emoji']} {removed['name']}", ephemeral=True)
 
     @shop_group.command(name="reload", description="Admin: Přemíchá nabídku shopu z poolů")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(preset="Shop k přemíchání")
     @app_commands.autocomplete(preset=_ac_preset)
     async def gshop_reload(self, interaction: discord.Interaction, preset: str):
@@ -1246,7 +1247,7 @@ class Economy(commands.Cog):
             f"({', '.join(shop.get('pool_types', [])) or 'bez poolu'}).", ephemeral=True)
 
     @shop_group.command(name="special", description="Admin: Přidá lokální speciál do shopu (vždy v nabídce)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(preset="Shop", item="`emoji;název;cena;item_id?` (prázdné = vypíše speciály)")
     @app_commands.autocomplete(preset=_ac_preset)
     async def gshop_special(self, interaction: discord.Interaction, preset: str, item: str | None = None):
@@ -1271,7 +1272,7 @@ class Economy(commands.Cog):
             f"-# Projeví se po `/gshop reload`.", ephemeral=True)
 
     @shop_group.command(name="unique", description="Admin: Nastaví/sundá unikátní vzácný item (visí do koupě)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(preset="Shop", item="`emoji;název;cena;item_id?` — prázdné = sundá unikát")
     @app_commands.autocomplete(preset=_ac_preset)
     async def gshop_unique(self, interaction: discord.Interaction, preset: str, item: str | None = None):
@@ -1295,7 +1296,7 @@ class Economy(commands.Cog):
             ephemeral=True)
 
     @shop_group.command(name="settype", description="Admin: Nastaví typy poolů shopu (čárkou)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(preset="Shop", typy="Typy oddělené čárkou (kovar,alchymie). Prázdné = zruší.")
     @app_commands.autocomplete(preset=_ac_preset, typy=_ac_pooltype)
     async def gshop_settype(self, interaction: discord.Interaction, preset: str, typy: str | None = None):
