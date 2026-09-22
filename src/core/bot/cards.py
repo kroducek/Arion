@@ -20,6 +20,8 @@ from src.utils.embeds import create_error_embed
 from src.logic.profile import load_data as profile_load, save_data as profile_save
 from src.logic.inventory import _load_profiles as inv_load, _save_profiles as inv_save
 from src.logic.economy import _load_economy as load_economy, _save_economy as save_economy, add_balance
+from src.core.dnd.achievements import grant_achievement, announce_achievement, has_achievement
+from src.utils.admin_gate import admin_only
 
 CARDS_WORK = _data("cards_work.json")
 CARDS_REBORN_STATE = _data("cards_reborn_state")
@@ -368,6 +370,10 @@ class TradeView(discord.ui.View):
         embed = self.build_embed(note="✅ Obchod dokončen!", color=0x2ECC71)
         await self._finish(interaction, embed)
 
+        for uid in self.offers:
+            member = interaction.guild.get_member(int(uid)) if interaction.guild else None
+            await check_collection_achievement(member, interaction.channel, inv)
+
     @discord.ui.button(label="❌ Zrušit", style=discord.ButtonStyle.danger)
     async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = self.build_embed(
@@ -565,6 +571,37 @@ def get_best_card_for_template(uid: str, card_id: int, inventory: dict) -> "dict
             QUALITY_RANK.get(c.get("quality", "normal"), 99),
         ),
     )
+
+
+COLLECTION_ACHIEVEMENT = "Začátek kolekce"
+
+
+def completed_collections(uid: str, inventory: "dict | None" = None,
+                          cards_db: "list | None" = None) -> list[str]:
+    """Kolekce, ze kterých hráč vlastní všechny vzory (duplikáty se nepočítají)."""
+    inv = load_inventory() if inventory is None else inventory
+    db  = load_json(CARDS_DATA, default=[]) if cards_db is None else cards_db
+
+    owned = {c.get("card_id") for c in inv.values() if c.get("owner_id") == str(uid)}
+    by_collection: dict[str, set] = {}
+    for tmpl in db:
+        coll = tmpl.get("collection")
+        if coll:
+            by_collection.setdefault(coll, set()).add(tmpl.get("id"))
+
+    return [coll for coll, ids in by_collection.items() if ids <= owned]
+
+
+async def check_collection_achievement(member, channel, inventory: "dict | None" = None) -> bool:
+    """Udělí „Začátek kolekce“ za první kompletně dokončenou kolekci v albu."""
+    if member is None or has_achievement(member.id, COLLECTION_ACHIEVEMENT):
+        return False
+    if not completed_collections(str(member.id), inventory):
+        return False
+    if not grant_achievement(member.id, COLLECTION_ACHIEVEMENT):
+        return False
+    await announce_achievement(member, channel, COLLECTION_ACHIEVEMENT)
+    return True
 
 
 def _ensure_nocard_png() -> str:
@@ -952,7 +989,7 @@ class Cards(commands.Cog):
     # -----------------------------------------------------------------------
 
     @cards_group.command(name="print", description="[ADMIN] Vytisknout novou kartu")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         card_id="ID karty z databáze",
         rarity="Rarita karty",
@@ -1038,8 +1075,11 @@ class Cards(commands.Cog):
         embed.add_field(name="🆔 Unikátní IDs", value=ids_value, inline=False)
         await interaction.response.send_message(embed=embed)
 
+        if owner:
+            await check_collection_achievement(owner, interaction.channel, inventory)
+
     @cards_group.command(name="db_add", description="[ADMIN] Přidat novou kartu do databáze vzorů")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         name="Jméno karty",
         description="Popis karty",
@@ -1125,7 +1165,7 @@ class Cards(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @cards_group.command(name="create_frame", description="[ADMIN] Přidat nový rámeček do databáze")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         frame_id="Unikátní ID rámečku (použije se v /cards give_frame a /cards upgrade_frame)",
         name="Zobrazovaný název rámečku",
@@ -1237,7 +1277,7 @@ class Cards(commands.Cog):
         return out[:25]
 
     @cards_group.command(name="list_frames", description="[ADMIN] Zobrazit všechny rámečky v databázi")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def list_frames(self, interaction: discord.Interaction):
         """[ADMIN] Přehled všech rámečků — obrázek, exkluzivita, kolik karet/hráčů je používá."""
         frames = load_json(CARDS_FRAMES, default=[])
@@ -1273,7 +1313,7 @@ class Cards(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @cards_group.command(name="delete_frame", description="[ADMIN] Smazat rámeček z databáze")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         frame_id="Rámeček ke smazání",
         force="Smazat i když je nasazený na kartách nebo v inventářích hráčů (výchozí: ne)",
@@ -1333,7 +1373,7 @@ class Cards(commands.Cog):
         await interaction.followup.send(msg, ephemeral=True)
 
     @cards_group.command(name="give_frame", description="[ADMIN] Dát rámeček jednomu nebo více hráčům")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         users="Hráči oddělení mezerou nebo zatagování (např. @hráč1 @hráč2 ...)",
         frame_id="Rámeček — napiš pár písmen jména a vyber z nabídky",
@@ -1390,7 +1430,7 @@ class Cards(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @cards_group.command(name="remove_card", description="[ADMIN] Smazat kartu úplně z inventáře")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(unique_id="Unikátní ID karty k odstranění")
     async def remove_card(self, interaction: discord.Interaction, unique_id: str):
         """Admin příkaz pro úplné smazání instance karty z inventáře."""
@@ -1896,6 +1936,8 @@ class Cards(commands.Cog):
                 ephemeral=True,
             )
 
+            await check_collection_achievement(target, interaction.channel, inv)
+
         except Exception as e:
             await interaction.followup.send(f"❌ Chyba při generování alba: {e}", ephemeral=True)
 
@@ -2106,7 +2148,7 @@ class Cards(commands.Cog):
     # -----------------------------------------------------------------------
 
     @cards_group.command(name="pool", description="Dej hráči jednu náhodnou kartu z pool")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(user="Hráč, kterému chceš kartu dát")
     async def pool_card(self, interaction: discord.Interaction, user: discord.Member):
         """[ADMIN] Dá hráči jednu náhodnou kartu z dostupného pool."""
@@ -2183,6 +2225,7 @@ class Cards(commands.Cog):
         embed.set_thumbnail(url=user.display_avatar.url)
 
         await interaction.response.send_message(embed=embed)
+        await check_collection_achievement(user, interaction.channel, inventory)
 
     @cards_group.command(name="work", description="Přehled výpravy — stav nebo dostupné expedice")
     async def work_hub(self, interaction: discord.Interaction):

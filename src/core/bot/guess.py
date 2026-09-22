@@ -11,6 +11,7 @@ from discord.ext import commands
 from src.utils.paths import ECONOMY as ECONOMY_FILE, GUESS_SCORES as SCORES_FILE
 from src.utils.json_utils import load_json, save_json
 from src.logic.economy import minigame_file, minigame_coin
+from src.utils.admin_gate import local_admin
 
 COIN        = "<:goldcoin:1490171741237018795>"
 MAX_GUESSES = 3
@@ -559,7 +560,7 @@ class GuessCog(commands.Cog):
 
 
     @guess.command(name="cancel", description="[Admin] Zruší hru a vrátí sázky")
-    @app_commands.checks.has_permissions(administrator=True)
+    @local_admin()
     async def guess_cancel(self, interaction: discord.Interaction):
         game = self.active_games.pop(interaction.channel.id, None)
         if not game:

@@ -14,6 +14,7 @@ from src.utils.audit import log_action
 from src.utils.json_utils import load_json, save_json
 from src.logic.combat import add_perk_buff, console, use_action
 from src.logic.dice import DiceError, roll_expr
+from src.utils.admin_gate import admin_only
 
 logger = logging.getLogger("Perks")
 
@@ -1677,7 +1678,7 @@ class PerksCog(commands.Cog):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @perks_group.command(name="give", description="Přiřaď perk hráči (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(perk_id="ID perku", member="Hráč")
     async def perks_give(self, interaction: discord.Interaction, perk_id: str, member: discord.Member):
         all_perks = load_perks()
@@ -1716,7 +1717,7 @@ class PerksCog(commands.Cog):
         )
 
     @perks_group.command(name="list", description="Seznam všech perků v databázi (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def perks_list(self, interaction: discord.Interaction):
         perks = load_perks()
         if not perks:
@@ -1796,7 +1797,7 @@ class PerksCog(commands.Cog):
     # ── /give-random-perk ─────────────────────────────────────────────────────
 
     @app_commands.command(name="give-random-perk", description="Dej hráči náhodný perk (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(member="Hráč který dostane perk")
     async def give_random_perk(self, interaction: discord.Interaction, member: discord.Member):
         all_perks   = load_perks()
@@ -1846,7 +1847,7 @@ class PerksCog(commands.Cog):
 
     @app_commands.command(name="reset-perky", description="[Admin] Smaže perky hráči (aktivní postavě) nebo všem.")
     @app_commands.describe(member="Hráč (prázdné = všichni)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def reset_perky_cmd(self, interaction: discord.Interaction, member: discord.Member | None = None):
         player_data = load_player_perks()
         if member:
@@ -1886,7 +1887,7 @@ class PerksCog(commands.Cog):
     perk_group = app_commands.Group(name="perk", description="Správa a použití perků")
 
     @perk_group.command(name="give", description="Přiřaď konkrétní perk hráči (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(perk_id="ID perku", member="Hráč")
     async def perk_give(self, interaction: discord.Interaction, perk_id: str, member: discord.Member):
         all_perks = load_perks()
@@ -1925,7 +1926,7 @@ class PerksCog(commands.Cog):
         )
 
     @perk_group.command(name="add", description="Vytvoř nový perk pomocí slash příkazu (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         perk_id="ID perku (např. fire_magic_1)",
         name="Jméno perku",
@@ -2041,7 +2042,7 @@ class PerksCog(commands.Cog):
             )
 
     @perk_group.command(name="remove", description="Odeber perk hráči (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(perk_id="ID perku", member="Hráč")
     async def perk_remove(self, interaction: discord.Interaction, perk_id: str, member: discord.Member):
         player_data = load_player_perks()
@@ -2062,7 +2063,7 @@ class PerksCog(commands.Cog):
         )
 
     @perk_group.command(name="reset", description="Resetuj cooldowny hráče nebo všech (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(member="Hráč (prázdné = reset všech)")
     async def perk_reset(self, interaction: discord.Interaction, member: discord.Member | None = None):
         player_data = load_player_perks()
@@ -2082,7 +2083,7 @@ class PerksCog(commands.Cog):
             )
 
     @perk_group.command(name="progress", description="Přidej bod do progress baru perku (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(perk_id="ID perku (musí být learnable)", member="Hráč", amount="Počet bodů (výchozí 1)")
     async def perk_progress(self, interaction: discord.Interaction, perk_id: str, member: discord.Member, amount: int = 1):
         await interaction.response.defer(ephemeral=True)
@@ -2138,7 +2139,7 @@ class PerksCog(commands.Cog):
             )
 
     @perk_group.command(name="connect", description="Propoj základní perky I. II. III. (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         perk_1="ID perku I. tier (výchozí/základní)",
         perk_2="ID perku II. tier (volitelné)",
@@ -2232,7 +2233,7 @@ class PerksCog(commands.Cog):
         ][:25]
 
     @perk_group.command(name="edit", description="Uprav existující perk v databázi (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         perk_id="ID perku k úpravě",
         name="Nový název (prázdné = beze změny)",
@@ -2327,7 +2328,7 @@ class PerksCog(commands.Cog):
             f"✅ Perk **{p['name']}** (`{perk_id}`) upraven: {', '.join(changed)}.", ephemeral=True)
 
     @perk_group.command(name="combat", description="Nastav efekt perku v boji (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         perk_id="ID perku",
         dmg="Bonusový damage při /attack, např. 1d6 nebo 3 ('none' = smazat)",
@@ -2367,7 +2368,7 @@ class PerksCog(commands.Cog):
             ephemeral=True)
 
     @perk_group.command(name="tags", description="Nastav roll_tags pro perk — staty kde se zobrazí pod /roll check (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(perk_id="ID perku", tags="Staty oddělené čárkou, např. INS,DEX (prázdné = žádné)")
     async def perk_tags(self, interaction: discord.Interaction, perk_id: str, tags: str = ""):
         perks = load_perks()
@@ -2400,7 +2401,7 @@ class PerksCog(commands.Cog):
         ][:25]
 
     @perk_group.command(name="delete", description="Smaž perk z databáze (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(perk_id="ID perku ke smazání")
     async def perk_delete(self, interaction: discord.Interaction, perk_id: str):
         perks = load_perks()

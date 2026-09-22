@@ -20,6 +20,7 @@ from src.logic.economy import (
 )
 from src.database.characters import pkey
 from src.database.profiles import load_items, load_profiles, save_profiles
+from src.utils.admin_gate import admin_only, mark_admin
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DATOVÁ VRSTVA
@@ -957,6 +958,7 @@ class Profile(commands.Cog):
 
     @app_commands.command(name="rest-enable", description="[DM] Povolí hráči znovu použít /rest.")
     @app_commands.describe(member="Hráč, kterému se odpočinek zase povolí.")
+    @mark_admin
     async def rest_enable(self, interaction: discord.Interaction, member: discord.Member):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -1087,6 +1089,7 @@ class Profile(commands.Cog):
         description="[DM] Odečte hunger všem hráčům (simulace hladu v čase).",
     )
     @app_commands.describe(amount="Kolik hladu odečíst (výchozí: 5).")
+    @mark_admin
     async def hunger_balance(self, interaction: discord.Interaction, amount: int = 5):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -1134,6 +1137,7 @@ class Profile(commands.Cog):
         app_commands.Choice(name="add",    value="add"),
         app_commands.Choice(name="remove", value="remove"),
     ])
+    @mark_admin
     async def dmfury(
         self, interaction: discord.Interaction,
         member: discord.Member,
@@ -1199,6 +1203,7 @@ class Profile(commands.Cog):
             app_commands.Choice(name="full (max)", value="full"),
         ],
     )
+    @mark_admin
     async def dmset(
         self, interaction: discord.Interaction,
         member: discord.Member,
@@ -1316,6 +1321,7 @@ class Profile(commands.Cog):
             app_commands.Choice(name="remove", value="remove"),
         ],
     )
+    @mark_admin
     async def profile_admin_vliv(
         self,
         interaction: discord.Interaction,
@@ -1371,6 +1377,7 @@ class Profile(commands.Cog):
         app_commands.Choice(name="Temnota",   value="vliv_temnota"),
         app_commands.Choice(name="Rovnováha", value="vliv_rovnovaha"),
     ])
+    @mark_admin
     async def vliv_cmd(
         self,
         interaction: discord.Interaction,
@@ -1424,7 +1431,7 @@ class Profile(commands.Cog):
         name="admin-tutorial-reset",
         description="[ADMIN] Resetuje tutorial pro hráče — může ho znovu projít.",
     )
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         hrac1="Hráč ke resetu",
         hrac2="(volitelný) další hráč",

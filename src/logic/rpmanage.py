@@ -6,6 +6,7 @@ from typing import Optional
 
 from src.utils.paths import RP_ROOMS as DATA_FILE
 from src.utils.json_utils import load_json, save_json
+from src.utils.admin_gate import mark_admin
 
 # ══════════════════════════════════════════════════════════════════════════════
 # KONFIGURACE — vyplň ID kategorií dle svého serveru
@@ -345,6 +346,7 @@ class RPManage(commands.Cog):
     # ── /rp info ──────────────────────────────────────────────────────────────
 
     @rp.command(name="info", description="[DM] Přehled všech aktivních RP místností.")
+    @mark_admin
     async def rp_info(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
@@ -387,6 +389,7 @@ class RPManage(commands.Cog):
     # ── /rp remove ────────────────────────────────────────────────────────────
 
     @rp.command(name="remove", description="[DM] Přesune aktuální RP místnost do archivu.")
+    @mark_admin
     async def rp_remove(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
@@ -428,6 +431,7 @@ class RPManage(commands.Cog):
     # ── /rp restore ───────────────────────────────────────────────────────────
 
     @rp.command(name="restore", description="[DM] Vrátí aktuální archivovaný kanál zpět mezi aktivní RP.")
+    @mark_admin
     async def rp_restore(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 

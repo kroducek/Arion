@@ -6,6 +6,7 @@ from typing import Optional
 from src.utils.paths import PROFILES as PROFILES_FILE
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey
+from src.utils.admin_gate import admin_only
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DATOVÁ VRSTVA
@@ -135,7 +136,7 @@ class MemoryCog(commands.Cog):
         app_commands.Choice(name="edit",   value="edit"),
         app_commands.Choice(name="clear",  value="clear"),
     ])
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def memory_admin(
         self,
         interaction: discord.Interaction,

@@ -29,6 +29,7 @@ from discord import app_commands
 from src.utils.json_utils import load_json, save_json
 from src.utils.paths import data
 from src.logic.economy import minigame_file, minigame_coin
+from src.utils.admin_gate import local_admin
 
 logger = logging.getLogger("Briefcase")
 
@@ -783,7 +784,7 @@ class BriefcaseCog(commands.Cog):
     # ── Admin zrušení ─────────────────────────────────────────────────────────
 
     @app_commands.command(name="briefcase_cancel", description="[Admin] Zruší probíhající Liar's Briefcase")
-    @app_commands.checks.has_permissions(administrator=True)
+    @local_admin()
     async def briefcase_cancel(self, interaction: discord.Interaction):
         game = self.active_games.get(interaction.channel.id)
         if not game:

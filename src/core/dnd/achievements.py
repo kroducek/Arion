@@ -6,6 +6,7 @@ import os
 
 from src.utils.paths import ACHIEVEMENTS, ACHIEVEMENT_DATA
 from src.utils.json_utils import load_json, save_json
+from src.utils.admin_gate import admin_only
 
 ARION_NAME = "Aurionis"
 
@@ -83,6 +84,12 @@ ACHIEVEMENTS_DEF: dict[str, dict] = {
         "description": "Vytvořil sis druhou postavu. Kdo z nich jsi doopravdy?",
         "auto":        True,
         "rarity":      "Rare",
+    },
+    "Začátek kolekce": {
+        "emoji":       "📚",
+        "description": "Dokončil jsi svou první kolekci v albu karet.",
+        "auto":        True,
+        "rarity":      "Epic",
     },
 }
 
@@ -241,7 +248,7 @@ class AchievementsCog(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @ach_group.command(name="done", description="Udělej achievement hráči (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(name="Název achievementu", member="Hráč")
     async def achievement_done(self, interaction: discord.Interaction, name: str, member: discord.Member):
         if name not in ACHIEVEMENTS_DEF:
@@ -254,7 +261,7 @@ class AchievementsCog(commands.Cog):
             await interaction.response.send_message(f"ℹ️ {member.mention} už má **{name}**.", ephemeral=True)
 
     @ach_group.command(name="remove", description="Odeber achievement hráči (admin)")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(name="Název achievementu", member="Hráč")
     async def achievement_remove(self, interaction: discord.Interaction, name: str, member: discord.Member):
         data = load_achievements()

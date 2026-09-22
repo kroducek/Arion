@@ -13,6 +13,7 @@ from src.database.profiles import (
     save_profiles as _save_profiles,
 )
 from src.logic.dice import DiceError, roll_expr
+from src.utils.admin_gate import mark_admin
 
 logger = logging.getLogger(__name__)
 
@@ -2409,6 +2410,7 @@ class Inventory(commands.Cog):
     # ══════════════════════════════════════════════════════════════════════════
 
     @inv_db.command(name="add", description="[DM] Přidá item do databáze.")
+    @mark_admin
     @app_commands.describe(
         item_id="Konzolové ID (snake_case, např. mec_ocisty).",
         name="Zobrazované jméno.",
@@ -2552,6 +2554,7 @@ class Inventory(commands.Cog):
             f"✅ Item **{name}** (`{item_id}`) přidán do databáze.{storage_note}")
 
     @inv_db.command(name="edit", description="[DM] Upraví existující item v databázi.")
+    @mark_admin
     @app_commands.describe(
         item_id="ID itemu k úpravě.",
         name="Nové jméno (prázdné = beze změny).",
@@ -2731,6 +2734,7 @@ class Inventory(commands.Cog):
     @inv_db.command(
         name="combat",
         description="[DM] Nastaví damage zbraně a příznak reusable (runy).")
+    @mark_admin
     @app_commands.describe(
         item_id="ID itemu.",
         dmg="Damage výraz pro /attack (např. 1d8+2 · 'clear' = odebrat).",
@@ -2773,6 +2777,7 @@ class Inventory(commands.Cog):
             f"reusable: `{bool(item.get('reusable'))}`.")
 
     @inv_db.command(name="remove", description="[DM] Odebere item z databáze.")
+    @mark_admin
     @app_commands.describe(item_id="ID itemu k odebrání.")
     @app_commands.autocomplete(item_id=_ac_database_item)
     async def inv_db_remove(self, interaction: discord.Interaction, item_id: str):
@@ -2789,6 +2794,7 @@ class Inventory(commands.Cog):
         await interaction.followup.send(f"🗑️ Item **{item['name']}** (`{item_id}`) odebrán z databáze.")
 
     @inv_db.command(name="mapset", description="[DM] Nastaví obrázek předmětu (mapa apod.) — zobrazí se v detailu.")
+    @mark_admin
     @app_commands.describe(
         item_id="ID předmětu.",
         url="Odkaz na obrázek (https://…). Prázdné nebo 'clear' obrázek odebere.",
@@ -2829,6 +2835,7 @@ class Inventory(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @inv_db.command(name="find", description="Prohledá databázi itemů.")
+    @mark_admin
     @app_commands.describe(query="Název nebo ID itemu.")
     @app_commands.autocomplete(query=_ac_database_item)
     async def inv_db_find(self, interaction: discord.Interaction, query: str):
@@ -2842,6 +2849,7 @@ class Inventory(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @inv_db.command(name="raw", description="[DM] Vypíše syrová data itemu (debug).")
+    @mark_admin
     @app_commands.describe(item_id="ID itemu")
     @app_commands.autocomplete(item_id=_ac_database_item)
     async def inv_db_raw(self, interaction: discord.Interaction, item_id: str):
@@ -2855,6 +2863,7 @@ class Inventory(commands.Cog):
         await interaction.response.send_message(f"```json\n{dump[:1900]}\n```", ephemeral=True)
 
     @inv_db.command(name="list", description="Vypíše všechny itemy v databázi.")
+    @mark_admin
     @app_commands.describe(category="Filtr dle kategorie (volitelné).")
     @app_commands.choices(category=[
         app_commands.Choice(name=c, value=c) for c in CATEGORIES
@@ -3075,6 +3084,7 @@ class Inventory(commands.Cog):
     # ══════════════════════════════════════════════════════════════════════════
 
     @inv_admin.command(name="add", description="[DM] Přidá item hráči.")
+    @mark_admin
     @app_commands.describe(
         member="Hráč.",
         item="ID registrovaného itemu nebo volný text (půjde do Ostatní).",
@@ -3113,6 +3123,7 @@ class Inventory(commands.Cog):
             f"✅ Přidáno **{name}**{qty_str} → **{member.display_name}**.")
 
     @inv_admin.command(name="remove", description="[DM] Odebere registrovaný item hráči.")
+    @mark_admin
     @app_commands.describe(member="Hráč.", item="Název nebo ID.", qty="Množství.")
     async def inv_admin_remove(self, interaction: discord.Interaction,
                                member: discord.Member, item: str, qty: int = 1):
@@ -3137,6 +3148,7 @@ class Inventory(commands.Cog):
             f"✅ Odebráno **{item}** ×{qty} od **{member.display_name}**.")
 
     @inv_admin.command(name="slots", description="[DM] Nastaví počet prstenových slotů hráči.")
+    @mark_admin
     @app_commands.describe(
         member="Hráč.",
         slot_type="ring (amulet je teď pevně jeden).",
@@ -3174,6 +3186,7 @@ class Inventory(commands.Cog):
 
     @inv_admin.command(name="storage-remove",
                        description="[DM] Odebere item z konkrétního úložiště hráče.")
+    @mark_admin
     @app_commands.describe(
         member="Hráč.",
         item="ID itemu.",
@@ -3217,6 +3230,7 @@ class Inventory(commands.Cog):
 
     @inv_admin.command(name="storage-move",
                        description="[DM] Přesune item mezi úložišti hráče (inventář, BoH, batoh…).")
+    @mark_admin
     @app_commands.describe(
         member="Hráč.",
         odkud="Zdrojové úložiště.",
@@ -3293,6 +3307,7 @@ class Inventory(commands.Cog):
 
     @inv_admin.command(name="storage-give",
                        description="[DM] Dá hráči úložný item (batoh, brašnu, BoH…).")
+    @mark_admin
     @app_commands.describe(member="Hráč.", storage_item="ID storage itemu z databáze.")
     @app_commands.autocomplete(storage_item=_ac_database_item)
     async def inv_admin_storage_give(self, interaction: discord.Interaction,
@@ -3333,6 +3348,7 @@ class Inventory(commands.Cog):
 
     @inv_admin.command(name="storage-add",
                        description="[DM] Přidá item přímo do konkrétního úložiště hráče.")
+    @mark_admin
     @app_commands.describe(
         member="Hráč.",
         item="ID itemu z databáze.",
@@ -3385,6 +3401,7 @@ class Inventory(commands.Cog):
 
     @inv_admin.command(name="storage-drop",
                        description="[DM] Odebere hráči storage item i s obsahem.")
+    @mark_admin
     @app_commands.describe(member="Hráč.", storage_item="ID storage itemu.")
     @app_commands.autocomplete(storage_item=_ac_database_item)
     async def inv_admin_storage_drop(self, interaction: discord.Interaction,

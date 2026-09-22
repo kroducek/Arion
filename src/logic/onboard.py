@@ -68,6 +68,7 @@ ROLE_DOBRODRUH_F3_ID = 1476056192643104768
 from src.utils.paths import PROFILES as DATA_FILE, ECONOMY as ECONOMY_FILE, TUTORIAL_MSG as TUTORIAL_MSG_FILE
 from src.database.profiles import load_items
 from src.logic.economy import get_balance, set_balance, COIN_SILVER
+from src.utils.admin_gate import admin_only
 
 TUTORIAL_CHANNEL_ID = 1476045697496252607
 COIN                 = "<:goldcoin:1490171741237018795>"
@@ -2796,7 +2797,7 @@ class Onboarding(commands.Cog):
             logger.exception("[onboard] validace loadoutů selhala")
 
     @app_commands.command(name="setup-tutorial", description="Spusť úvodní tutorial Aurionisu")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def setup_tutorial(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="✨  Vítej v Aurionisu",
@@ -2847,7 +2848,7 @@ class Onboarding(commands.Cog):
             logger.exception('[onboard] potlačená chyba')
 
     @app_commands.command(name="admin-class-give", description="[ADMIN] Přidělí hráči startovní vybavení třídy")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(class_="Vyber třídu/loadout", player="Cíl hráče (prázdno = ty)")
     async def admin_class_give(
         self,
@@ -2858,7 +2859,7 @@ class Onboarding(commands.Cog):
         await self.admin_loadout_give(interaction, loadout=class_, player=player)
 
     @app_commands.command(name="admin-loadout-give", description="[ADMIN] Přidělí hráči startovní vybavení třídy")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(loadout="Vybrat třídu/loadout", player="Cíl hráče (prázdno = ty)")
     async def admin_loadout_give(
         self,
