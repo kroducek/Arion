@@ -8,7 +8,7 @@ from src.core.cards.summon_render import render_opening, SIZE, MAX_BYTES
 class SummonRenderTests(unittest.TestCase):
     def test_missing_art_still_produces_bounded_single_play_animation(self):
         payload, seconds = render_opening(
-            {'rarity': 'rare', 'quality': 'normal'}, None, [], 6, 2)
+            {'rarity': 'rare', 'quality': 'normal'}, None, [])
         self.assertLess(len(payload), MAX_BYTES)
         with Image.open(io.BytesIO(payload)) as image:
             self.assertEqual(image.size, SIZE)

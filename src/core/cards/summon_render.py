@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from src.utils.paths import ASSETS_DIR
 
-SIZE = (640, 480)
+SIZE = (640, 420)
 FRAME_MS = 80
 MAX_BYTES = 8 * 1024 * 1024
 PURPLE = (172, 119, 245)
@@ -75,13 +75,7 @@ def card_front(path):
     return image
 
 
-def _clover(draw, x, y, color):
-    for dx, dy in [(-3, -3), (3, -3), (-3, 3), (3, 3)]:
-        draw.ellipse((x + dx - 3, y + dy - 3, x + dx + 3, y + dy + 3), fill=color)
-    draw.line((x, y + 4, x + 3, y + 10), fill=color, width=2)
-
-
-def render_opening(card, art_path, roll_paths, tickets, clovers, *, jackpot=False,
+def render_opening(card, art_path, roll_paths, *, jackpot=False,
                    max_bytes=MAX_BYTES):
     """Return (GIF bytes, playback seconds); raise ValueError above upload budget.
 
@@ -94,7 +88,7 @@ def render_opening(card, art_path, roll_paths, tickets, clovers, *, jackpot=Fals
     thumbs = [card_front(path) for path in roll_paths[:8]] or [back]
     particles = [(rng.randrange(24, 616), rng.randrange(90, 365), rng.random()) for _ in range(28)]
     accent = RARITY_COLORS.get(card.get("rarity"), PURPLE)
-    duration = 8.0 if jackpot else 6.8
+    duration = 12.0 if jackpot else 10.8
     # One palette for the entire clip keeps text/meters from changing colour
     # as different artwork passes through the reel, and speeds up encoding.
     palette_source = Image.new("RGB", (640, 480), INK)
@@ -111,7 +105,7 @@ def render_opening(card, art_path, roll_paths, tickets, clovers, *, jackpot=Fals
     frame_count = round(duration * 1000 / FRAME_MS)
     for index in range(frame_count):
         t = index * FRAME_MS / 1000
-        reveal_at = 5.8 if jackpot else 4.6
+        reveal_at = 9.8 if jackpot else 8.6
         reveal = max(0.0, min(1.0, (t - reveal_at) / 0.8))
         color = accent if t >= reveal_at - 0.3 else PURPLE
         image = Image.new("RGB", SIZE, INK)
@@ -120,15 +114,15 @@ def render_opening(card, art_path, roll_paths, tickets, clovers, *, jackpot=Fals
             amount = (1 - radius / 250) * (0.17 + 0.04 * math.sin(t * 3))
             shade = tuple(int(INK[i] + color[i] * amount) for i in range(3))
             d.ellipse((320 - radius, 239 - radius // 2, 320 + radius, 239 + radius // 2), fill=shade)
-        d.rounded_rectangle((16, 14, 623, 465), radius=16, outline=(65, 52, 84))
+        d.rounded_rectangle((16, 14, 623, 405), radius=16, outline=(65, 52, 84))
         label(d, (320, 37), "A U R I O N I S   /   C A R D S", 12, GOLD)
         if t < 1.04:
             title, subtitle = "Pečeť se probouzí", "Základní bedna"
         elif t < 2.0:
-            title, subtitle = "Tvé štěstí", "Dokonalé štěstí · +1 čtyřlístek" if tickets == 10 else "Každý lístek posiluje tvé šance"
+            title, subtitle = "Pečeť se otevírá", "Tvá karta čeká na odhalení"
         elif t < reveal_at:
             title = "Karty se točí"
-            subtitle = "5 / 5 · Legendary Shiny zaručena" if jackpot else "Osud vybírá tvou kartu"
+            subtitle = "Legendary Shiny zaručena" if jackpot else "Osud vybírá tvou kartu"
         else:
             title = "JACKPOT" if jackpot else "Tvá karta přichází"
             subtitle = f"{card.get('rarity', 'uncommon').upper()}  /  {card.get('quality', 'normal').upper()}"
@@ -185,18 +179,7 @@ def render_opening(card, art_path, roll_paths, tickets, clovers, *, jackpot=Fals
                             od.point((x, y), fill=shine)
                 image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
         d = ImageDraw.Draw(image)
-        # A consistent footer separates the two progression systems.
-        d.rectangle((24, 382, 616, 452), fill=INK)
-        filled = 0 if t < 1.04 else min(tickets, int((t - 1.04) / 0.8 * tickets) + 1)
-        label(d, (167, 394), f"LÍSTKY ŠTĚSTÍ   {filled}/10", 12, (194, 181, 210))
-        for j in range(10):
-            x = 53 + j * 23
-            d.rounded_rectangle((x, 410, x + 17, 428), radius=3, fill=GOLD if j < filled else (43, 37, 56))
-        visible_clovers = max(0, clovers - 1) if tickets == 10 and t < 1.84 else clovers
-        label(d, (456, 394), f"ČTYŘLÍSTKY   {visible_clovers}/5", 12, (194, 181, 210))
-        for j in range(5):
-            _clover(d, 396 + j * 30, 419, (117, 212, 160) if j < visible_clovers else (49, 55, 61))
-        label(d, (320, 449), "LEGENDARY · SHINY" if jackpot and t >= reveal_at else "ARIONCARDS  ·  SBĚRATELSKÉ KARTY", 10, GOLD if jackpot else (123, 113, 144))
+        label(d, (320, 392), "LEGENDARY · SHINY" if jackpot and t >= reveal_at else "ARIONCARDS  ·  SBĚRATELSKÉ KARTY", 10, GOLD if jackpot else (123, 113, 144))
         frames.append(image.quantize(palette=palette, dither=Image.Dither.NONE))
     output = io.BytesIO()
     frames[0].save(output, format="GIF", save_all=True, append_images=frames[1:],

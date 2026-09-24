@@ -82,23 +82,14 @@ def change_crates(uid: str, crate_id: str, amount: int) -> int:
     return update_json(CARDS_CRATES, change)[uid][crate_id]
 
 
-def get_crate_gif_path(crate_id: str):
-    """Vrátí cestu k náhodné animaci bedny, nebo None pokud soubor chybí."""
+def get_crate_gif_path(crate_id: str, previous: str = None):
+    """Choose an existing crate GIF, avoiding the previous one when possible."""
     crate_data = CRATES.get(crate_id, {})
-    
-    # Zkus nejdřív "gifs" (pole)
-    gifs = crate_data.get("gifs", [])
-    if gifs:
-        selected_gif = random.choice(gifs)
-    else:
-        # Fallback na starý formát "gif" (single string)
-        selected_gif = crate_data.get("gif")
-    
-    if not selected_gif:
-        return None
-    
-    path = os.path.join(CRATES_DIR, selected_gif)
-    return path if os.path.exists(path) else None
+    names = crate_data.get("gifs") or [crate_data.get("gif")]
+    paths = [os.path.join(CRATES_DIR, name) for name in names if name]
+    paths = [path for path in paths if os.path.isfile(path)]
+    choices = [path for path in paths if path != previous] or paths
+    return random.choice(choices) if choices else None
 
 
 # Bezpečná hranice pod Discord upload limitem i na neboostnutých serverech —
@@ -134,6 +125,22 @@ def get_roll_images(count: int) -> list:
         choices = [p for p in paths if p != (frames[-1] if frames else None)] or paths
         frames.append(random.choice(choices))
     return frames
+
+
+def luck_embed(tickets: int, clovers: int, *, jackpot=False, remaining=None):
+    """Separate embed keeps emoji meters below the animation/result image."""
+    embed = discord.Embed(color=BRAND_PURPLE)
+    embed.add_field(name=f"Lístky štěstí · {tickets}/{MAX_TICKETS}",
+                    value=TICKET_EMOJI * tickets + "▫️" * (MAX_TICKETS - tickets), inline=False)
+    embed.add_field(name=f"Čtyřlístky štěstí · {clovers}/{MAX_CLOVERS}",
+                    value="🍀" * clovers + "▫️" * (MAX_CLOVERS - clovers), inline=False)
+    if jackpot:
+        embed.description = "🌟 **JACKPOT · Legendary Shiny!**"
+        if remaining is not None:
+            embed.set_footer(text=f"Po jackpotu začínáš znovu · {remaining}/{MAX_CLOVERS} čtyřlístků")
+    elif tickets == MAX_TICKETS:
+        embed.description = "🍀 **Dokonalé štěstí · +1 čtyřlístek**"
+    return embed
 
 
 def streak_bar(streak: int, cap: int = 7) -> str:
@@ -210,6 +217,7 @@ class Summon(commands.Cog):
         self.bot = bot
         self._opening: set[str] = set()
         self._render_slot = asyncio.Semaphore(1)
+        self._last_crate_gif: dict[str, str] = {}
         self._claiming_daily: set[str] = set()
 
     summon_group = app_commands.Group(name="summon", description="Summonování karet z beden")
@@ -479,7 +487,13 @@ class Summon(commands.Cog):
         if is_test:
             intro.set_footer(text="ADMIN NÁHLED · bez změny inventáře a štěstí")
         # If this fails, nothing has been charged yet.
-        message = await interaction.followup.send(embed=intro, wait=True)
+        gif_path = get_crate_gif_path(crate, self._last_crate_gif.get(crate))
+        files = []
+        if gif_path:
+            self._last_crate_gif[crate] = gif_path
+            intro.set_image(url="attachment://crate_open.gif")
+            files.append(discord.File(gif_path, filename="crate_open.gif"))
+        message = await interaction.followup.send(embed=intro, files=files, wait=True)
         try:
             reward = settle_opening(
                 str(interaction.user.id), crate,
@@ -489,12 +503,12 @@ class Summon(commands.Cog):
         except (NoCrates, EmptyCardPool) as error:
             text = "Nemáš žádnou bednu tohoto typu." if isinstance(error, NoCrates) else "Databáze karet je prázdná. Bedna zůstává u tebe."
             await message.edit(embed=discord.Embed(title="Otevření není dostupné", description=text,
-                                                  color=BRAND_PURPLE))
+                                                  color=BRAND_PURPLE), attachments=[])
             return
         except Exception:
             logger.exception("Summon settlement failed; transaction rolled back")
             await message.edit(embed=discord.Embed(title="Otevření se nepovedlo",
-                description="Bedna zůstává u tebe. Zkus to znovu.", color=BRAND_PURPLE))
+                description="Bedna zůstává u tebe. Zkus to znovu.", color=BRAND_PURPLE), attachments=[])
             return
 
         # Everything below is presentation of an already committed reward.
@@ -505,14 +519,15 @@ class Summon(commands.Cog):
                 async with self._render_slot:
                     animation, duration = await asyncio.to_thread(
                         render_opening, reward.card, get_card_image_path(reward.card.get("image")),
-                        get_roll_images(8), reward.tickets, reward.clovers,
+                        get_roll_images(8),
                         jackpot=reward.jackpot,
                         max_bytes=min(MAX_ROLL_IMAGE_BYTES, getattr(interaction, "filesize_limit", MAX_ROLL_IMAGE_BYTES)),
                     )
                 intro.title = "Odhalení karty"
                 intro.description = "Pečeť · štěstí · výběr · odhalení"
                 intro.set_image(url="attachment://summon.gif")
-                await message.edit(embed=intro, attachments=[discord.File(io.BytesIO(animation), filename="summon.gif")])
+                await message.edit(embeds=[intro, luck_embed(reward.tickets, reward.clovers, jackpot=reward.jackpot)],
+                                   attachments=[discord.File(io.BytesIO(animation), filename="summon.gif")])
                 await asyncio.sleep(duration + 0.4)
         except Exception:
             logger.exception("Summon animation unavailable; revealing committed reward")
@@ -521,7 +536,6 @@ class Summon(commands.Cog):
             showcase = await asyncio.to_thread(
                 build_showcase_image, reward.card, reward.unique_id,
                 owner_name=interaction.user.display_name,
-                tickets=f"{reward.tickets}/10 · čtyřlístky {reward.remaining_clovers}/5",
             )
         except Exception:
             logger.exception("Summon showcase unavailable; using text result")
@@ -536,8 +550,15 @@ class Summon(commands.Cog):
         )
         view = None if is_test else KeepBurnView(uid=str(interaction.user.id),
                                                  unique_id=reward.unique_id, card=card)
+        meters = luck_embed(reward.tickets, reward.clovers, jackpot=reward.jackpot,
+                            remaining=reward.remaining_clovers if not is_test else None)
+        result_embeds = [meters]
+        if showcase:
+            card_embed = discord.Embed(color=BRAND_PURPLE)
+            card_embed.set_image(url="attachment://card.png")
+            result_embeds.insert(0, card_embed)
         try:
-            await message.edit(content=summary, embed=None,
+            await message.edit(content=summary, embeds=result_embeds,
                 attachments=[discord.File(showcase, filename="card.png")] if showcase else [], view=view)
             if view:
                 view.message = message
@@ -545,7 +566,7 @@ class Summon(commands.Cog):
             logger.exception("Final reveal failed; reward remains in inventory")
             try:
                 # Covers rejected attachments and a deleted original message.
-                result_message = await interaction.followup.send(summary, view=view, wait=True)
+                result_message = await interaction.followup.send(summary, embed=meters, view=view, wait=True)
                 if view:
                     view.message = result_message
             except Exception:
