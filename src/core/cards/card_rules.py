@@ -19,7 +19,7 @@ QUALITIES = {
 BASE_RARITY_WEIGHTS = dict(zip(RARITIES, (50, 30, 12.5, 5, 2, 0.5)))
 QUALITY_WEIGHTS = dict(zip(QUALITIES, (10, 20, 40, 20, 10)))
 # At one ticket the base odds apply. Interpolate weight multipliers up to ten.
-MAX_TICKET_MULTIPLIERS = dict(zip(RARITIES, (0.95, 0.98, 1.10, 1.20, 1.30, 1.20)))
+MAX_TICKET_MULTIPLIERS = dict(zip(RARITIES, (0.92, 0.96, 1.20, 1.40, 1.60, 1.50)))
 RARITY_ORDER = list(reversed(RARITIES))
 QUALITY_ORDER = list(reversed(QUALITIES))
 DUST_VALUES = dict(zip(RARITIES, (1, 2, 5, 15, 50, 150)))
