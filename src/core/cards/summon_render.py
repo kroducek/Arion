@@ -1,0 +1,206 @@
+"""Bounded, single-play summon animation. No Discord or storage side effects."""
+import io
+import math
+import os
+import random
+from functools import lru_cache
+
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+
+from src.utils.paths import ASSETS_DIR
+
+SIZE = (640, 480)
+FRAME_MS = 80
+MAX_BYTES = 8 * 1024 * 1024
+PURPLE = (172, 119, 245)
+GOLD = (242, 200, 105)
+INK = (12, 13, 25)
+RARITY_COLORS = {
+    "uncommon": (165, 174, 191), "common": (225, 232, 241),
+    "rare": (87, 156, 250), "epic": (183, 113, 248), "legendary": GOLD,
+}
+
+
+@lru_cache(maxsize=20)
+def font(size, serif=False):
+    names = ["DejaVuSerif-Bold.ttf", "LiberationSerif-Bold.ttf"] if serif else ["DejaVuSans.ttf", "LiberationSans-Regular.ttf"]
+    for directory in [os.path.join(ASSETS_DIR, "fonts"), "/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/truetype/liberation", "C:/Windows/Fonts"]:
+        for name in names + (["georgiab.ttf"] if serif else ["segoeui.ttf"]):
+            try:
+                return ImageFont.truetype(os.path.join(directory, name), size)
+            except OSError:
+                pass
+    return ImageFont.load_default(size=size)
+
+
+def label(draw, xy, text, size=16, fill=(239, 231, 218), serif=False):
+    draw.text(xy, text, font=font(size, serif), fill=fill, anchor="mm")
+
+
+@lru_cache(maxsize=48)
+def _thumbnail(path, modified):
+    with Image.open(path) as source:
+        return ImageOps.fit(source.convert("RGB"), (146, 214), method=Image.Resampling.LANCZOS)
+
+
+def thumbnail(path):
+    try:
+        return _thumbnail(path, os.stat(path).st_mtime_ns).copy()
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return None
+
+
+def card_back():
+    image = Image.new("RGB", (150, 220), (26, 23, 46))
+    d = ImageDraw.Draw(image)
+    d.rounded_rectangle((1, 1, 148, 218), radius=12, outline=GOLD, width=2)
+    d.rounded_rectangle((9, 9, 140, 210), radius=8, outline=(91, 72, 118))
+    for y in range(24, 205, 22):
+        d.line((15, y, 135, y + 45), fill=(43, 36, 65))
+        d.line((135, y, 15, y + 45), fill=(43, 36, 65))
+    d.ellipse((34, 69, 116, 151), outline=GOLD, width=2)
+    d.polygon([(75, 59), (108, 110), (75, 161), (42, 110)], outline=PURPLE, width=2)
+    label(d, (75, 110), "A", 39, GOLD, True)
+    label(d, (75, 188), "AURIONIS", 10, GOLD)
+    return image
+
+
+def card_front(path):
+    art = thumbnail(path) if path else None
+    if art is None:
+        return card_back()
+    image = Image.new("RGB", (150, 220), INK)
+    image.paste(art, (2, 3))
+    ImageDraw.Draw(image).rounded_rectangle((1, 1, 148, 218), radius=10, outline=GOLD, width=2)
+    return image
+
+
+def _clover(draw, x, y, color):
+    for dx, dy in [(-3, -3), (3, -3), (-3, 3), (3, 3)]:
+        draw.ellipse((x + dx - 3, y + dy - 3, x + dx + 3, y + dy + 3), fill=color)
+    draw.line((x, y + 4, x + 3, y + 10), fill=color, width=2)
+
+
+def render_opening(card, art_path, roll_paths, tickets, clovers, *, jackpot=False,
+                   max_bytes=MAX_BYTES):
+    """Return (GIF bytes, playback seconds); raise ValueError above upload budget.
+
+    No loop extension means one play, holding the revealed card at the end.
+    Randomness here is cosmetic and never consumes the game's random generator.
+    """
+    rng = random.Random(42)
+    back = card_back()
+    front = card_front(art_path)
+    thumbs = [card_front(path) for path in roll_paths[:8]] or [back]
+    particles = [(rng.randrange(24, 616), rng.randrange(90, 365), rng.random()) for _ in range(28)]
+    accent = RARITY_COLORS.get(card.get("rarity"), PURPLE)
+    duration = 8.0 if jackpot else 6.8
+    # One palette for the entire clip keeps text/meters from changing colour
+    # as different artwork passes through the reel, and speeds up encoding.
+    palette_source = Image.new("RGB", (640, 480), INK)
+    for i, tile in enumerate([back, front] + thumbs[:6]):
+        palette_source.paste(tile.resize((150, 150)), ((i % 4) * 150, (i // 4) * 150))
+    pd = ImageDraw.Draw(palette_source)
+    for i, shade in enumerate([PURPLE, GOLD, accent, (117, 212, 160), (239, 231, 218), (194, 181, 210), (123, 113, 144)]):
+        pd.rectangle((i * 90, 320, i * 90 + 89, 365), fill=shade)
+    for y in range(366, 480):
+        f = (y - 366) / 114
+        pd.line((0, y, 640, y), fill=tuple(int(INK[i] + PURPLE[i] * f * 0.3) for i in range(3)))
+    palette = palette_source.quantize(colors=128)
+    frames = []
+    frame_count = round(duration * 1000 / FRAME_MS)
+    for index in range(frame_count):
+        t = index * FRAME_MS / 1000
+        reveal_at = 5.8 if jackpot else 4.6
+        reveal = max(0.0, min(1.0, (t - reveal_at) / 0.8))
+        color = accent if t >= reveal_at - 0.3 else PURPLE
+        image = Image.new("RGB", SIZE, INK)
+        d = ImageDraw.Draw(image)
+        for radius in range(235, 10, -12):
+            amount = (1 - radius / 250) * (0.17 + 0.04 * math.sin(t * 3))
+            shade = tuple(int(INK[i] + color[i] * amount) for i in range(3))
+            d.ellipse((320 - radius, 239 - radius // 2, 320 + radius, 239 + radius // 2), fill=shade)
+        d.rounded_rectangle((16, 14, 623, 465), radius=16, outline=(65, 52, 84))
+        label(d, (320, 37), "A U R I O N I S   /   C A R D S", 12, GOLD)
+        if t < 1.04:
+            title, subtitle = "Pečeť se probouzí", "Základní bedna"
+        elif t < 2.0:
+            title, subtitle = "Tvé štěstí", "Dokonalé štěstí · +1 čtyřlístek" if tickets == 10 else "Každý lístek posiluje tvé šance"
+        elif t < reveal_at:
+            title = "Karty se točí"
+            subtitle = "5 / 5 · Legendary Shiny zaručena" if jackpot else "Osud vybírá tvou kartu"
+        else:
+            title = "JACKPOT" if jackpot else "Tvá karta přichází"
+            subtitle = f"{card.get('rarity', 'uncommon').upper()}  /  {card.get('quality', 'normal').upper()}"
+        label(d, (320, 69), title, 27, serif=True)
+        label(d, (320, 101), subtitle, 14, color if t >= reveal_at else (166, 157, 185))
+        for px, py, phase in particles:
+            y = 126 + (py - t * (9 + phase * 12)) % 228
+            brightness = 0.3 + 0.5 * abs(math.sin(t * 2 + phase * 6))
+            shade = tuple(int(c * brightness) for c in color)
+            d.ellipse((px, y, px + 2, y + 2), fill=shade)
+        if t < 2:
+            pulse = int(8 * math.sin(t * 3))
+            d.ellipse((218 - pulse, 135 - pulse, 422 + pulse, 351 + pulse), outline=color, width=2)
+            image.paste(back, (245, 133))
+        elif t < reveal_at:
+            p = min(1, (t - 2) / (reveal_at - 2))
+            offset = 7 * 180 * (1 - p) ** 3
+            for slot in range(-2, 10):
+                x = int(245 + slot * 180 - offset)
+                if x < -150 or x > 640:
+                    continue
+                tile = back if slot == 0 else thumbs[slot % len(thumbs)]
+                distance = min(1, abs(x - 245) / 260)
+                tile = ImageEnhance.Brightness(tile).enhance(1 - distance * 0.65)
+                if distance > 0.3:
+                    tile = tile.filter(ImageFilter.GaussianBlur(1.4))
+                image.paste(tile, (x, 133))
+            d = ImageDraw.Draw(image)
+            d.polygon([(312, 120), (328, 120), (320, 130)], fill=GOLD)
+            d.polygon([(312, 366), (328, 366), (320, 356)], fill=GOLD)
+        else:
+            if jackpot:
+                for ray in range(24):
+                    angle = ray * math.pi / 12 + t * 0.12
+                    inner, outer = 130, 160 + 18 * math.sin(t * 2 + ray)
+                    d.line((320 + math.cos(angle) * inner, 243 + math.sin(angle) * inner * 0.65,
+                            320 + math.cos(angle) * outer, 243 + math.sin(angle) * outer * 0.65),
+                           fill=(130, 103, 55), width=2)
+            for ring in range(4):
+                pad = 5 + ring * 4
+                shade = tuple(int(c * (0.7 - ring * 0.13)) for c in color)
+                d.rounded_rectangle((245 - pad, 133 - pad, 395 + pad, 353 + pad), radius=14, outline=shade, width=2)
+            width = max(2, int(150 * abs(math.cos(reveal * math.pi))))
+            tile = (back if reveal < 0.5 else front).resize((width, 220), Image.Resampling.LANCZOS)
+            image.paste(tile, (320 - width // 2, 133))
+            if reveal >= 1 and card.get("quality") in ("gold", "shiny"):
+                overlay = Image.new("RGBA", SIZE)
+                od = ImageDraw.Draw(overlay)
+                sweep = int(((t - reveal_at - 0.8) / 1.2) * 220)
+                shine = (255, 246, 205, 70) if card.get("quality") == "gold" else (210, 235, 255, 85)
+                for x in range(245, 395):
+                    for y in range(133, 353):
+                        if abs(x - 245 + (y - 133) * 0.22 - sweep) < 9:
+                            od.point((x, y), fill=shine)
+                image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
+        d = ImageDraw.Draw(image)
+        # A consistent footer separates the two progression systems.
+        d.rectangle((24, 382, 616, 452), fill=INK)
+        filled = 0 if t < 1.04 else min(tickets, int((t - 1.04) / 0.8 * tickets) + 1)
+        label(d, (167, 394), f"LÍSTKY ŠTĚSTÍ   {filled}/10", 12, (194, 181, 210))
+        for j in range(10):
+            x = 53 + j * 23
+            d.rounded_rectangle((x, 410, x + 17, 428), radius=3, fill=GOLD if j < filled else (43, 37, 56))
+        visible_clovers = max(0, clovers - 1) if tickets == 10 and t < 1.84 else clovers
+        label(d, (456, 394), f"ČTYŘLÍSTKY   {visible_clovers}/5", 12, (194, 181, 210))
+        for j in range(5):
+            _clover(d, 396 + j * 30, 419, (117, 212, 160) if j < visible_clovers else (49, 55, 61))
+        label(d, (320, 449), "LEGENDARY · SHINY" if jackpot and t >= reveal_at else "ARIONCARDS  ·  SBĚRATELSKÉ KARTY", 10, GOLD if jackpot else (123, 113, 144))
+        frames.append(image.quantize(palette=palette, dither=Image.Dither.NONE))
+    output = io.BytesIO()
+    frames[0].save(output, format="GIF", save_all=True, append_images=frames[1:],
+                   duration=FRAME_MS, optimize=False, disposal=1)
+    if output.tell() > max_bytes:
+        raise ValueError("Summon animation exceeds attachment budget")
+    return output.getvalue(), frame_count * FRAME_MS / 1000

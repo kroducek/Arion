@@ -26,3 +26,6 @@ src/database/data/json_backup_*/
 
 # --- IDE / NÁSTROJE ---
 .claude/settings.local.json
+
+# Local summon animation previews
+/summon-preview/

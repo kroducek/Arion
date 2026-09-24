@@ -913,8 +913,20 @@ def grant_random_card(
     Přidělí hráči náhodnou kartu a uloží ji do databáze.
     """
 
-    # 1. Načtení databáze karet přes centrální cestu a helper z utils
-    all_cards = load_json(CARDS_DATA, default=[])
+    inventory = load_inventory()
+    result = draw_random_card(uid, load_json(CARDS_DATA, default=[]), inventory,
+                              tickets=tickets, clovers=clovers,
+                              guaranteed_jackpot=guaranteed_jackpot)
+    if result:
+        unique_id, card = result
+        inventory[unique_id] = card
+        save_json(CARDS_INVENTORY, inventory)
+    return result
+
+
+def draw_random_card(uid, all_cards, inventory, *, tickets, clovers,
+                     guaranteed_jackpot=False):
+    """Create an instance without writing; callers can commit it atomically."""
     if not all_cards:
         return None
 
@@ -936,7 +948,6 @@ def grant_random_card(
     # 3. Výběr šablony karty a generování unikátního ID
     # -----------------------------------------------------------------
     card_template = random.choice(all_cards)
-    inventory = load_inventory()
 
     unique_id = generate_unique_id()
     while unique_id in inventory:
@@ -963,8 +974,6 @@ def grant_random_card(
         "created_at":           datetime.now().isoformat(),
         "obtained_via_jackpot": guaranteed_jackpot,
     }
-    inventory[unique_id] = card_instance
-    save_json(CARDS_INVENTORY, inventory)
 
     # -----------------------------------------------------------------
     # 5. Návrat výsledku
