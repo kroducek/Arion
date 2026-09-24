@@ -523,8 +523,9 @@ class Summon(commands.Cog):
                         jackpot=reward.jackpot,
                         max_bytes=min(MAX_ROLL_IMAGE_BYTES, getattr(interaction, "filesize_limit", MAX_ROLL_IMAGE_BYTES)),
                     )
+                await asyncio.sleep(3.0)  # Give the opening crate GIF three extra seconds.
                 intro.title = "Odhalení karty"
-                intro.description = "Pečeť · štěstí · výběr · odhalení"
+                intro.description = None
                 intro.set_image(url="attachment://summon.gif")
                 await message.edit(embeds=[intro, luck_embed(reward.tickets, reward.clovers, jackpot=reward.jackpot)],
                                    attachments=[discord.File(io.BytesIO(animation), filename="summon.gif")])

@@ -60,9 +60,16 @@ def card_back():
         d.line((135, y, 15, y + 45), fill=(43, 36, 65))
     d.ellipse((34, 69, 116, 151), outline=GOLD, width=2)
     d.polygon([(75, 59), (108, 110), (75, 161), (42, 110)], outline=PURPLE, width=2)
-    label(d, (75, 110), "A", 39, GOLD, True)
+    star = [(75, 77), (82, 101), (104, 110), (82, 117),
+            (75, 145), (68, 117), (46, 110), (68, 101)]
+    glow = Image.new("RGBA", image.size)
+    ImageDraw.Draw(glow).polygon(star, fill=(255, 207, 110, 220))
+    image = Image.alpha_composite(image.convert("RGBA"), glow.filter(ImageFilter.GaussianBlur(9)))
+    d = ImageDraw.Draw(image)
+    d.polygon(star, fill=(255, 237, 176), outline=(255, 251, 230), width=2)
+    d.ellipse((72, 107, 78, 113), fill=(255, 255, 250))
     label(d, (75, 188), "AURIONIS", 10, GOLD)
-    return image
+    return image.convert("RGB")
 
 
 def card_front(path):
@@ -72,6 +79,27 @@ def card_front(path):
     image = Image.new("RGB", (150, 220), INK)
     image.paste(art, (2, 3))
     ImageDraw.Draw(image).rounded_rectangle((1, 1, 148, 218), radius=10, outline=GOLD, width=2)
+    return image
+
+
+@lru_cache(maxsize=1)
+def night_sky():
+    """Stable navy sky and soft nebula, drawn once per process."""
+    image = Image.new("RGB", SIZE)
+    pixels = image.load()
+    for y in range(SIZE[1]):
+        for x in range(SIZE[0]):
+            cloud = math.exp(-((y - 310 + x * 0.32) / 67) ** 2)
+            cloud *= 0.65 + 0.35 * math.sin(x / 105 + y / 130)
+            pixels[x, y] = (int(7 + cloud * 18), int(12 + cloud * 13), int(28 + cloud * 38))
+    d = ImageDraw.Draw(image)
+    rng = random.Random(731)
+    for _ in range(160):
+        x, y = rng.randrange(23, 617), rng.randrange(20, 397)
+        if 125 < x < 515 and y < 116:
+            continue
+        brightness = rng.randrange(70, 170)
+        d.point((x, y), fill=(brightness, brightness, min(255, brightness + 40)))
     return image
 
 
@@ -100,6 +128,7 @@ def render_opening(card, art_path, roll_paths, *, jackpot=False,
     for y in range(366, 480):
         f = (y - 366) / 114
         pd.line((0, y, 640, y), fill=tuple(int(INK[i] + PURPLE[i] * f * 0.3) for i in range(3)))
+    palette_source.paste(night_sky().resize((320, 110)), (320, 370))
     palette = palette_source.quantize(colors=128)
     frames = []
     frame_count = round(duration * 1000 / FRAME_MS)
@@ -108,12 +137,14 @@ def render_opening(card, art_path, roll_paths, *, jackpot=False,
         reveal_at = 9.8 if jackpot else 8.6
         reveal = max(0.0, min(1.0, (t - reveal_at) / 0.8))
         color = accent if t >= reveal_at - 0.3 else PURPLE
-        image = Image.new("RGB", SIZE, INK)
+        image = night_sky().copy()
         d = ImageDraw.Draw(image)
-        for radius in range(235, 10, -12):
-            amount = (1 - radius / 250) * (0.17 + 0.04 * math.sin(t * 3))
-            shade = tuple(int(INK[i] + color[i] * amount) for i in range(3))
-            d.ellipse((320 - radius, 239 - radius // 2, 320 + radius, 239 + radius // 2), fill=shade)
+        for i in range(12):
+            sx, sy = 34 + (i * 137) % 570, 130 + (i * 83) % 247
+            brightness = int(135 + 65 * math.sin(t * 1.4 + i))
+            shade = (brightness, brightness, min(255, brightness + 40))
+            d.line((sx - 2, sy, sx + 2, sy), fill=shade)
+            d.line((sx, sy - 2, sx, sy + 2), fill=shade)
         d.rounded_rectangle((16, 14, 623, 405), radius=16, outline=(65, 52, 84))
         label(d, (320, 37), "A U R I O N I S   /   C A R D S", 12, GOLD)
         if t < 1.04:
