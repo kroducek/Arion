@@ -423,12 +423,14 @@ def _build_prukaz_embed(target, profile) -> discord.Embed:
     if active_card_id:
         try:
             from src.utils.paths import CARDS_INVENTORY
+            from src.core.cards.card_rules import QUALITIES, LEGACY_QUALITIES
             cards_inv = load_json(CARDS_INVENTORY, {})
             card = cards_inv.get(active_card_id)
             if card:
                 print_num = card.get("print_number", "?")
                 qual = card.get("quality", "normal")
-                qual_icon = {"shiny": "\u2728", "gold": "\U0001f947", "normal": "\u26aa", "damaged": "\U0001f494"}.get(qual, "\u26aa")
+                qual = LEGACY_QUALITIES.get(qual, qual)
+                qual_icon = QUALITIES.get(qual, QUALITIES["normal"])["emoji"]
                 lines.append("")
                 lines.append("\U0001f3b4 **Reprezentativní karta**")
                 lines.append(f"*{card.get('name')}  \u00b7  Print #{print_num}  \u00b7  {qual_icon} {qual.capitalize()}  \u00b7  ID: `{active_card_id}`*")

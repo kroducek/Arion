@@ -33,38 +33,11 @@ CARDS_REBORN_STATE = _data("cards_reborn_state")
 # Rarity/kolekce/bedny/rámečky si nechávají svou vlastní barvu — ta nese význam.
 BRAND_PURPLE = 0x9B59B6
 
-RARITIES = {
-    "uncommon":  {"color": 0x808080, "emoji": "⚪"},
-    "common":    {"color": 0xFFFFFF, "emoji": "🟢"},
-    "rare":      {"color": 0x0000FF, "emoji": "🔵"},
-    "epic":      {"color": 0x800080, "emoji": "🟣"},
-    "legendary": {"color": 0xFFD700, "emoji": "🟡"},
-}
-
-LEGENDARY_RARITY = "legendary"
-
-QUALITIES = {
-    "shiny":   {"name": "Shiny",   "emoji": "✨", "color": 0xFFD700},
-    "gold":    {"name": "Gold",    "emoji": "🥇", "color": 0xFFB142},
-    "normal":  {"name": "Normal",  "emoji": "⚪", "color": 0x95A5A6},
-    "damaged": {"name": "Damaged", "emoji": "💔", "color": 0x8B0000},
-}
-
-# Hodnoty Hvězdného prachu — sdílené mezi /burn a /info
-DUST_VALUES = {
-    "uncommon":  1,
-    "common":    2,
-    "rare":      5,
-    "epic":     15,
-    "legendary": 50,
-}
-
-QUALITY_MULTIPLIERS = {
-    "shiny":   2.0,
-    "gold":    1.5,
-    "normal":  1.0,
-    "damaged": 0.5,
-}
+from src.core.cards.card_rules import (
+    RARITIES, QUALITIES, DUST_VALUES, QUALITY_MULTIPLIERS,
+    RARITY_ORDER, QUALITY_ORDER, roll_rarity, roll_quality, migrate_qualities,
+    rarity_chances,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -548,14 +521,14 @@ SEED_CARDS = [
 # Rankovací tabulky pro album
 # ---------------------------------------------------------------------------
 
-QUALITY_RANK = {q: i for i, q in enumerate(["shiny", "gold", "normal", "damaged"])}
-RARITY_RANK  = {r: i for i, r in enumerate(["legendary", "epic", "rare", "common", "uncommon"])}
+QUALITY_RANK = {q: i for i, q in enumerate(QUALITY_ORDER)}
+RARITY_RANK  = {r: i for i, r in enumerate(RARITY_ORDER)}
 
 
 def get_best_card_for_template(uid: str, card_id: int, inventory: dict) -> "dict | None":
     """
     Vrátí nejlepší instanci karty daného hráče pro šablonu card_id.
-    Nejlepší = nejnižší rank rarity, pak nejnižší rank kvality (shiny > gold > normal > damaged).
+    Nejlepší = nejnižší rank rarity, pak nejnižší rank kvality (pristine > excellent > normal > poor > damaged).
     Vrátí None pokud hráč danou kartu nevlastní.
     """
     owned = [
@@ -823,91 +796,10 @@ def build_showcase_image(card: dict, unique_id: str, owner_name: str = None,
         frame_id=frame_id,
     )
  
-def roll_rarity(tickets: int = 0, clovers: int = 0) -> str:
-    """Rarita podle lístků a čtyřlístků štěstí.
-
-    Lístky zvyšují šanci postupně. Čtyřlístky jsou výrazně silnější bonus.
-    Při 5/5 čtyřlístcích se běžný roll nepoužívá — summon garantuje Legendary.
-    """
-    tickets = max(0, min(10, int(tickets)))
-    clovers = max(0, min(5, int(clovers)))
-
-    # Základ: 1% Legendary / 5% Epic / 10% Rare / 20% Common / 64% Uncommon.
-    # Lístky zvyšují hlavně vyšší rarity. 9/10 dává přibližně 28% na Rare.
-    ticket_bonus = {
-        0: (1, 5, 10, 20, 64),
-        1: (1.2, 5.5, 11, 20.5, 61.8),
-        2: (1.4, 6.0, 12, 21, 59.6),
-        3: (1.7, 6.6, 13.5, 21.5, 57.7),
-        4: (2.0, 7.2, 15, 22, 53.8),
-        5: (2.4, 8.0, 17, 22.5, 50.1),
-        6: (2.8, 8.8, 19, 23, 46.4),
-        7: (3.3, 9.8, 21, 23, 42.9),
-        8: (3.9, 10.8, 24, 23, 38.3),
-        9: (4.6, 12.0, 28, 23, 32.4),
-        10: (5.5, 14.0, 32, 23, 25.5),
-    }
-    weights = list(ticket_bonus[tickets])
-
-    # Každý čtyřlístek výrazně posouvá váhy směrem k nejvyšším tierům.
-    # 1–4/5 jsou stále náhodné; 5/5 se řeší jako garantovaný jackpot v summon.py.
-    clover_multiplier = {
-        0: (1.0, 1.0, 1.0, 1.0, 1.0),
-        1: (2.0, 1.7, 1.45, 0.90, 0.65),
-        2: (3.5, 2.6, 1.9, 0.75, 0.40),
-        3: (6.0, 4.0, 2.5, 0.55, 0.20),
-        4: (10.0, 6.0, 3.2, 0.35, 0.08),
-        5: (1.0, 1.0, 1.0, 1.0, 1.0),
-    }
-    weights = [w * m for w, m in zip(weights, clover_multiplier[clovers])]
-    return random.choices(
-        ["legendary", "epic", "rare", "common", "uncommon"],
-        weights=weights,
-        k=1,
-    )[0]
-
-
-def roll_quality(tickets: int = 0, clovers: int = 0) -> str:
-    """Kvalita podle lístků a čtyřlístků; čtyřlístky silně tlačí kvalitu nahoru."""
-    tickets = max(0, min(10, int(tickets)))
-    clovers = max(0, min(5, int(clovers)))
-
-    # Shiny / Gold / Normal / Damaged.
-    ticket_bonus = {
-        0: (5, 15, 50, 30),
-        1: (5.5, 16, 50, 28.5),
-        2: (6, 17, 50, 27),
-        3: (6.5, 18, 49.5, 26),
-        4: (7, 19, 49, 25),
-        5: (8, 20, 48, 24),
-        6: (9, 21, 47, 23),
-        7: (10, 22, 46, 22),
-        8: (11, 23, 45, 21),
-        9: (13, 25, 43, 19),
-        10: (15, 28, 40, 17),
-    }
-    weights = list(ticket_bonus[tickets])
-    clover_multiplier = {
-        0: (1.0, 1.0, 1.0, 1.0),
-        1: (2.0, 1.5, 0.85, 0.55),
-        2: (3.5, 2.2, 0.65, 0.30),
-        3: (6.0, 3.5, 0.45, 0.12),
-        4: (10.0, 5.0, 0.25, 0.04),
-        5: (1.0, 1.0, 1.0, 1.0),
-    }
-    weights = [w * m for w, m in zip(weights, clover_multiplier[clovers])]
-    return random.choices(
-        ["shiny", "gold", "normal", "damaged"],
-        weights=weights,
-        k=1,
-    )[0]
-
 def grant_random_card(
     uid: str,
     *,
     tickets: int,
-    clovers: int,
-    guaranteed_jackpot: bool = False,
 ) -> Optional[Tuple[str, Dict[str, Any]]]:
     """
     Přidělí hráči náhodnou kartu a uloží ji do databáze.
@@ -915,8 +807,7 @@ def grant_random_card(
 
     inventory = load_inventory()
     result = draw_random_card(uid, load_json(CARDS_DATA, default=[]), inventory,
-                              tickets=tickets, clovers=clovers,
-                              guaranteed_jackpot=guaranteed_jackpot)
+                              tickets=tickets)
     if result:
         unique_id, card = result
         inventory[unique_id] = card
@@ -924,29 +815,14 @@ def grant_random_card(
     return result
 
 
-def draw_random_card(uid, all_cards, inventory, *, tickets, clovers,
-                     guaranteed_jackpot=False):
+def draw_random_card(uid, all_cards, inventory, *, tickets):
     """Create an instance without writing; callers can commit it atomically."""
     if not all_cards:
         return None
 
-    # -----------------------------------------------------------------
-    # 2. Rozhodneme o raritě a kvalitě vytištěné karty
-    # -----------------------------------------------------------------
-    # Šablony v CARDS_DATA (viz /cards db_add) nenesou vlastní raritu ani
-    # kvalitu — ta se stejně jako u /cards print přiděluje až konkrétnímu
-    # vytištěnému kusu. Proto se dál nefiltrují šablony podle rarity/shiny
-    # (to nikdy nic nenajde a jen by to tiše rušilo garantovaný jackpot).
-    if guaranteed_jackpot:
-        rarity = LEGENDARY_RARITY
-        quality = "shiny"
-    else:
-        rarity = roll_rarity(tickets, clovers)
-        quality = roll_quality(tickets, clovers)
+    rarity = roll_rarity(tickets)
+    quality = roll_quality()
 
-    # -----------------------------------------------------------------
-    # 3. Výběr šablony karty a generování unikátního ID
-    # -----------------------------------------------------------------
     card_template = random.choice(all_cards)
 
     unique_id = generate_unique_id()
@@ -972,7 +848,6 @@ def draw_random_card(uid, all_cards, inventory, *, tickets, clovers,
         "owner_id":             uid,
         "frame":                None,
         "created_at":           datetime.now().isoformat(),
-        "obtained_via_jackpot": guaranteed_jackpot,
     }
 
     # -----------------------------------------------------------------
@@ -1011,6 +886,7 @@ class Cards(commands.Cog):
         app_commands.Choice(name="Rare",      value="rare"),
         app_commands.Choice(name="Epic",      value="epic"),
         app_commands.Choice(name="Legendary", value="legendary"),
+        app_commands.Choice(name="Mythic", value="mythic"),
     ])
     async def print_card(
         self,
@@ -1044,11 +920,7 @@ class Cards(commands.Cog):
             while unique_id in inventory:
                 unique_id = generate_unique_id()
 
-            q_roll = random.random()
-            if q_roll < 0.05:   quality = "shiny"
-            elif q_roll < 0.20: quality = "gold"
-            elif q_roll < 0.70: quality = "normal"
-            else:               quality = "damaged"
+            quality = roll_quality()
 
             max_print += 1
             inventory[unique_id] = {
@@ -1189,6 +1061,7 @@ class Cards(commands.Cog):
         app_commands.Choice(name="Rare",      value="rare"),
         app_commands.Choice(name="Epic",      value="epic"),
         app_commands.Choice(name="Legendary", value="legendary"),
+        app_commands.Choice(name="Mythic", value="mythic"),
     ])
     async def create_frame(
         self,
@@ -1711,6 +1584,18 @@ class Cards(commands.Cog):
         ]
         embed.add_field(name="💎 Kvality karet", value="\n".join(quality_lines), inline=True)
 
+        base, boosted = rarity_chances(1), rarity_chances(10)
+        embed.add_field(
+            name="🎟️ Šance na raritu · 1 → 10 lístků",
+            value="\n".join(f"{rid.capitalize()}: **{base[rid]:g}% → {boosted[rid]:.2f}%**"
+                            for rid in RARITIES), inline=False,
+        )
+        embed.add_field(
+            name="Kvalita · nezávislá na lístcích",
+            value="Damaged 10% · Poor 20% · Normal 40% · Excellent 20% · Pristine 10%",
+            inline=False,
+        )
+
         dust_lines = [
             f"{RARITIES[rid]['emoji']} {rid.capitalize()} — **{val}** prachu"
             for rid, val in DUST_VALUES.items()
@@ -2168,20 +2053,8 @@ class Cards(commands.Cog):
             await interaction.response.send_message("Databáze karet je prázdná!", ephemeral=True)
             return
 
-        # Random rarity podle procent
-        rarity_roll = random.random()
-        if rarity_roll < 0.01:      rarity = "legendary"
-        elif rarity_roll < 0.06:    rarity = "epic"
-        elif rarity_roll < 0.16:    rarity = "rare"
-        elif rarity_roll < 0.36:    rarity = "common"
-        else:                       rarity = "uncommon"
-
-        # Random kvalita
-        quality_roll = random.random()
-        if quality_roll < 0.05:     quality = "shiny"
-        elif quality_roll < 0.20:   quality = "gold"
-        elif quality_roll < 0.70:   quality = "normal"
-        else:                       quality = "damaged"
+        rarity = roll_rarity()
+        quality = roll_quality()
 
         # Random karta z DB
         card_template = random.choice(cards_db)
@@ -2497,6 +2370,7 @@ class Cards(commands.Cog):
 
 async def setup(bot):
     """Registruje cog do bota."""
+    migrate_qualities()
     ensure_cards_data()
     ensure_frames_data()
     _ensure_nocard_png()

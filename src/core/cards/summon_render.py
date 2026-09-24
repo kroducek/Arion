@@ -8,6 +8,7 @@ from functools import lru_cache
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from src.utils.paths import ASSETS_DIR
+from src.core.cards.card_rules import RARITIES
 
 SIZE = (640, 420)
 FRAME_MS = 80
@@ -15,10 +16,8 @@ MAX_BYTES = 8 * 1024 * 1024
 PURPLE = (172, 119, 245)
 GOLD = (242, 200, 105)
 INK = (12, 13, 25)
-RARITY_COLORS = {
-    "uncommon": (165, 174, 191), "common": (225, 232, 241),
-    "rare": (87, 156, 250), "epic": (183, 113, 248), "legendary": GOLD,
-}
+RARITY_COLORS = {name: ((data['color'] >> 16) & 255, (data['color'] >> 8) & 255, data['color'] & 255)
+                 for name, data in RARITIES.items()}
 
 
 @lru_cache(maxsize=20)
@@ -103,20 +102,21 @@ def night_sky():
     return image
 
 
-def render_opening(card, art_path, roll_paths, *, jackpot=False,
+def render_opening(card, art_path, roll_paths, *,
                    max_bytes=MAX_BYTES):
     """Return (GIF bytes, playback seconds); raise ValueError above upload budget.
 
     No loop extension means one play, holding the revealed card at the end.
     Randomness here is cosmetic and never consumes the game's random generator.
     """
+    mythic = card.get("rarity") == "mythic"
     rng = random.Random(42)
     back = card_back()
     front = card_front(art_path)
     thumbs = [card_front(path) for path in roll_paths[:8]] or [back]
     particles = [(rng.randrange(24, 616), rng.randrange(90, 365), rng.random()) for _ in range(28)]
     accent = RARITY_COLORS.get(card.get("rarity"), PURPLE)
-    duration = 12.0 if jackpot else 10.8
+    duration = 12.0 if mythic else 10.8
     # One palette for the entire clip keeps text/meters from changing colour
     # as different artwork passes through the reel, and speeds up encoding.
     palette_source = Image.new("RGB", (640, 480), INK)
@@ -134,7 +134,7 @@ def render_opening(card, art_path, roll_paths, *, jackpot=False,
     frame_count = round(duration * 1000 / FRAME_MS)
     for index in range(frame_count):
         t = index * FRAME_MS / 1000
-        reveal_at = 9.8 if jackpot else 8.6
+        reveal_at = 9.8 if mythic else 8.6
         reveal = max(0.0, min(1.0, (t - reveal_at) / 0.8))
         color = accent if t >= reveal_at - 0.3 else PURPLE
         image = night_sky().copy()
@@ -153,9 +153,9 @@ def render_opening(card, art_path, roll_paths, *, jackpot=False,
             title, subtitle = "Pečeť se otevírá", "Tvá karta čeká na odhalení"
         elif t < reveal_at:
             title = "Karty se točí"
-            subtitle = "Legendary Shiny zaručena" if jackpot else "Osud vybírá tvou kartu"
+            subtitle = "Osud vybírá tvou kartu"
         else:
-            title = "JACKPOT" if jackpot else "Tvá karta přichází"
+            title = "MYTHIC" if mythic else "Tvá karta přichází"
             subtitle = f"{card.get('rarity', 'uncommon').upper()}  /  {card.get('quality', 'normal').upper()}"
         label(d, (320, 69), title, 27, serif=True)
         label(d, (320, 101), subtitle, 14, color if t >= reveal_at else (166, 157, 185))
@@ -185,7 +185,7 @@ def render_opening(card, art_path, roll_paths, *, jackpot=False,
             d.polygon([(312, 120), (328, 120), (320, 130)], fill=GOLD)
             d.polygon([(312, 366), (328, 366), (320, 356)], fill=GOLD)
         else:
-            if jackpot:
+            if mythic:
                 for ray in range(24):
                     angle = ray * math.pi / 12 + t * 0.12
                     inner, outer = 130, 160 + 18 * math.sin(t * 2 + ray)
@@ -199,18 +199,18 @@ def render_opening(card, art_path, roll_paths, *, jackpot=False,
             width = max(2, int(150 * abs(math.cos(reveal * math.pi))))
             tile = (back if reveal < 0.5 else front).resize((width, 220), Image.Resampling.LANCZOS)
             image.paste(tile, (320 - width // 2, 133))
-            if reveal >= 1 and card.get("quality") in ("gold", "shiny"):
+            if reveal >= 1 and card.get("quality") in ("excellent", "pristine"):
                 overlay = Image.new("RGBA", SIZE)
                 od = ImageDraw.Draw(overlay)
                 sweep = int(((t - reveal_at - 0.8) / 1.2) * 220)
-                shine = (255, 246, 205, 70) if card.get("quality") == "gold" else (210, 235, 255, 85)
+                shine = (255, 246, 205, 70) if card.get("quality") == "excellent" else (210, 235, 255, 85)
                 for x in range(245, 395):
                     for y in range(133, 353):
                         if abs(x - 245 + (y - 133) * 0.22 - sweep) < 9:
                             od.point((x, y), fill=shine)
                 image = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
         d = ImageDraw.Draw(image)
-        label(d, (320, 392), "LEGENDARY · SHINY" if jackpot and t >= reveal_at else "ARIONCARDS  ·  SBĚRATELSKÉ KARTY", 10, GOLD if jackpot else (123, 113, 144))
+        label(d, (320, 392), "MYTHIC · VZÁCNÝ OBJEV" if mythic and t >= reveal_at else "ARIONCARDS  ·  SBĚRATELSKÉ KARTY", 10, GOLD if mythic else (123, 113, 144))
         frames.append(image.quantize(palette=palette, dither=Image.Dither.NONE))
     output = io.BytesIO()
     frames[0].save(output, format="GIF", save_all=True, append_images=frames[1:],

@@ -44,8 +44,6 @@ STARTER_CRATES = {"basic": 1}
 
 TICKET_EMOJI = "🎟️"
 MAX_TICKETS = 10
-MAX_CLOVERS = 5
-LUCK_DATA = _data("summon_luck.json")
 
 DAILY_DATA = _data("summon_daily.json")
 DAILY_REWARD_CRATE = "basic"
@@ -127,19 +125,13 @@ def get_roll_images(count: int) -> list:
     return frames
 
 
-def luck_embed(tickets: int, clovers: int, *, jackpot=False, remaining=None):
-    """Separate embed keeps emoji meters below the animation/result image."""
+def luck_embed(tickets: int):
+    """Ticket progress stays below the opening GIF and final card."""
     embed = discord.Embed(color=BRAND_PURPLE)
     embed.add_field(name=f"Lístky štěstí · {tickets}/{MAX_TICKETS}",
                     value=TICKET_EMOJI * tickets + "▫️" * (MAX_TICKETS - tickets), inline=False)
-    embed.add_field(name=f"Čtyřlístky štěstí · {clovers}/{MAX_CLOVERS}",
-                    value="🍀" * clovers + "▫️" * (MAX_CLOVERS - clovers), inline=False)
-    if jackpot:
-        embed.description = "🌟 **JACKPOT · Legendary Shiny!**"
-        if remaining is not None:
-            embed.set_footer(text=f"Po jackpotu začínáš znovu · {remaining}/{MAX_CLOVERS} čtyřlístků")
-    elif tickets == MAX_TICKETS:
-        embed.description = "🍀 **Dokonalé štěstí · +1 čtyřlístek**"
+    if tickets == MAX_TICKETS:
+        embed.description = "🎟️ **Dokonalé štěstí · maximální bonus k raritě!**"
     return embed
 
 
@@ -154,20 +146,6 @@ def format_remaining(delta: timedelta) -> str:
     hours, rem = divmod(int(delta.total_seconds()), 3600)
     minutes = rem // 60
     return f"{hours}h {minutes}m"
-
-
-def load_luck() -> dict:
-    """Načte dlouhodobé štěstí hráčů."""
-    return load_json(LUCK_DATA, default={})
-
-
-def get_luck(uid: str) -> dict:
-    """Vrátí stav štěstí hráče a doplní bezpečné výchozí hodnoty."""
-    def ensure(luck):
-        state = luck.setdefault(uid, {"clovers": 0})
-        state["clovers"] = max(0, min(MAX_CLOVERS, int(state.get("clovers", 0))))
-        return luck
-    return update_json(LUCK_DATA, ensure)[uid]
 
 
 def load_daily() -> dict:
@@ -406,39 +384,6 @@ class Summon(commands.Cog):
         )
         await interaction.response.send_message(embed=embed)
 
-    @summon_group.command(name="admin-jackpot", description="[ADMIN] Otestovat 5/5 jackpot bez změny reálného luck metru")
-    @admin_only()
-    @app_commands.describe(crate="Typ bedny, na které chceš jackpot otestovat")
-    @app_commands.choices(crate=[
-        app_commands.Choice(name="Základní bedna", value="basic"),
-    ])
-    async def admin_jackpot(self, interaction: discord.Interaction, crate: str = "basic"):
-        """[ADMIN] Spustí testovací 5/5 jackpot scénář bez odečtení bedny a bez změny luck metru."""
-        crate_data = CRATES.get(crate)
-        if not crate_data:
-            await interaction.response.send_message("Taková bedna neexistuje.", ephemeral=True)
-            return
-
-        uid = str(interaction.user.id)
-        if uid in self._opening:
-            await interaction.response.send_message(
-                "Jednu bednu už právě otevíráš — počkej, než dopadne.", ephemeral=True
-            )
-            return
-
-        self._opening.add(uid)
-        try:
-            await self._run_opening(
-                interaction,
-                crate,
-                crate_data,
-                forced_tickets=MAX_TICKETS,
-                forced_clovers=MAX_CLOVERS,
-                is_test=True,
-            )
-        finally:
-            self._opening.discard(uid)
-
     @summon_group.command(name="open", description="Otevřít bednu a summonovat kartu")
     @app_commands.describe(crate="Typ bedny (výchozí: základní)")
     @app_commands.choices(crate=[
@@ -475,15 +420,12 @@ class Summon(commands.Cog):
         """Edit only embeds so the existing crate GIF keeps playing."""
         for current in range(1, reward.tickets + 1):
             await asyncio.sleep(0.65)
-            complete = current == reward.tickets
-            meters = luck_embed(current,
-                reward.clovers if complete else reward.clovers_before,
-                jackpot=reward.jackpot and complete)
+            meters = luck_embed(current)
             await message.edit(embeds=[intro, meters])
 
     async def _run_opening(
         self, interaction, crate, crate_data, *, forced_tickets=None,
-        forced_clovers=None, is_test=False,
+        is_test=False,
     ):
         """Commit once, then present. Display errors never refund a granted card."""
         await interaction.response.defer()
@@ -495,7 +437,7 @@ class Summon(commands.Cog):
         intro.set_author(name=interaction.user.display_name,
                          icon_url=interaction.user.display_avatar.url)
         if is_test:
-            intro.set_footer(text="ADMIN NÁHLED · bez změny inventáře a štěstí")
+            intro.set_footer(text="ADMIN NÁHLED · bez změny inventáře")
         # If this fails, nothing has been charged yet.
         gif_path = get_crate_gif_path(crate, self._last_crate_gif.get(crate))
         files = []
@@ -503,17 +445,13 @@ class Summon(commands.Cog):
             self._last_crate_gif[crate] = gif_path
             intro.set_image(url="attachment://crate_open.gif")
             files.append(discord.File(gif_path, filename="crate_open.gif"))
-        previous_clovers = max(0, min(MAX_CLOVERS, int(
-            load_luck().get(str(interaction.user.id), {}).get("clovers", 0))))
-        if is_test and forced_clovers is not None:
-            previous_clovers = max(0, forced_clovers - (forced_tickets == MAX_TICKETS))
         message = await interaction.followup.send(
-            embeds=[intro, luck_embed(0, previous_clovers)], files=files, wait=True)
+            embeds=[intro, luck_embed(0)], files=files, wait=True)
         try:
             reward = settle_opening(
                 str(interaction.user.id), crate,
                 forced_tickets if forced_tickets is not None else random.randint(1, MAX_TICKETS),
-                preview=is_test, forced_clovers=forced_clovers,
+                preview=is_test,
             )
         except (NoCrates, EmptyCardPool) as error:
             text = "Nemáš žádnou bednu tohoto typu." if isinstance(error, NoCrates) else "Databáze karet je prázdná. Bedna zůstává u tebe."
@@ -537,7 +475,7 @@ class Summon(commands.Cog):
                     rendered, progress = await asyncio.gather(
                         asyncio.to_thread(
                             render_opening, reward.card, get_card_image_path(reward.card.get("image")),
-                            get_roll_images(8), jackpot=reward.jackpot,
+                            get_roll_images(8),
                             max_bytes=min(MAX_ROLL_IMAGE_BYTES, getattr(interaction, "filesize_limit", MAX_ROLL_IMAGE_BYTES)),
                         ),
                         self._animate_luck(message, intro, reward),
@@ -552,7 +490,7 @@ class Summon(commands.Cog):
                 intro.title = "Odhalení karty"
                 intro.description = None
                 intro.set_image(url="attachment://summon.gif")
-                await message.edit(embeds=[intro, luck_embed(reward.tickets, reward.clovers, jackpot=reward.jackpot)],
+                await message.edit(embeds=[intro, luck_embed(reward.tickets)],
                                    attachments=[discord.File(io.BytesIO(animation), filename="summon.gif")])
                 await asyncio.sleep(duration + 0.4)
         except Exception:
@@ -576,8 +514,7 @@ class Summon(commands.Cog):
         )
         view = None if is_test else KeepBurnView(uid=str(interaction.user.id),
                                                  unique_id=reward.unique_id, card=card)
-        meters = luck_embed(reward.tickets, reward.clovers, jackpot=reward.jackpot,
-                            remaining=reward.remaining_clovers if not is_test else None)
+        meters = luck_embed(reward.tickets)
         result_embeds = [meters]
         if showcase:
             card_embed = discord.Embed(color=BRAND_PURPLE)

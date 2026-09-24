@@ -3,14 +3,29 @@
 import io
 import math
 import os
+from functools import lru_cache
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps, ImageFont
 
-from src.logic.profile_render import _font, _save, _truncate, _wrap
+from src.logic.profile_render import _font as _shared_font, _save, _truncate, _wrap
 from src.utils.paths import FRAMES_DIR
+from src.core.cards.card_rules import RARITIES, QUALITIES, RARITY_ORDER, QUALITY_ORDER
 
 W, H = 1024, 1536
-PAD = 62
+PAD = 144  # Keep text inside the opening of decorative edge frames.
+
+
+@lru_cache(maxsize=32)
+def _font(size, serif=False):
+    font = _shared_font(size, serif=serif)
+    if getattr(font, "size", None) == size:
+        return font
+    # The shared fallback can ignore requested sizes when system fonts are absent.
+    try:
+        filename = "georgiab.ttf" if serif else "segoeui.ttf"
+        return ImageFont.truetype(os.path.join(os.environ.get("WINDIR", "C:/Windows"), "Fonts", filename), size)
+    except OSError:
+        return ImageFont.load_default(size=size)
 
 
 def _open_image(image):
@@ -34,6 +49,7 @@ def _fit_name(draw, text, max_width):
 
 def _chip(draw, x, y, text, color):
     font = _font(22)
+    text = text.upper()
     width = int(draw.textlength(text, font=font)) + 34
     draw.rounded_rectangle(
         (x, y, x + width, y + 42),
@@ -86,7 +102,7 @@ def render_card_showcase(image, name, description, accent, chips, rows, unique_i
 
     shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow)
-    panel_top = 900
+    panel_top = 780
     for y in range(panel_top, H):
         opacity = int(238 * ((y - panel_top) / (H - panel_top)) ** 0.55)
         shadow_draw.line((0, y, W, y), fill=(5, 8, 16, opacity))
@@ -94,50 +110,56 @@ def render_card_showcase(image, name, description, accent, chips, rows, unique_i
     canvas = Image.alpha_composite(canvas, shadow)
     draw = ImageDraw.Draw(canvas)
 
-    draw.rounded_rectangle(
-        (PAD, 55, PAD + 132, 109),
-        radius=16,
-        fill=(8, 10, 18, 205),
-        outline=accent + (255,),
-        width=3,
-    )
     print_value = next((value for label, value in rows if label == "Tisk"), "#?")
-    draw.text((PAD + 66, 82), str(print_value), font=_font(27), fill=(255, 255, 255), anchor="mm")
-
-    y = 1040
-    chip_x = PAD
-    for text, color in chips:
+    content_width = W - 2 * PAD
+    title = (name or "?").upper()
+    title_font = _fit_name(draw, title, content_width)
+    description_font = _font(25, serif=True)
+    description_lines = _wrap(draw, description, description_font, content_width, max_lines=2)
+    detail_rows = [(label, value) for label, value in rows if label not in {"Tisk", "Vytisknuto"}]
+    id_y = H - 180
+    content_height = 68 + title_font.size + 18 + len(description_lines) * 34 + 18
+    if detail_rows:
+        content_height += 18 + len(detail_rows) * 32
+    y = min(950, id_y - 40 - content_height)
+    # Print belongs with the other badges, away from top/side ornaments.
+    badges = [(str(print_value), accent), *chips]
+    chip_font = _font(22)
+    badge_width = sum(int(draw.textlength(text.upper(), font=chip_font)) + 34 for text, _ in badges)
+    badge_width += 12 * (len(badges) - 1)
+    chip_x = (W - badge_width) // 2
+    for text, color in badges:
         chip_x += _chip(draw, chip_x, y, text, color) + 12
 
     y += 68
-    title_font = _fit_name(draw, name or "?", W - 2 * PAD)
     draw.text(
-        (PAD, y),
-        _truncate(draw, (name or "?").upper(), title_font, W - 2 * PAD),
+        (W // 2, y),
+        _truncate(draw, title, title_font, content_width),
         font=title_font,
+        anchor="ma",
         fill=(255, 245, 218),
         stroke_width=3,
         stroke_fill=(10, 10, 15),
     )
     y += title_font.size + 18
 
-    description_font = _font(25, serif=True)
-    for line in _wrap(draw, description, description_font, W - 2 * PAD, max_lines=2):
-        draw.text((PAD, y), line, font=description_font, fill=(220, 222, 232))
+    for line in description_lines:
+        draw.text((W // 2, y), line, font=description_font, fill=(220, 222, 232), anchor="ma")
         y += 34
 
     y += 18
-    detail_rows = [(label, value) for label, value in rows if label not in {"Tisk", "Vytisknuto"}]
     if detail_rows:
         draw.line((PAD, y, W - PAD, y), fill=accent + (180,), width=2)
         y += 18
         label_font = _font(19)
         value_font = _font(21, serif=True)
+        label_width = max(draw.textlength(label.upper(), font=label_font) for label, _ in detail_rows)
+        value_width = max(80, content_width - label_width - 32)
         for label, value in detail_rows:
             draw.text((PAD, y), label.upper(), font=label_font, fill=(165, 170, 188))
             draw.text(
                 (W - PAD, y),
-                _truncate(draw, str(value), value_font, 570),
+                _truncate(draw, str(value), value_font, value_width),
                 font=value_font,
                 fill=(240, 240, 245),
                 anchor="ra",
@@ -145,14 +167,14 @@ def render_card_showcase(image, name, description, accent, chips, rows, unique_i
             y += 32
 
     id_font = _font(20)
-    draw.text((PAD, H - 52), f"ID {unique_id}", font=id_font, fill=(190, 194, 208), anchor="lm")
+    draw.text((W // 2, id_y), f"ID {unique_id}", font=id_font, fill=(190, 194, 208), anchor="mm")
     if footer:
         draw.text(
-            (W - PAD, H - 52),
-            _truncate(draw, footer, id_font, 590),
+            (W // 2, id_y + 32),
+            _truncate(draw, footer, id_font, content_width),
             font=id_font,
             fill=(190, 194, 208),
-            anchor="rm",
+            anchor="mm",
         )
 
     draw.rounded_rectangle((18, 18, W - 18, H - 18), radius=28, outline=accent + (255,), width=8)
@@ -174,8 +196,8 @@ _GAP = 18          # mezera mezi kartami
 _HEADER_H = 120    # výška hlavičky alba
 _PAD_OUT = 36      # vnější padding vlevo/vpravo
 _BORDER_R = 14     # zaoblení rohu jednotlivé miniatury
-_QUALITY_ORDER = ["shiny", "gold", "normal", "damaged"]
-_RARITY_ORDER  = ["legendary", "epic", "rare", "common", "uncommon"]
+_QUALITY_ORDER = QUALITY_ORDER
+_RARITY_ORDER  = RARITY_ORDER
 
 
 def _quality_key(q: str) -> int:
@@ -194,19 +216,13 @@ def _rarity_key(r: str) -> int:
 
 def _rarity_color(rarity: str) -> tuple:
     """Vrátí RGB barvu podle rarity."""
-    colors = {
-        "legendary": (255, 215, 0),
-        "epic":      (148, 0, 211),
-        "rare":      (30, 80, 220),
-        "common":    (60, 200, 60),
-        "uncommon":  (140, 140, 140),
-    }
-    return colors.get(rarity, (120, 120, 120))
+    color = RARITIES.get(rarity, {"color": 0x787878})["color"]
+    return ((color >> 16) & 255, (color >> 8) & 255, color & 255)
 
 
 def _quality_label(quality: str) -> str:
-    labels = {"shiny": "✨ Shiny", "gold": "🥇 Gold", "normal": "Normal", "damaged": "💔 Damaged"}
-    return labels.get(quality, quality.capitalize())
+    data = QUALITIES.get(quality)
+    return f"{data['emoji']} {data['name']}" if data else quality.capitalize()
 
 
 def _draw_nocard_thumb(nocard_path: str | None) -> Image.Image:

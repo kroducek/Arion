@@ -18,7 +18,6 @@ class RewardTests(unittest.TestCase):
         db.reset_for_tests(os.path.join(self.tmp.name, 'test.db'))
         db.save_doc('cards_data.json', [{'id': 1, 'name': 'Test', 'image': 'missing.png'}])
         db.save_doc('cards_crates.json', {'1': {'basic': 1}})
-        db.save_doc('summon_luck.json', {'1': {'clovers': 4}})
 
     def tearDown(self):
         db.reset_for_tests(self.old)
@@ -27,23 +26,24 @@ class RewardTests(unittest.TestCase):
     def snapshot(self):
         return {name: db.load_doc(name) for name in db.list_docs()}
 
-    def test_jackpot_commits_card_crate_and_reset(self):
+    def test_opening_commits_card_and_crate(self):
         reward = settle_opening('1', 'basic', 10)
-        self.assertEqual((reward.card['rarity'], reward.card['quality']), ('legendary', 'shiny'))
+        self.assertIn(reward.card['rarity'], ('common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'))
+        self.assertIn(reward.card['quality'], ('damaged', 'poor', 'normal', 'excellent', 'pristine'))
         self.assertEqual(db.load_doc('cards_inventory.json')[reward.unique_id], reward.card)
         self.assertEqual(db.load_doc('cards_crates.json')['1']['basic'], 0)
-        self.assertEqual(db.load_doc('summon_luck.json')['1']['clovers'], 0)
+        self.assertNotIn('summon_luck.json', db.list_docs())
         with self.assertRaises(NoCrates):
             settle_opening('1', 'basic', 10)
         self.assertEqual(len(db.load_doc('cards_inventory.json')), 1)
 
     def test_preview_does_not_grant_a_real_card(self):
         before = self.snapshot()
-        result = settle_opening('1', 'basic', 10, preview=True, forced_clovers=5)
-        self.assertTrue(result.jackpot)
+        result = settle_opening('1', 'basic', 10, preview=True)
+        self.assertEqual(result.tickets, 10)
         self.assertEqual(before, self.snapshot())
 
-    def test_empty_pool_does_not_consume_crate_or_luck(self):
+    def test_empty_pool_does_not_consume_crate(self):
         db.save_doc('cards_data.json', [])
         before = self.snapshot()
         with self.assertRaises(EmptyCardPool):
@@ -57,11 +57,10 @@ class RewardTests(unittest.TestCase):
             settle_opening('1', 'basic', 10)
         self.assertEqual(before, self.snapshot())
 
-    def test_non_jackpot_keeps_luck_and_existing_inventory(self):
+    def test_opening_preserves_existing_inventory(self):
         db.save_doc('cards_inventory.json', {'old': {'card_id': 1, 'owner_id': '2', 'print_number': 7}})
         result = settle_opening('1', 'basic', 3)
         self.assertEqual(result.card['print_number'], 8)
-        self.assertEqual(result.remaining_clovers, 4)
         self.assertIn('old', db.load_doc('cards_inventory.json'))
 
     def test_display_failure_never_refunds_committed_reward(self):
@@ -92,14 +91,14 @@ class RewardTests(unittest.TestCase):
         asyncio.run(run())
         self.assertEqual(db.load_doc('cards_crates.json')['1']['basic'], 0)
         self.assertEqual(len(db.load_doc('cards_inventory.json')), 1)
-        self.assertEqual(db.load_doc('summon_luck.json')['1']['clovers'], 0)
+        self.assertNotIn('summon_luck.json', db.list_docs())
 
 
 class LuckAnimationTests(unittest.TestCase):
-    def test_tickets_fill_in_order_and_clover_appears_at_ten(self):
+    def test_tickets_fill_in_order_without_other_meters(self):
         async def run():
             message = SimpleNamespace(edit=AsyncMock())
-            reward = SimpleNamespace(tickets=10, clovers_before=4, clovers=5, jackpot=True)
+            reward = SimpleNamespace(tickets=10)
             with patch.object(asyncio, 'sleep', new=AsyncMock()):
                 await Summon(None)._animate_luck(message, None, reward)
             calls = message.edit.await_args_list
@@ -108,7 +107,7 @@ class LuckAnimationTests(unittest.TestCase):
                 self.assertNotIn('attachments', call.kwargs)
                 meters = call.kwargs['embeds'][1]
                 self.assertEqual(meters.fields[0].value.count('🎟️'), count)
-                self.assertEqual(meters.fields[1].value.count('🍀'), 5 if count == 10 else 4)
+                self.assertEqual(len(meters.fields), 1)
                 self.assertEqual(bool(meters.description), count == 10)
         asyncio.run(run())
 

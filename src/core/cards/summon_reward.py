@@ -1,4 +1,4 @@
-"""Commit crate, card and luck together before presenting the reward."""
+"""Commit crate and card together before presenting the reward."""
 import json
 import os
 from dataclasses import dataclass
@@ -21,14 +21,10 @@ class OpeningReward:
     unique_id: str
     card: dict
     tickets: int
-    clovers: int
-    remaining_clovers: int
-    jackpot: bool
-    clovers_before: int
 
 
-def settle_opening(uid, crate, tickets, *, preview=False, forced_clovers=None):
-    """Preview draws the same way but writes no documents and grants no card."""
+def settle_opening(uid, crate, tickets, *, preview=False):
+    """Preview draws normally, but never grants or consumes anything."""
     with db.transaction() as conn:
         def read(path, default):
             row = conn.execute("SELECT data FROM docs WHERE name = ?", (os.path.basename(path),)).fetchone()
@@ -49,23 +45,11 @@ def settle_opening(uid, crate, tickets, *, preview=False, forced_clovers=None):
         if not templates:
             raise EmptyCardPool()
         inventory = read(CARDS_INVENTORY, {})
-        luck = read("summon_luck.json", {})
-        state = luck.setdefault(uid, {"clovers": 0})
-        before = max(0, min(5, int(state.get("clovers", 0))))
         tickets = max(1, min(10, int(tickets)))
-        clovers = min(5, before + (tickets == 10))
-        if preview and forced_clovers is not None:
-            clovers = max(0, min(5, int(forced_clovers)))
-            before = max(0, clovers - (tickets == 10))
-        jackpot = clovers == 5
-        unique_id, card = draw_random_card(uid, templates, inventory, tickets=tickets,
-                                          clovers=clovers, guaranteed_jackpot=jackpot)
-        remaining = 0 if jackpot else clovers
+        unique_id, card = draw_random_card(uid, templates, inventory, tickets=tickets)
         if not preview:
             inventory[unique_id] = card
             owned[crate] -= 1
-            state['clovers'] = remaining
             write(CARDS_CRATES, crates)
             write(CARDS_INVENTORY, inventory)
-            write("summon_luck.json", luck)
-        return OpeningReward(unique_id, card, tickets, clovers, remaining, jackpot, before)
+        return OpeningReward(unique_id, card, tickets)
