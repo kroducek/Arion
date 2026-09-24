@@ -12,7 +12,7 @@ from discord.ext import commands
 
 from src.utils.admin_gate import SHARED_COGS, drop_admin_commands, keep_only_admin
 
-ENTRYPOINTS = ("main_bot.py", "main_dnd.py", "main_dm.py")
+ENTRYPOINTS = ("main_bot.py", "main_dnd.py", "main_dm.py", "main_cards.py")
 
 
 def cog_list(entrypoint: str) -> list[str]:

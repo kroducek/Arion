@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import discord
 from discord import app_commands
 from discord.ext import commands
-from src.core.bot.cards import (
+from src.core.cards.cards import (
     BRAND_PURPLE,
     KeepBurnView,
     build_showcase_image,

@@ -13,8 +13,8 @@ from discord import app_commands
 import asyncio
 from functools import partial
 from src.utils.paths import CARDS_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES, FRAMES_INVENTORY, data as _data
-from src.utils.card_image import apply_frame_to_card
-from src.utils.card_render import render_card_showcase, render_album_grid
+from src.core.cards.card_image import apply_frame_to_card
+from src.core.cards.card_render import render_card_showcase, render_album_grid
 from src.utils.json_utils import load_json, save_json
 from src.utils.embeds import create_error_embed
 from src.logic.profile import load_data as profile_load, save_data as profile_save

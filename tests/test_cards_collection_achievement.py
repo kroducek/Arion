@@ -1,6 +1,6 @@
 import unittest
 
-from src.core.bot import cards
+from src.core.cards import cards
 from src.core.dnd.achievements import ACHIEVEMENTS_DEF
 
 CARDS_DB = [

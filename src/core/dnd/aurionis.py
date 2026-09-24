@@ -231,7 +231,7 @@ KRONIKA = {
         "emoji": "🎮",
         "color": 0x5865F2,
         "intro": "*Arion zamňouká a rozhodí po stole karty a herní kostky...*",
-        "footer": "ArionBOT · Minihry, karty & utility",
+        "footer": "ArionBOT · Minihry & utility",
         "categories": {
             "minihry": {
                 "label": "Minihry",
@@ -244,31 +244,6 @@ KRONIKA = {
                     "`/liarslots` — Liar Slots (sloty + bluff)\n"
                     "`/sibenice` — Šibenice (hádej větu)\n"
                     "`/blackjack` — Blackjack (sázky)"
-                ),
-            },
-            "karty": {
-                "label": "Karty",
-                "emoji": "🃏",
-                "commands": (
-                    "`/cards info` — Přehled systému karet\n"
-                    "`/cards inventory` — Tvoje karty\n"
-                    "`/cards show` — Detail konkrétní karty\n"
-                    "`/cards gallery` — Alba kolekcí (sady a karty)\n"
-                    "`/cards list` — Dostupné vzory karet v databázi\n"
-                    "`/cards upgrade` — Nasaď rámeček na kartu\n"
-                    "`/cards frames` — Tvoje rámečky\n"
-                    "`/cards burn` — Spal kartu za Hvězdný prach\n"
-                    "`/cards set_profile` `/cards profile` — Profilová karta"
-                ),
-            },
-            "vypravy": {
-                "label": "Výpravy karet",
-                "emoji": "🗺️",
-                "commands": (
-                    "`/cards work` — Přehled výprav (stav i dostupné expedice)\n"
-                    "`/cards work_send` — Vyšli až 3 karty na výpravu za zlatem\n"
-                    "`/cards work_status` — Stav tvé výpravy\n"
-                    "`/cards work_claim` — Vyzvedni odměnu z dokončené výpravy"
                 ),
             },
             "tarot": {
@@ -308,6 +283,51 @@ KRONIKA = {
                     "`/countdown` — Odpočet\n"
                     "`/voice lock/unlock` — Zamkni/odemkni hlasový kanál\n"
                     "`/voice hide/show` — Skryj/zobraz hlasový kanál"
+                ),
+            },
+        },
+    },
+    "arioncards": {
+        "label": "ArionCARDS",
+        "emoji": "🃏",
+        "color": 0x9B59B6,
+        "intro": "*Arion rozloží sběratelské karty a otevře bednu...*",
+        "footer": "ArionCARDS · Karty, summon & výpravy",
+        "categories": {
+            "karty": {
+                "label": "Karty",
+                "emoji": "🃏",
+                "commands": (
+                    "`/cards info` — Přehled systému karet\n"
+                    "`/cards inventory` — Tvoje karty\n"
+                    "`/cards show` — Detail konkrétní karty\n"
+                    "`/cards gallery` — Alba kolekcí (sady a karty)\n"
+                    "`/cards list` — Dostupné vzory karet v databázi\n"
+                    "`/cards upgrade` — Nasaď rámeček na kartu\n"
+                    "`/cards frames` — Tvoje rámečky\n"
+                    "`/cards burn` — Spal kartu za Hvězdný prach\n"
+                    "`/cards set_profile` `/cards profile` — Profilová karta"
+                ),
+            },
+            "vypravy": {
+                "label": "Výpravy karet",
+                "emoji": "🗺️",
+                "commands": (
+                    "`/cards work` — Přehled výprav (stav i dostupné expedice)\n"
+                    "`/cards work_send` — Vyšli až 3 karty na výpravu za zlatem\n"
+                    "`/cards work_status` — Stav tvé výpravy\n"
+                    "`/cards work_claim` — Vyzvedni odměnu z dokončené výpravy"
+                ),
+            },
+            "summon": {
+                "label": "Summon",
+                "emoji": "🎁",
+                "commands": (
+                    "`/summon crates` — Tvoje bedny\n"
+                    "`/summon daily` — Denní odměna\n"
+                    "`/summon open` — Otevři bednu\n"
+                    "`/cards album` — Tvoje album kolekce\n"
+                    "`/cards trade` — Obchoduj s hráčem"
                 ),
             },
         },
@@ -365,7 +385,7 @@ KRONIKA_ADMIN = [
         "`/duch upravit` — Uprav hodnoty ducha\n"
         "`/duch odebrat` — Trvale odebere ducha z kolekce hráče"
     )),
-    ("🎮 ArionBOT — news & karty", (
+    ("🔒 ArionDM — news & karty", (
         "`/news add/delete` — Správa nástěnky zpráv\n"
         "`/cards print` — Vytiskni novou kartu\n"
         "`/cards db_add` — Přidej vzor karty do databáze\n"
@@ -402,6 +422,7 @@ def _build_home_embed() -> discord.Embed:
     )
     dnd_c, dnd_k = _world_counts("ariondnd")
     bot_c, bot_k = _world_counts("arionbot")
+    cards_c, cards_k = _world_counts("arioncards")
     lab_c, lab_k = _world_counts("labyrinth")
     embed.add_field(
         name="⚔️ ArionDND",
@@ -409,7 +430,11 @@ def _build_home_embed() -> discord.Embed:
         inline=True)
     embed.add_field(
         name="🎮 ArionBOT",
-        value=f"Minihry & karty\n-# {bot_c} příkazů · {bot_k} kapitol",
+        value=f"Minihry & utility\n-# {bot_c} příkazů · {bot_k} kapitol",
+        inline=True)
+    embed.add_field(
+        name="🃏 ArionCARDS",
+        value=f"Karty, summon a výpravy\n-# {cards_c} příkazů · {cards_k} kapitol",
         inline=True)
     embed.add_field(
         name="🌀 Labyrinth",
@@ -493,13 +518,16 @@ class KronikaView(discord.ui.View):
             return
 
         if self.bot_key is None:
-            # HOME — tři boti + admin
+            # HOME — čtyři boti + admin
             self.add_item(_NavButton(label="ArionDND", emoji="⚔️",
                                      style=discord.ButtonStyle.primary,
                                      action="bot", target="ariondnd", row=0))
             self.add_item(_NavButton(label="ArionBOT", emoji="🎮",
                                      style=discord.ButtonStyle.success,
                                      action="bot", target="arionbot", row=0))
+            self.add_item(_NavButton(label="ArionCARDS", emoji="🃏",
+                                     style=discord.ButtonStyle.primary,
+                                     action="bot", target="arioncards", row=0))
             self.add_item(_NavButton(label="Labyrinth", emoji="🌀",
                                      style=discord.ButtonStyle.secondary,
                                      action="bot", target="labyrinth", row=0))

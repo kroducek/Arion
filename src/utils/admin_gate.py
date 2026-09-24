@@ -1,9 +1,9 @@
-"""Rozdělení příkazů mezi hráčské boty (ArionDND/ArionBOT) a ArionDM.
+"""Rozdělení příkazů mezi hráčské boty (ArionDND/ArionBOT/ArionCARDS) a ArionDM.
 
 Cogy zůstávají jedny — admin příkazy se jen označí `@admin_only()` a každý bot
 si před syncem ze svého stromu odstraní to, co mu nepatří:
 
-    ArionDND / ArionBOT →  drop_admin_commands(bot)   # zmizí admin příkazy
+    ArionDND / ArionBOT / ArionCARDS →  drop_admin_commands(bot)   # zmizí admin příkazy
     ArionDM             →  keep_only_admin(bot)       # zůstanou jen admin příkazy
 
 Skupina (`app_commands.Group`) se ořezává po podpříkazech; když v ní nic
@@ -15,7 +15,7 @@ from typing import Callable, TypeVar
 from discord import app_commands
 from discord.ext import commands
 
-# Cogy, které načítají ArionDND i ArionDM. ArionDND z nich zahodí admin
+# Cogy sdílené hráčskými boty a ArionDM. Hráčští boti zahodí admin
 # příkazy, ArionDM naopak všechno ostatní.
 SHARED_COGS = [
     "src.core.dnd.quests",
@@ -33,8 +33,8 @@ SHARED_COGS = [
     "src.logic.reputation",
     "src.logic.rpmanage",
     "src.logic.spirits",
-    "src.core.bot.cards",
-    "src.core.bot.summon",
+    "src.core.cards.cards",
+    "src.core.cards.summon",
     "src.core.bot.kostky",
     "src.core.bot.leaderboards",
 ]

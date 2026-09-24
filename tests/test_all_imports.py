@@ -14,7 +14,7 @@ def _iter_modules():
         yield ".".join(path.relative_to(ROOT).with_suffix("").parts)
 
 
-ENTRYPOINTS = ("main_bot.py", "main_dnd.py", "main_dm.py")
+ENTRYPOINTS = ("main_bot.py", "main_dnd.py", "main_dm.py", "main_cards.py")
 
 
 def _cog_list(entrypoint: str):

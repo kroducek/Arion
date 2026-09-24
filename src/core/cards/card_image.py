@@ -6,23 +6,12 @@ Aplikuje rámeček okolo existujícího obrázku karty.
 from PIL import Image, ImageOps
 import io
 import os
-import json
+from src.utils.paths import CARDS_DIR, CARDS_FRAMES as FRAMES_FILE
+from src.utils.json_utils import load_json
 
-# Cesty k datům
-FRAMES_FILE = os.path.join(os.path.dirname(__file__), "..", "database", "data", "cards_frames.json")
-CARDS_DIR = os.path.join(os.path.dirname(__file__), "..", "assets", "cards")
-
-def load_json(filepath):
-    if not os.path.exists(filepath):
-        return []
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return []
 
 def get_frame_by_id(frame_id):
-    frames = load_json(FRAMES_FILE)
+    frames = load_json(FRAMES_FILE, default=[])
     for frame in frames:
         if frame["id"] == frame_id:
             return frame

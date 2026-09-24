@@ -3,6 +3,10 @@ import subprocess
 import sys
 import threading
 import time
+from dotenv import load_dotenv
+
+# Optional bot tokens must also be visible when launched from a local .env.
+load_dotenv()
 
 def run(script):
     """Spustí script a čeká na konec. Obsahuje error handling."""
@@ -50,6 +54,10 @@ time.sleep(2)
 # ArionDM (admin příkazy) — volitelný, spustí se jen s DISCORD_TOKEN_DM
 dm_thread = threading.Thread(target=run_optional, args=("main_dm.py", "DISCORD_TOKEN_DM"), daemon=True)
 dm_thread.start()
+
+# ArionCARDS — hráčské karty; admin příkazy zůstávají v ArionDM.
+cards_thread = threading.Thread(target=run_optional, args=("main_cards.py", "DISCORD_TOKEN_CARDS"), daemon=True)
+cards_thread.start()
 
 # Spustit ArionBOT v main threadu (blokující)
 try:

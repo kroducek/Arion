@@ -26,7 +26,7 @@ class CommandLimitTests(unittest.TestCase):
 
     def test_dm_commands_are_unique(self):
         dm = full_names(self.bots["main_dm.py"].tree)
-        for entrypoint in ("main_bot.py", "main_dnd.py"):
+        for entrypoint in ("main_bot.py", "main_dnd.py", "main_cards.py"):
             with self.subTest(entrypoint=entrypoint):
                 clash = dm & full_names(self.bots[entrypoint].tree)
                 self.assertEqual(
