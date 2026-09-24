@@ -471,6 +471,16 @@ class Summon(commands.Cog):
         finally:
             self._opening.discard(uid)
 
+    async def _animate_luck(self, message, intro, reward):
+        """Edit only embeds so the existing crate GIF keeps playing."""
+        for current in range(1, reward.tickets + 1):
+            await asyncio.sleep(0.65)
+            complete = current == reward.tickets
+            meters = luck_embed(current,
+                reward.clovers if complete else reward.clovers_before,
+                jackpot=reward.jackpot and complete)
+            await message.edit(embeds=[intro, meters])
+
     async def _run_opening(
         self, interaction, crate, crate_data, *, forced_tickets=None,
         forced_clovers=None, is_test=False,
@@ -493,7 +503,12 @@ class Summon(commands.Cog):
             self._last_crate_gif[crate] = gif_path
             intro.set_image(url="attachment://crate_open.gif")
             files.append(discord.File(gif_path, filename="crate_open.gif"))
-        message = await interaction.followup.send(embed=intro, files=files, wait=True)
+        previous_clovers = max(0, min(MAX_CLOVERS, int(
+            load_luck().get(str(interaction.user.id), {}).get("clovers", 0))))
+        if is_test and forced_clovers is not None:
+            previous_clovers = max(0, forced_clovers - (forced_tickets == MAX_TICKETS))
+        message = await interaction.followup.send(
+            embeds=[intro, luck_embed(0, previous_clovers)], files=files, wait=True)
         try:
             reward = settle_opening(
                 str(interaction.user.id), crate,
@@ -517,12 +532,22 @@ class Summon(commands.Cog):
             # Bound peak memory/CPU. Under load reveal immediately instead of queueing GIFs.
             if not self._render_slot.locked():
                 async with self._render_slot:
-                    animation, duration = await asyncio.to_thread(
-                        render_opening, reward.card, get_card_image_path(reward.card.get("image")),
-                        get_roll_images(8),
-                        jackpot=reward.jackpot,
-                        max_bytes=min(MAX_ROLL_IMAGE_BYTES, getattr(interaction, "filesize_limit", MAX_ROLL_IMAGE_BYTES)),
+                    # Await both jobs even if one fails; no orphan meter edits
+                    # can overwrite the final result after a render failure.
+                    rendered, progress = await asyncio.gather(
+                        asyncio.to_thread(
+                            render_opening, reward.card, get_card_image_path(reward.card.get("image")),
+                            get_roll_images(8), jackpot=reward.jackpot,
+                            max_bytes=min(MAX_ROLL_IMAGE_BYTES, getattr(interaction, "filesize_limit", MAX_ROLL_IMAGE_BYTES)),
+                        ),
+                        self._animate_luck(message, intro, reward),
+                        return_exceptions=True,
                     )
+                    if isinstance(rendered, BaseException):
+                        raise rendered
+                    if isinstance(progress, BaseException):
+                        raise progress
+                    animation, duration = rendered
                 await asyncio.sleep(3.0)  # Give the opening crate GIF three extra seconds.
                 intro.title = "Odhalení karty"
                 intro.description = None

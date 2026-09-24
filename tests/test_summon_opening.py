@@ -95,5 +95,23 @@ class RewardTests(unittest.TestCase):
         self.assertEqual(db.load_doc('summon_luck.json')['1']['clovers'], 0)
 
 
+class LuckAnimationTests(unittest.TestCase):
+    def test_tickets_fill_in_order_and_clover_appears_at_ten(self):
+        async def run():
+            message = SimpleNamespace(edit=AsyncMock())
+            reward = SimpleNamespace(tickets=10, clovers_before=4, clovers=5, jackpot=True)
+            with patch.object(asyncio, 'sleep', new=AsyncMock()):
+                await Summon(None)._animate_luck(message, None, reward)
+            calls = message.edit.await_args_list
+            self.assertEqual(len(calls), 10)
+            for count, call in enumerate(calls, 1):
+                self.assertNotIn('attachments', call.kwargs)
+                meters = call.kwargs['embeds'][1]
+                self.assertEqual(meters.fields[0].value.count('🎟️'), count)
+                self.assertEqual(meters.fields[1].value.count('🍀'), 5 if count == 10 else 4)
+                self.assertEqual(bool(meters.description), count == 10)
+        asyncio.run(run())
+
+
 if __name__ == '__main__':
     unittest.main()

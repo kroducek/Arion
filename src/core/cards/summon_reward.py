@@ -24,6 +24,7 @@ class OpeningReward:
     clovers: int
     remaining_clovers: int
     jackpot: bool
+    clovers_before: int
 
 
 def settle_opening(uid, crate, tickets, *, preview=False, forced_clovers=None):
@@ -55,6 +56,7 @@ def settle_opening(uid, crate, tickets, *, preview=False, forced_clovers=None):
         clovers = min(5, before + (tickets == 10))
         if preview and forced_clovers is not None:
             clovers = max(0, min(5, int(forced_clovers)))
+            before = max(0, clovers - (tickets == 10))
         jackpot = clovers == 5
         unique_id, card = draw_random_card(uid, templates, inventory, tickets=tickets,
                                           clovers=clovers, guaranteed_jackpot=jackpot)
@@ -66,4 +68,4 @@ def settle_opening(uid, crate, tickets, *, preview=False, forced_clovers=None):
             write(CARDS_CRATES, crates)
             write(CARDS_INVENTORY, inventory)
             write("summon_luck.json", luck)
-        return OpeningReward(unique_id, card, tickets, clovers, remaining, jackpot)
+        return OpeningReward(unique_id, card, tickets, clovers, remaining, jackpot, before)
