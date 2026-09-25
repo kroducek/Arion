@@ -472,6 +472,8 @@ EXPEDITIONS = {
 }
 
 COLLECTIONS = {
+    "coven_of_death": {"color": 0x71368A, "emoji": "💀", "description": "Kult smrti"},
+    "friends": {"color": 0x2ECC71, "emoji": "🤝", "description": "Přátelé"},
     "unworthy": {"color": 0x2C2F33, "emoji": "💀", "description": "Nevolaní — padlí a zapomenutí"},
     "worthy":   {"color": 0x99AAB5, "emoji": "⚔️",  "description": "Hrdinové Aurionisu"},
     "queen":    {"color": 0xFF69B4, "emoji": "👑",  "description": "Královna a její dvůr"},
@@ -514,7 +516,11 @@ SEED_CARDS = [
     {"id": 29, "name": "Levitující šašek",       "description": "Miluje chaos, často napodobuje emoce a výrazy ostatních", "image": "letajici_sasek.png",               "collection": "jesters"},
     {"id": 30, "name": "Remi",       "description": "Vyvolená služka jenž po smrti svého pána ztratila cestu", "image": "remi.png",               "collection": "chosen"},
     {"id": 31, "name": "Hao",       "description": "Nejsilnější vyvolený jenž okolo sebe shromažďuje silné jedince", "image": "hao2.png",               "collection": "chosen"},
-    {"id": 32, "name": "První stín",       "description": "Žije v něm jakýsi mimozemský symbiot..", "image": "prvni_stin.png",               "collection": "shadows"},
+    {"id": 32, "name": "První stín",       "description": "Žije v něm jakýsi mimozemský symbiot..", "image": "prvni_stin.PNG",               "collection": "shadows"},
+    {"id": 33, "name": "Noxarath", "description": "Bohyně temnoty a čarodějka smrti.", "image": "noxarath2.png", "collection": "coven_of_death"},
+    {"id": 34, "name": "Saleriom", "description": "Bývalý meč kultu smrti, nyní chrání Alice Aurelion.", "image": "saleriom.png", "collection": "coven_of_death"},
+    {"id": 35, "name": "Sidorovic", "description": "Nejvyčůranější obchodník a milovník jídla.", "image": "sidorovic.png", "collection": "friends"},
+    {"id": 36, "name": "Talias", "description": "Duchovní vůdce Aurelionů a nynější král Kalexie.", "image": "talias.png", "collection": "queen"},
 
 ]
 
@@ -970,6 +976,8 @@ class Cards(commands.Cog):
         attachment="Nahraj obrázek přímo z Discordu (uloží se pod zadaným názvem)",
     )
     @app_commands.choices(collection=[
+        app_commands.Choice(name="💀 Coven of Death — Kult smrti", value="coven_of_death"),
+        app_commands.Choice(name="🤝 Friends — Přátelé", value="friends"),
         app_commands.Choice(name="Unworthy — Nevolaní",         value="unworthy"),
         app_commands.Choice(name="Worthy — Hrdinové Aurionisu", value="worthy"),
         app_commands.Choice(name="Queen — Královna a dvůr",     value="queen"),
@@ -1654,6 +1662,8 @@ class Cards(commands.Cog):
     @cards_group.command(name="gallery", description="Alba kolekcí — přehled sad a karet")
     @app_commands.describe(collection="Sada (volitelné) — zobrazí detail kolekce")
     @app_commands.choices(collection=[
+        app_commands.Choice(name="💀 Coven of Death — Kult smrti", value="coven_of_death"),
+        app_commands.Choice(name="🤝 Friends — Přátelé", value="friends"),
         app_commands.Choice(name="Unworthy — Nevolaní",         value="unworthy"),
         app_commands.Choice(name="Worthy — Hrdinové Aurionisu", value="worthy"),
         app_commands.Choice(name="Queen — Královna a dvůr",     value="queen"),
@@ -1740,6 +1750,8 @@ class Cards(commands.Cog):
         user="Hráč (volitelné — výchozí jsi ty)",
     )
     @app_commands.choices(collection=[
+        app_commands.Choice(name="💀 Coven of Death — Kult smrti", value="coven_of_death"),
+        app_commands.Choice(name="🤝 Friends — Přátelé", value="friends"),
         app_commands.Choice(name="Unworthy — Nevolaní",             value="unworthy"),
         app_commands.Choice(name="Worthy — Hrdinové Aurionisu",     value="worthy"),
         app_commands.Choice(name="Queen — Královna a dvůr",         value="queen"),
