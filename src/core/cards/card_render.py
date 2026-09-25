@@ -62,10 +62,10 @@ def _chip(draw, x, y, text, color):
     return width
 
 
-def _apply_frame(canvas, frame_id):
-    """Přiloží rámeček PNG přes kartu — alpha compositing."""
+def _load_frame(frame_id):
+    """Load a usable decorative frame, or preserve the default border fallback."""
     if not frame_id:
-        return canvas
+        return None
     
     frame_path = os.path.join(FRAMES_DIR, f"{frame_id}.png")
     
@@ -74,7 +74,7 @@ def _apply_frame(canvas, frame_id):
         frame_path = os.path.join(FRAMES_DIR, frame_id)
     
     if not os.path.exists(frame_path):
-        return canvas
+        return None
     
     try:
         frame = Image.open(frame_path).convert("RGBA")
@@ -83,11 +83,25 @@ def _apply_frame(canvas, frame_id):
         if frame.size != (W, H):
             frame = ImageOps.fit(frame, (W, H), method=Image.Resampling.LANCZOS)
         
-        # Overlay frame na vrch karty
-        canvas = Image.alpha_composite(canvas, frame)
-        return canvas
+        return frame
     except Exception:
-        return canvas
+        return None
+
+
+def _clip_burned_exterior(canvas, frame):
+    """Hide artwork outside the burned rim while keeping its central opening."""
+    # Fill between the rim's outer edges on each row. Transparent cracks in
+    # the rim cannot accidentally connect the exterior to the central opening.
+    barrier = frame.getchannel("A").point(lambda value: 255 if value >= 128 else 0)
+    mask = Image.new("L", canvas.size, 0)
+    mask_draw = ImageDraw.Draw(mask)
+    for y in range(H):
+        bounds = barrier.crop((0, y, W, y + 1)).getbbox()
+        if bounds:
+            mask_draw.line((bounds[0], y, bounds[2] - 1, y), fill=255)
+    clipped = Image.new("RGBA", canvas.size)
+    clipped.paste(canvas, (0, 0), mask)
+    return clipped
 
 
 def render_card_showcase(image, name, description, accent, chips, rows, unique_id, footer=None, frame_id=None):
@@ -177,10 +191,13 @@ def render_card_showcase(image, name, description, accent, chips, rows, unique_i
             anchor="mm",
         )
 
-    draw.rounded_rectangle((18, 18, W - 18, H - 18), radius=28, outline=accent + (255,), width=8)
-    
-    # Aplikuj rámeček — MUSÍ být na konci, aby byl na vrchu všeho
-    canvas = _apply_frame(canvas, frame_id)
+    frame = _load_frame(frame_id)
+    if frame is None:
+        draw.rounded_rectangle((18, 18, W - 18, H - 18), radius=28, outline=accent + (255,), width=8)
+    else:
+        if os.path.splitext(frame_id)[0] == "burned":
+            canvas = _clip_burned_exterior(canvas, frame)
+        canvas = Image.alpha_composite(canvas, frame)
     
     return _save(canvas)
 
