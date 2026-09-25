@@ -292,7 +292,7 @@ KRONIKA = {
         "emoji": "🃏",
         "color": 0x9B59B6,
         "intro": "*Arion rozloží sběratelské karty a otevře bednu...*",
-        "footer": "ArionCARDS · Karty, summon & výpravy",
+        "footer": "ArionCARDS · Karty & summon",
         "categories": {
             "karty": {
                 "label": "Karty",
@@ -302,21 +302,11 @@ KRONIKA = {
                     "`/cards inventory` — Tvoje karty\n"
                     "`/cards show` — Detail konkrétní karty\n"
                     "`/cards gallery` — Alba kolekcí (sady a karty)\n"
-                    "`/cards list` — Dostupné vzory karet v databázi\n"
                     "`/cards upgrade` — Nasaď rámeček na kartu\n"
                     "`/cards frames` — Tvoje rámečky\n"
+                    "`/cards lock` — Zamkni/odemkni kartu proti spálení\n"
                     "`/cards burn` — Spal kartu za Hvězdný prach\n"
                     "`/cards set_profile` `/cards profile` — Profilová karta"
-                ),
-            },
-            "vypravy": {
-                "label": "Výpravy karet",
-                "emoji": "🗺️",
-                "commands": (
-                    "`/cards work` — Přehled výprav (stav i dostupné expedice)\n"
-                    "`/cards work_send` — Vyšli až 3 karty na výpravu za zlatem\n"
-                    "`/cards work_status` — Stav tvé výpravy\n"
-                    "`/cards work_claim` — Vyzvedni odměnu z dokončené výpravy"
                 ),
             },
             "summon": {
@@ -434,7 +424,7 @@ def _build_home_embed() -> discord.Embed:
         inline=True)
     embed.add_field(
         name="🃏 ArionCARDS",
-        value=f"Karty, summon a výpravy\n-# {cards_c} příkazů · {cards_k} kapitol",
+        value=f"Karty a summon\n-# {cards_c} příkazů · {cards_k} kapitol",
         inline=True)
     embed.add_field(
         name="🌀 Labyrinth",

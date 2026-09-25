@@ -7,7 +7,7 @@ import random
 import string
 import math
 from typing import Optional, Tuple, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 from discord.ext import commands
 from discord import app_commands
 import asyncio
@@ -15,15 +15,14 @@ from functools import partial
 from src.utils.paths import CARDS_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES, FRAMES_INVENTORY, data as _data
 from src.core.cards.card_image import apply_frame_to_card
 from src.core.cards.card_render import render_card_showcase, render_album_grid
-from src.utils.json_utils import load_json, save_json
+from src.utils.json_utils import load_json, save_json, update_json
 from src.utils.embeds import create_error_embed
 from src.logic.profile import load_data as profile_load, save_data as profile_save
 from src.logic.inventory import _load_profiles as inv_load, _save_profiles as inv_save
-from src.logic.economy import _load_economy as load_economy, _save_economy as save_economy, add_balance
+from src.logic.economy import add_balance
 from src.core.dnd.achievements import grant_achievement, announce_achievement, has_achievement
 from src.utils.admin_gate import admin_only
 
-CARDS_WORK = _data("cards_work.json")
 CARDS_REBORN_STATE = _data("cards_reborn_state")
 # ---------------------------------------------------------------------------
 # Konstanty
@@ -56,8 +55,23 @@ class NotCardOwnerError(BurnError):
     """Karta nepatří hráči, který ji zkouší spálit."""
 
 
-class CardOnExpeditionError(BurnError):
-    """Karta je momentálně na výpravě, nejde spálit."""
+class CardLockedError(BurnError):
+    """Zamčenou kartu nelze spálit."""
+
+
+def toggle_card_lock(uid: str, unique_id: str) -> bool:
+    """Atomicky přepne zámek karty jejího vlastníka."""
+    def toggle(inventory):
+        card = inventory.get(unique_id)
+        if card is None:
+            raise CardNotFoundError(unique_id)
+        if card.get("owner_id") != uid:
+            raise NotCardOwnerError(unique_id)
+        card["locked"] = not card.get("locked", False)
+        return inventory
+
+    inventory = update_json(CARDS_INVENTORY, toggle)
+    return inventory[unique_id]["locked"]
 
 
 def calculate_dust(rarity: str, quality: str) -> int:
@@ -71,7 +85,7 @@ def burn_card_by_id(uid: str, unique_id: str) -> dict:
     """
     Spálí kartu hráče a připíše mu Hvězdný prach. Vrací
     {"name", "rarity", "quality", "dust"}. Vyhazuje CardNotFoundError,
-    NotCardOwnerError nebo CardOnExpeditionError podle situace.
+    NotCardOwnerError nebo CardLockedError podle situace.
     """
     inv = load_inventory()
     if unique_id not in inv:
@@ -81,16 +95,8 @@ def burn_card_by_id(uid: str, unique_id: str) -> dict:
     if card.get("owner_id") != uid:
         raise NotCardOwnerError(unique_id)
 
-    works = load_json(CARDS_WORK, default={})
-    user_work = works.get(uid)
-    if user_work and unique_id in user_work.get("cards", []):
-        raise CardOnExpeditionError(unique_id)
-
-    # Odstraň z profilu, pokud je aktivní
-    profiles = profile_load()
-    if uid in profiles and profiles[uid].get("active_card_id") == unique_id:
-        profiles[uid]["active_card_id"] = None
-        profile_save(profiles)
+    if card.get("locked", False):
+        raise CardLockedError(unique_id)
 
     rarity = card.get("rarity", "uncommon")
     quality = card.get("quality", "normal")
@@ -153,8 +159,9 @@ class KeepBurnView(discord.ui.View):
         except NotCardOwnerError:
             await interaction.followup.send("❌ Tahle karta ti nepatří.", ephemeral=True)
             return
-        except CardOnExpeditionError:
-            await interaction.followup.send("❌ Karta je momentálně na výpravě, nejde spálit.", ephemeral=True)
+
+        except CardLockedError:
+            await interaction.followup.send("🔒 Karta je zamčená. Odemkni ji přes `/cards lock`.", ephemeral=True)
             return
 
         await interaction.followup.send(
@@ -196,10 +203,6 @@ def _resolve_trade_cards(owner_uid: str, unique_ids: list) -> Tuple[dict, list]:
     Vrací (platné {unique_id: card}, chybové řádky pro neplatné).
     """
     inv = load_inventory()
-    works = load_json(CARDS_WORK, default={})
-    user_work = works.get(owner_uid)
-    on_expedition = set(user_work.get("cards", [])) if user_work else set()
-
     valid = {}
     errors = []
     for cid in unique_ids:
@@ -208,8 +211,6 @@ def _resolve_trade_cards(owner_uid: str, unique_ids: list) -> Tuple[dict, list]:
             errors.append(f"`{cid}` — neexistuje.")
         elif card.get("owner_id") != owner_uid:
             errors.append(f"`{cid}` — není tvoje.")
-        elif cid in on_expedition:
-            errors.append(f"`{cid}` — je na výpravě, nejde obchodovat.")
         else:
             valid[cid] = card
     return valid, errors
@@ -304,7 +305,7 @@ class TradeView(discord.ui.View):
             return
 
         # Obě strany potvrdily — než se karty reálně přepíšou, ověř znovu obě
-        # nabídky (mezitím mohla karta zmizet / jít na výpravu / být spálena).
+        # nabídky (mezitím mohla karta zmizet / být spálena).
         errors = []
         revalidated = {}
         for uid, cards in self.offers.items():
@@ -395,7 +396,7 @@ def build_inventory_embed(target, sorted_cards: list, page: int, page_size: int 
         qual_data = QUALITIES.get(qual, QUALITIES["normal"])
         frame_text = f"\nRámeček: {card['frame']}" if card.get("frame") else ""
         embed.add_field(
-            name=f"{i}. {card.get('name', '?')} (Print #{card.get('print_number', '?')})",
+            name=f"{i}. {card.get('name', '?')} (Print #{card.get('print_number', '?')})" + (" 🔒" if card.get("locked") else ""),
             value=(
                 f"ID: `{unique_id}`\n"
                 f"Rarita: {rarity.capitalize()} {rarity_emoji}  ·  "
@@ -463,17 +464,9 @@ class InventoryPaginatorView(discord.ui.View):
                 pass
 
 
-EXPEDITIONS = {
-    "hlidka": {"name": "Hlídka ve městě",      "reward":  5, "hours":  6, "emoji": "🛡️",  "description": "Střežení městských bran"},
-    "tabor":  {"name": "Táborový kemp",       "reward":  8, "hours": 12, "emoji": "🏕️", "description": "Řídící tábor v pustině"},
-    "lov":    {"name": "Lov monster",         "reward": 12, "hours": 20, "emoji": "🐺", "description": "Hon na nebezpečné bestie"},
-    "gilda":  {"name": "Úkol pro gildu",      "reward": 20, "hours": 36, "emoji": "📜", "description": "Speciální úkol pro gildu"},
-    "bitva":  {"name": "Velká bitva",         "reward": 35, "hours": 48, "emoji": "⚔️",  "description": "Cesta na válečné bojiště — vysoké riziko!"},
-}
-
 COLLECTIONS = {
-    "coven_of_death": {"color": 0x71368A, "emoji": "💀", "description": "Kult smrti"},
-    "friends": {"color": 0x2ECC71, "emoji": "🤝", "description": "Přátelé"},
+    "coven_of_death": {"color": 0x71368A, "emoji": "💀", "name": "Kult smrti", "description": "Slouží jejich paní Noxarath"},
+    "friends": {"color": 0x2ECC71, "emoji": "🤝", "name": "Přátelé", "description": "Ti jenž potkáme na cestách"},
     "unworthy": {"color": 0x2C2F33, "emoji": "💀", "description": "Nevolaní — padlí a zapomenutí"},
     "worthy":   {"color": 0x99AAB5, "emoji": "⚔️",  "description": "Hrdinové Aurionisu"},
     "queen":    {"color": 0xFF69B4, "emoji": "👑",  "description": "Královna a její dvůr"},
@@ -682,7 +675,6 @@ def ensure_cards_data():
         save_json(CARDS_REBORN_STATE, {"version": version})
  
     if version < 2:
-        save_json(CARDS_WORK, {})
         version = 2
         save_json(CARDS_REBORN_STATE, {"version": version})
  
@@ -778,7 +770,7 @@ def build_showcase_image(card: dict, unique_id: str, owner_name: str = None,
  
     rows = [("Tisk", f"#{card.get('print_number', '?')}")]
     if collection:
-        rows.append(("Kolekce", collection.capitalize()))
+        rows.append(("Kolekce", coll_data.get("name", collection.capitalize())))
     if owner_name:
         rows.append(("Vlastník", owner_name))
     if tickets:
@@ -1049,7 +1041,7 @@ class Cards(commands.Cog):
             color=coll_data["color"],
         )
         embed.add_field(name="🆔 Nové ID",   value=f"**#{next_id}**",                             inline=True)
-        embed.add_field(name="📚 Kolekce",   value=f"{coll_data['emoji']} {collection.capitalize()}", inline=True)
+        embed.add_field(name="📚 Kolekce",   value=f"{coll_data['emoji']} {coll_data.get('name', collection.capitalize())}", inline=True)
         embed.add_field(name="🖼️ Obrázek",  value=f"`{new_card['image']}`\n{image_status}",       inline=True)
         embed.set_footer(text=f"Použij /cards print {next_id} <rarita> pro vytisknutí první kopie.")
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -1334,13 +1326,6 @@ class Cards(commands.Cog):
         card_name = inventory[unique_id].get("name", unique_id)
         owner_id = inventory[unique_id].get("owner_id")
 
-        # Varování pokud je karta na výpravě
-        works = load_json(CARDS_WORK, default={})
-        on_work = owner_id and any(
-            unique_id in w.get("cards", [])
-            for w in works.values()
-        )
-
         del inventory[unique_id]
         save_json(CARDS_INVENTORY, inventory)
 
@@ -1356,12 +1341,6 @@ class Cards(commands.Cog):
             description=f"**{card_name}** (ID: `{unique_id}`) byla úplně odstraněna.",
             color=0xFF0000,
         )
-        if on_work:
-            embed.add_field(
-                name="⚠️ Pozor",
-                value="Karta byla na aktivní výpravě. Data výpravy zůstávají — hráč dostane odměnu za prázdné ID.",
-                inline=False,
-            )
         await interaction.response.send_message(embed=embed)
 
     # -----------------------------------------------------------------------
@@ -1484,16 +1463,6 @@ class Cards(commands.Cog):
             )
             return
 
-        # Karta na výpravě?
-        works = load_json(CARDS_WORK, default={})
-        user_work = works.get(uid)
-        if user_work and unique_id in user_work.get("cards", []):
-            await interaction.response.send_message(
-                embed=create_error_embed("❌ Nelze upravit", "Karta je momentálně na výpravě!"),
-                ephemeral=True,
-            )
-            return
-
         user_frames = frames_inv.get(uid, [])
         if frame not in [f.get("id") for f in user_frames]:
             await interaction.response.send_message(
@@ -1575,7 +1544,7 @@ class Cards(commands.Cog):
         embed.add_field(name="\u200b",                value="\u200b",                      inline=True)
 
         coll_lines = [
-            f"{cdata['emoji']} **{cid.capitalize()}** — {collection_counts.get(cid, 0)} ks"
+            f"{cdata['emoji']} **{cdata.get('name', cid.capitalize())}** — {collection_counts.get(cid, 0)} ks"
             for cid, cdata in COLLECTIONS.items()
         ]
         embed.add_field(name="📚 Sady v oběhu", value="\n".join(coll_lines), inline=True)
@@ -1612,51 +1581,18 @@ class Cards(commands.Cog):
         embed.add_field(name="🔥 Hodnota při spálení", value="\n".join(dust_lines), inline=True)
         embed.add_field(name="\u200b", value="\u200b", inline=True)
 
-        exp_lines = [
-            f"{exp['emoji']} **{exp['name']}** — {exp['hours']}h · +{exp['reward']} zl./kartu"
-            for exp in EXPEDITIONS.values()
-        ]
-        embed.add_field(name="⚔️ Výpravy", value="\n".join(exp_lines), inline=False)
-
         commands_text = (
             "`/cards inventory` — tvé karty\n"
             "`/cards show <id>` — detail karty\n"
             "`/cards album <kolekce>` — vizuální album kolekce\n"
             "`/cards profile` — profilová karta\n"
             "`/cards set_profile <id>` — nastav profilovou kartu\n"
+            "`/cards lock <id>` — zamknout/odemknout proti spálení\n"
             "`/cards burn <id>` — spálit kartu za prach\n"
-            "`/cards work` — přehled výpravy\n"
-            "`/cards work_send` — vyslat karty\n"
-            "`/cards work_claim` — vyzvednout odměnu\n"
             "`/cards gallery` — přehled kolekcí\n"
-            "`/cards list` — databáze karet"
         )
         embed.add_field(name="📖 Příkazy", value=commands_text, inline=False)
         embed.set_footer(text="⚜️ Aurionis Sběratelský Systém  •  /cards info")
-        await interaction.response.send_message(embed=embed)
-
-    @cards_group.command(name="list", description="Dostupné vzory karet v databázi")
-    async def list_cards(self, interaction: discord.Interaction):
-        """Zobrazí seznam všech dostupných vzorů karet."""
-        cards = load_json(CARDS_DATA, default=[])
-
-        if not cards:
-            await interaction.response.send_message("Žádné karty nejsou v databázi.", ephemeral=True)
-            return
-
-        embed = discord.Embed(
-            title="🎴 Databáze karet",
-            description="Použij `/cards print <id> <rarita>` pro vytisknutí kopie.",
-            color=BRAND_PURPLE,
-        )
-        for card in cards:
-            coll = card.get("collection", "—")
-            coll_emoji = COLLECTIONS.get(coll, {}).get("emoji", "")
-            embed.add_field(
-                name=f"#{card.get('id')} — {card.get('name', '?')}  {coll_emoji}",
-                value=card.get("description", "—"),
-                inline=False,
-            )
         await interaction.response.send_message(embed=embed)
 
     @cards_group.command(name="gallery", description="Alba kolekcí — přehled sad a karet")
@@ -1692,7 +1628,7 @@ class Cards(commands.Cog):
                 rarity_counts[r] = rarity_counts.get(r, 0) + 1
 
             embed = discord.Embed(
-                title=f"{coll_data['emoji']}  Kolekce: {collection.capitalize()}",
+                title=f"{coll_data['emoji']}  Kolekce: {coll_data.get('name', collection.capitalize())}",
                 description=f"*{coll_data['description']}*",
                 color=coll_data["color"],
             )
@@ -1733,7 +1669,7 @@ class Cards(commands.Cog):
                 templates_count = sum(1 for c in cards_db if c.get("collection") == cid)
                 printed_count   = sum(1 for c in inv.values() if c.get("collection") == cid)
                 embed.add_field(
-                    name=f"{cdata['emoji']}  {cid.capitalize()}",
+                    name=f"{cdata['emoji']}  {cdata.get('name', cid.capitalize())}",
                     value=(
                         f"*{cdata['description']}*\n"
                         f"🎴 Vzorů: **{templates_count}**  ·  🖨️ Vytisknuto: **{printed_count}**\n"
@@ -1786,7 +1722,7 @@ class Cards(commands.Cog):
 
         if not templates:
             await interaction.response.send_message(
-                f"Kolekce **{collection.capitalize()}** zatím neobsahuje žádné karty.", ephemeral=True
+                f"Kolekce **{coll_data.get('name', collection.capitalize())}** zatím neobsahuje žádné karty.", ephemeral=True
             )
             return
 
@@ -1813,7 +1749,7 @@ class Cards(commands.Cog):
                 None,
                 partial(
                     render_album_grid,
-                    collection.capitalize(),
+                    coll_data.get("name", collection.capitalize()),
                     coll_data["emoji"],
                     coll_data["description"],
                     col_rgb,
@@ -1823,7 +1759,7 @@ class Cards(commands.Cog):
             )
 
             embed = discord.Embed(
-                title=f"{coll_data['emoji']} Album — {collection.capitalize()}",
+                title=f"{coll_data['emoji']} Album — {coll_data.get('name', collection.capitalize())}",
                 description=(
                     f"*{coll_data['description']}*\n"
                     f"**{owned_count}/{len(templates)}** karet získáno"
@@ -1949,6 +1885,23 @@ class Cards(commands.Cog):
     # Spálení
     # -----------------------------------------------------------------------
 
+    @cards_group.command(name="lock", description="Zamknout nebo odemknout kartu proti spálení")
+    @app_commands.describe(unique_id="Unikátní ID karty; opakováním příkazu ji odemkneš")
+    async def lock_card(self, interaction: discord.Interaction, unique_id: str):
+        try:
+            locked = toggle_card_lock(str(interaction.user.id), unique_id)
+        except CardNotFoundError:
+            await interaction.response.send_message("Karta s tímto ID neexistuje.", ephemeral=True)
+            return
+        except NotCardOwnerError:
+            await interaction.response.send_message("Tato karta ti nepatří.", ephemeral=True)
+            return
+        message = (
+            f"🔒 Karta `{unique_id}` je zamčená a nejde spálit. Opakováním `/cards lock` ji odemkneš."
+            if locked else f"🔓 Karta `{unique_id}` je odemčená a můžeš ji spálit."
+        )
+        await interaction.response.send_message(message, ephemeral=True)
+
     @cards_group.command(name="burn", description="Spálit kartu a získat Hvězdný prach")
     @app_commands.describe(unique_id="Unikátní ID karty ke spálení")
     async def burn_card(self, interaction: discord.Interaction, unique_id: str):
@@ -1965,11 +1918,9 @@ class Cards(commands.Cog):
                 embed=create_error_embed("❌ Přístup odepřen", "Tato karta ti nepatří."), ephemeral=True
             )
             return
-        except CardOnExpeditionError:
-            await interaction.response.send_message(
-                embed=create_error_embed("❌ Nelze spálit", "Karta je momentálně na výpravě! Nejprve si vyzvedni odměnu."),
-                ephemeral=True,
-            )
+
+        except CardLockedError:
+            await interaction.response.send_message("🔒 Karta je zamčená. Odemkni ji přes `/cards lock`.", ephemeral=True)
             return
 
         rarity, qual, total_dust = result["rarity"], result["quality"], result["dust"]
@@ -2113,7 +2064,7 @@ class Cards(commands.Cog):
         embed.add_field(name="✨ Rarita",   value=f"{rarity_data['emoji']} {rarity.capitalize()}",   inline=True)
         embed.add_field(name="💎 Kvalita", value=f"{quality_data['emoji']} {quality_data['name']}",  inline=True)
         if coll_data:
-            embed.add_field(name="📚 Kolekce", value=f"{coll_data.get('emoji', '')} {card_template.get('collection', 'N/A').capitalize()}", inline=True)
+            embed.add_field(name="📚 Kolekce", value=f"{coll_data.get('emoji', '')} {coll_data.get('name', card_template.get('collection', 'N/A').capitalize())}", inline=True)
         embed.add_field(name="🖨️ Tisk",    value=f"**#{max_print}**",                                inline=True)
         embed.add_field(name="🆔 ID",      value=f"`{unique_id}`",                                  inline=True)
         embed.set_footer(text="⚜️ Aurionis  •  Karta přidána do tvého inventáře")
@@ -2121,261 +2072,6 @@ class Cards(commands.Cog):
 
         await interaction.response.send_message(embed=embed)
         await check_collection_achievement(user, interaction.channel, inventory)
-
-    @cards_group.command(name="work", description="Přehled výpravy — stav nebo dostupné expedice")
-    async def work_hub(self, interaction: discord.Interaction):
-        """Zobrazí stav aktivní výpravy, nebo přehled dostupných expedic."""
-        uid = str(interaction.user.id)
-        works = load_json(CARDS_WORK, default={})
-
-        if uid in works:
-            work = works[uid]
-            exp = EXPEDITIONS.get(work.get("type"))
-            if not exp:
-                # Poškozená data výpravy
-                await interaction.response.send_message(
-                    "⚠️ Data tvé výpravy jsou poškozena. Kontaktuj admina.", ephemeral=True
-                )
-                return
-
-            end_time = datetime.fromisoformat(work["end_time"])
-            finished = datetime.now() >= end_time
-
-            # Výpočet očekávané odměny
-            card_count = len(work["cards"])
-            base_reward = exp["reward"] * card_count
-            bonus_mult = 1.25 if card_count >= 3 else (1.10 if card_count == 2 else 1.0)
-            expected_reward = int(base_reward * bonus_mult)
-            
-            embed = discord.Embed(
-                title=f"{exp['emoji']} Probíhá výprava: {exp['name']}",
-                description=f"*{exp['description']}*",
-                color=0x2ecc71 if finished else BRAND_PURPLE,
-            )
-            embed.add_field(name="🎴 Počet karet", value=f"**{card_count}**", inline=True)
-            embed.add_field(name="💵 Odměna/kartu", value=f"**{exp['reward']}** zl", inline=True)
-            embed.add_field(name="✨ Očekávaný zisk", value=f"**{expected_reward}** zl" + (f" (+{int((bonus_mult-1.0)*100)}%)" if bonus_mult > 1.0 else ""), inline=True)
-            embed.add_field(name="⏰ Návrat", value=f"<t:{int(end_time.timestamp())}:R>", inline=False)
-
-            inv = load_inventory()
-            cards_text = "\n".join(
-                f"`{cid}` — {inv[cid].get('name', '?')}" if cid in inv else f"`{cid}`"
-                for cid in work["cards"]
-            )
-            embed.add_field(name="🎴 Vyslané karty", value=cards_text or "—", inline=False)
-
-            if finished:
-                embed.add_field(
-                    name="✅ Výprava skončila!",
-                    value="Použij `/cards work_claim` pro vyzvednutí odměny.",
-                    inline=False,
-                )
-        else:
-            embed = discord.Embed(
-                title="⚔️ Výpravné centrum",
-                description="Nemáš žádnou aktivní výpravu. Vyšli karty pomocí `/cards work_send`.\n🎁 **Bonus: Pošli více karet = více zisku!** (+10% za 2, +25% za 3)\n\u200b",
-                color=BRAND_PURPLE,
-            )
-            for exp_id, exp in EXPEDITIONS.items():
-                embed.add_field(
-                    name=f"{exp['emoji']} {exp['name']}",
-                    value=f"⏱️ {exp['hours']}h  •  💵 +{exp['reward']} zl/kartu\n*{exp['description']}*\n`/cards work_send {exp_id}`",
-                    inline=False,
-                )
-            embed.set_footer(text="Delší expedice = vyšší odměny. Pošli až 3 karty pro bonus!")
-
-        await interaction.response.send_message(embed=embed)
-
-    @cards_group.command(name="work_send", description="Vyšle až 3 karty na výpravu za zlatem")
-    @app_commands.describe(
-        vyprava="Typ výpravy",
-        card1="ID první karty",
-        card2="ID druhé karty (volitelné)",
-        card3="ID třetí karty (volitelné)",
-    )
-    @app_commands.choices(vyprava=[
-        app_commands.Choice(name="🛡️ Hlídka (6h / +5 Zl)",          value="hlidka"),
-        app_commands.Choice(name="🏕️ Táborový kemp (12h / +8 Zl)",   value="tabor"),
-        app_commands.Choice(name="🐺 Lov monster (20h / +12 Zl)",    value="lov"),
-        app_commands.Choice(name="📜 Úkol pro gildu (36h / +20 Zl)", value="gilda"),
-        app_commands.Choice(name="⚔️ Velká bitva (48h / +35 Zl)",    value="bitva"),
-    ])
-    async def work_send(
-        self,
-        interaction: discord.Interaction,
-        vyprava: str,
-        card1: str,
-        card2: str = None,
-        card3: str = None,
-    ):
-        """Vyšle karty hráče na expedici."""
-        uid = str(interaction.user.id)
-        works = load_json(CARDS_WORK, default={})
-
-        if uid in works:
-            await interaction.response.send_message(
-                "Již máš aktivní výpravu! Zkontroluj ji přes `/cards work`.", ephemeral=True
-            )
-            return
-
-        card_ids = [c for c in [card1, card2, card3] if c]
-        if len(set(card_ids)) != len(card_ids):
-            await interaction.response.send_message("Nemůžeš poslat stejnou kartu víckrát!", ephemeral=True)
-            return
-
-        inv = load_inventory()
-        for cid in card_ids:
-            if cid not in inv or inv[cid].get("owner_id") != uid:
-                await interaction.response.send_message(
-                    f"Karta s ID `{cid}` ti nepatří nebo neexistuje.", ephemeral=True
-                )
-                return
-
-        exp = EXPEDITIONS.get(vyprava)
-        if not exp:
-            await interaction.response.send_message("Neznámý typ výpravy.", ephemeral=True)
-            return
-
-        now = datetime.now()
-        end_time = now + timedelta(hours=exp["hours"])
-        works[uid] = {
-            "type":       vyprava,
-            "cards":      card_ids,
-            "start_time": now.isoformat(),
-            "end_time":   end_time.isoformat(),
-        }
-        save_json(CARDS_WORK, works)
-
-        card_names = ", ".join(inv[cid].get("name", cid) for cid in card_ids)
-        
-        # Výpočet očekávané odměny s bonusem
-        base_reward = exp['reward'] * len(card_ids)
-        bonus_mult = 1.25 if len(card_ids) >= 3 else (1.10 if len(card_ids) == 2 else 1.0)
-        expected_reward = int(base_reward * bonus_mult)
-        bonus_text = ""
-        if bonus_mult > 1.0:
-            bonus_text = f" (+ {int((bonus_mult - 1.0) * 100)}% bonus!)"
-        
-        embed = discord.Embed(
-            title=f"{exp['emoji']} Výprava zahájena: {exp['name']}",
-            description=f"*{exp['description']}*",
-            color=BRAND_PURPLE,
-        )
-        embed.add_field(name="🎴 Vyslané karty", value=card_names, inline=False)
-        embed.add_field(name="⏱️ Trvání", value=f"**{exp['hours']}h**", inline=True)
-        embed.add_field(name="💵 Očekávaná odměna", value=f"**{expected_reward}** zl{bonus_text}", inline=True)
-        embed.add_field(name="⏰ Návrat", value=f"<t:{int(end_time.timestamp())}:R>", inline=False)
-        embed.set_footer(text="Vyzvednout odměnu si můžeš pomocí /cards work_claim")
-        await interaction.response.send_message(embed=embed)
-
-    @cards_group.command(name="work_status", description="Stav tvé aktuální výpravy")
-    async def work_status(self, interaction: discord.Interaction):
-        """Zobrazí stav probíhající výpravy."""
-        uid = str(interaction.user.id)
-        works = load_json(CARDS_WORK, default={})
-
-        if uid not in works:
-            await interaction.response.send_message(
-                "Nemáš žádnou aktivní výpravu. Použij `/cards work_send`.", ephemeral=True
-            )
-            return
-
-        work = works[uid]
-        exp = EXPEDITIONS.get(work.get("type"))
-        if not exp:
-            await interaction.response.send_message(
-                "⚠️ Data tvé výpravy jsou poškozena. Kontaktuj admina.", ephemeral=True
-            )
-            return
-
-        end_time = datetime.fromisoformat(work["end_time"])
-        finished = datetime.now() >= end_time
-
-        # Výpočet očekávané odměny
-        card_count = len(work["cards"])
-        base_reward = exp["reward"] * card_count
-        bonus_mult = 1.25 if card_count >= 3 else (1.10 if card_count == 2 else 1.0)
-        expected_reward = int(base_reward * bonus_mult)
-
-        embed = discord.Embed(
-            title=f"{exp['emoji']} Probíhá výprava: {exp['name']}",
-            description=f"*{exp['description']}*",
-            color=0x2ecc71 if finished else BRAND_PURPLE,
-        )
-        embed.add_field(name="🎴 Počet karet", value=f"**{card_count}**", inline=True)
-        embed.add_field(name="💵 Odměna/kartu", value=f"**{exp['reward']}** zl", inline=True)
-        embed.add_field(name="✨ Očekávaný zisk", value=f"**{expected_reward}** zl" + (f" (+{int((bonus_mult-1.0)*100)}%)" if bonus_mult > 1.0 else ""), inline=True)
-        embed.add_field(name="⏰ Návrat", value=f"<t:{int(end_time.timestamp())}:R>", inline=False)
-        
-        if finished:
-            embed.add_field(
-                name="✅ Výprava skončila!",
-                value="Použij `/cards work_claim` pro vyzvednutí odměny.",
-                inline=False,
-            )
-
-        await interaction.response.send_message(embed=embed)
-
-    @cards_group.command(name="work_claim", description="Vyzvednout odměnu z dokončené výpravy")
-    async def work_claim(self, interaction: discord.Interaction):
-        """Vyzvedne odměnu za dokončenou výpravu."""
-        uid = str(interaction.user.id)
-        works = load_json(CARDS_WORK, default={})
-
-        if uid not in works:
-            await interaction.response.send_message("Nemáš žádnou aktivní výpravu.", ephemeral=True)
-            return
-
-        work = works[uid]
-        exp = EXPEDITIONS.get(work.get("type"))
-        if not exp:
-            await interaction.response.send_message(
-                "⚠️ Data tvé výpravy jsou poškozena. Kontaktuj admina.", ephemeral=True
-            )
-            return
-
-        end_time = datetime.fromisoformat(work["end_time"])
-        if datetime.now() < end_time:
-            await interaction.response.send_message(
-                f"Výprava ještě neskončila! Návrat: <t:{int(end_time.timestamp())}:R>", ephemeral=True
-            )
-            return
-
-        # Výpočet odměny s bonusem za počet karet
-        card_count = len(work["cards"])
-        base_reward = exp["reward"] * card_count
-        
-        # Bonus: 10% za 2 karty, 25% za 3 karty
-        bonus_multiplier = 1.0
-        if card_count == 2:
-            bonus_multiplier = 1.10
-        elif card_count >= 3:
-            bonus_multiplier = 1.25
-        
-        reward = int(base_reward * bonus_multiplier)
-
-        eco = load_economy()
-        eco[uid] = eco.get(uid, 0) + reward
-        save_economy(eco)
-
-        del works[uid]
-        save_json(CARDS_WORK, works)
-
-        # Build embed s detaily
-        embed = discord.Embed(
-            title="💰 Výprava dokončena",
-            description=f"Tvé karty se v pořádku vrátily z **{exp['name']}**!",
-            color=BRAND_PURPLE,
-        )
-        embed.add_field(name="🎴 Počet karet", value=f"**{card_count}**", inline=True)
-        embed.add_field(name="💵 Odměna na kartu", value=f"**{exp['reward']}** zl", inline=True)
-        if bonus_multiplier > 1.0:
-            bonus_pct = int((bonus_multiplier - 1.0) * 100)
-            embed.add_field(name="🎁 Bonus", value=f"+{bonus_pct}% (víc karet = víc zisku!)", inline=True)
-        embed.add_field(name="✨ Celkem", value=f"**{reward} zlaťáků**", inline=False, )
-        embed.set_footer(text=f"Základní: {int(base_reward)} zl" if bonus_multiplier > 1.0 else "")
-        await interaction.response.send_message(embed=embed)
-
 
 # ---------------------------------------------------------------------------
 # Setup
