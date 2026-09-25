@@ -111,6 +111,45 @@ def burn_card_by_id(uid: str, unique_id: str) -> dict:
     return {"name": card_name, "rarity": rarity, "quality": quality, "dust": total_dust}
 
 
+def burn_all_cards(uid: str) -> dict:
+    """Remove unlocked owned cards and credit dust in one database transaction."""
+    import json
+    from src.database import db
+    from src.utils.paths import STARDUST, PROFILES
+
+    with db.transaction() as conn:
+        def read(path):
+            row = conn.execute("SELECT data FROM docs WHERE name = ?", (os.path.basename(path),)).fetchone()
+            return json.loads(row["data"]) if row else {}
+
+        def write(path, value):
+            conn.execute(
+                "INSERT INTO docs (name, data) VALUES (?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET data=excluded.data, updated_at=datetime('now')",
+                (os.path.basename(path), json.dumps(value, ensure_ascii=False)),
+            )
+
+        inventory = read(CARDS_INVENTORY)
+        selected = {key: card for key, card in inventory.items()
+                    if card.get("owner_id") == uid and not card.get("locked", False)}
+        protected = sum(1 for card in inventory.values()
+                        if card.get("owner_id") == uid and card.get("locked", False))
+        dust = sum(calculate_dust(card.get("rarity", "uncommon"), card.get("quality", "normal"))
+                   for card in selected.values())
+        if selected:
+            for key in selected:
+                del inventory[key]
+            wallet = read(STARDUST)
+            wallet[uid] = int(wallet.get(uid, 0)) + dust
+            profiles = read(PROFILES)
+            if profiles.get(uid, {}).get("active_card_id") in selected:
+                profiles[uid]["active_card_id"] = None
+                write(PROFILES, profiles)
+            write(CARDS_INVENTORY, inventory)
+            write(STARDUST, wallet)
+        return {"count": len(selected), "protected": protected, "dust": dust}
+
+
 class KeepBurnView(discord.ui.View):
     """
     Tlačítka Nechat / Spálit zobrazená pod čerstvě summonovanou kartou.
@@ -1588,7 +1627,7 @@ class Cards(commands.Cog):
             "`/cards profile` — profilová karta\n"
             "`/cards set_profile <id>` — nastav profilovou kartu\n"
             "`/cards lock <id>` — zamknout/odemknout proti spálení\n"
-            "`/cards burn <id>` — spálit kartu za prach\n"
+            "`/cards burn <id>` — spálit kartu za prach; `all` spálí všechny nezamčené\n"
             "`/cards gallery` — přehled kolekcí\n"
         )
         embed.add_field(name="📖 Příkazy", value=commands_text, inline=False)
@@ -1903,10 +1942,25 @@ class Cards(commands.Cog):
         await interaction.response.send_message(message, ephemeral=True)
 
     @cards_group.command(name="burn", description="Spálit kartu a získat Hvězdný prach")
-    @app_commands.describe(unique_id="Unikátní ID karty ke spálení")
+    @app_commands.describe(unique_id="ID karty nebo all = všechny tvé karty; zamčené 🔒 jsou chráněné")
     async def burn_card(self, interaction: discord.Interaction, unique_id: str):
         """Spálí kartu hráče a připíše mu Hvězdný prach."""
         uid = str(interaction.user.id)
+
+        if unique_id.strip().lower() == "all":
+            await interaction.response.defer()
+            result = burn_all_cards(uid)
+            embed = discord.Embed(
+                title="🔥 Hromadné spálení karet",
+                description=(
+                    f"Spáleno: **{result['count']}** karet\n"
+                    f"Získáno: **{result['dust']}× Hvězdný prach**\n"
+                    f"🔒 Zamčené karty jsou chráněné. Ponecháno: **{result['protected']}**."
+                ),
+                color=BRAND_PURPLE,
+            )
+            await interaction.followup.send(embed=embed)
+            return
 
         try:
             result = burn_card_by_id(uid, unique_id)
