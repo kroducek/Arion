@@ -19,6 +19,8 @@ from src.utils.json_utils import load_json, save_json, update_json
 from src.utils.paths import CARDS_CRATES, CARDS_DATA, CARDS_DIR, CRATES_DIR, data as _data
 from src.utils.admin_gate import admin_only
 from src.core.cards.summon_render import render_opening
+from src.core.cards.frame_service import eligible_frames, frame_drop_chance
+from src.utils.paths import CARDS_FRAMES
 from src.core.cards.summon_reward import settle_opening, NoCrates, EmptyCardPool
 
 logger = logging.getLogger(__name__)
@@ -130,6 +132,7 @@ def luck_embed(tickets: int):
     embed = discord.Embed(color=BRAND_PURPLE)
     embed.add_field(name=f"Lístky štěstí · {tickets}/{MAX_TICKETS}",
                     value=TICKET_EMOJI * tickets + "▫️" * (MAX_TICKETS - tickets), inline=False)
+    embed.add_field(name="🖼️ Šance na rámeček", value=f"{frame_drop_chance(tickets) * 100:.2f} %", inline=False)
     if tickets == MAX_TICKETS:
         embed.description = "🎟️ **Dokonalé štěstí · maximální bonus k raritě!**"
     return embed
@@ -476,6 +479,7 @@ class Summon(commands.Cog):
                         asyncio.to_thread(
                             render_opening, reward.card, get_card_image_path(reward.card.get("image")),
                             get_roll_images(8),
+                            roll_frame_ids=[f["id"] for f in eligible_frames(load_json(CARDS_FRAMES, default=[]))],
                             max_bytes=min(MAX_ROLL_IMAGE_BYTES, getattr(interaction, "filesize_limit", MAX_ROLL_IMAGE_BYTES)),
                         ),
                         self._animate_luck(message, intro, reward),
@@ -499,7 +503,7 @@ class Summon(commands.Cog):
         try:
             showcase = await asyncio.to_thread(
                 build_showcase_image, reward.card, reward.unique_id,
-                owner_name=interaction.user.display_name,
+                owner_name=interaction.user.display_name, frame_id=reward.card.get("frame"),
             )
         except Exception:
             logger.exception("Summon showcase unavailable; using text result")
@@ -512,6 +516,8 @@ class Summon(commands.Cog):
             + ("Testovací karta se neukládá." if is_test else
                f"Karta je v inventáři {interaction.user.mention}. ID: `{reward.unique_id}`")
         )
+        if card.get("frame"):
+            summary += f"\n🖼️ Bonusový rámeček: **{card['frame']}** · sundání: `/cards upgrade frame:remove`"
         view = None if is_test else KeepBurnView(uid=str(interaction.user.id),
                                                  unique_id=reward.unique_id, card=card)
         meters = luck_embed(reward.tickets)

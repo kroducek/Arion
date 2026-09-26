@@ -1,11 +1,13 @@
 """Commit crate and card together before presenting the reward."""
 import json
 import os
+import random
+from src.core.cards.frame_service import eligible_frames, frame_drop_chance
 from dataclasses import dataclass
 
 from src.database import db
 from src.core.cards.cards import draw_random_card
-from src.utils.paths import CARDS_CRATES, CARDS_DATA, CARDS_INVENTORY
+from src.utils.paths import CARDS_CRATES, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES
 
 
 class NoCrates(ValueError):
@@ -47,6 +49,10 @@ def settle_opening(uid, crate, tickets, *, preview=False):
         inventory = read(CARDS_INVENTORY, {})
         tickets = max(1, min(10, int(tickets)))
         unique_id, card = draw_random_card(uid, templates, inventory, tickets=tickets)
+        if random.random() < frame_drop_chance(tickets):
+            pool = eligible_frames(read(CARDS_FRAMES, []), card.get("rarity"))
+            if pool:
+                card["frame"] = random.choice(pool)["id"]
         if not preview:
             inventory[unique_id] = card
             owned[crate] -= 1

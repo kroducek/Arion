@@ -299,10 +299,11 @@ KRONIKA = {
                 "emoji": "🃏",
                 "commands": (
                     "`/cards info` — Přehled systému karet\n"
-                    "`/cards inventory` — Tvoje karty\n"
+                    "`/cards inventory` — Tvoje karty, filtry a řazení\n"
+                    "`/cards tag` — Přidej/odeber osobní tag kartám\n"
                     "`/cards show` — Detail konkrétní karty\n"
                     "`/cards gallery` — Alba kolekcí (sady a karty)\n"
-                    "`/cards upgrade` — Nasaď rámeček na kartu\n"
+                    "`/cards upgrade` — Nasaď rámeček; frame:remove ho vrátí do inventáře\n"
                     "`/cards frames` — Tvoje rámečky\n"
                     "`/cards lock` — Zamkni/odemkni kartu proti spálení\n"
                     "`/cards burn` — Spal kartu za Hvězdný prach\n"

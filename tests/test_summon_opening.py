@@ -95,7 +95,7 @@ class RewardTests(unittest.TestCase):
 
 
 class LuckAnimationTests(unittest.TestCase):
-    def test_tickets_fill_in_order_without_other_meters(self):
+    def test_tickets_fill_in_order_with_frame_chance(self):
         async def run():
             message = SimpleNamespace(edit=AsyncMock())
             reward = SimpleNamespace(tickets=10)
@@ -107,7 +107,9 @@ class LuckAnimationTests(unittest.TestCase):
                 self.assertNotIn('attachments', call.kwargs)
                 meters = call.kwargs['embeds'][1]
                 self.assertEqual(meters.fields[0].value.count('🎟️'), count)
-                self.assertEqual(len(meters.fields), 1)
+                self.assertEqual(len(meters.fields), 2)
+                self.assertIn("rámeček", meters.fields[1].name)
+                self.assertEqual(meters.fields[1].value, f"{(1 + (count - 1) / 9):.2f} %")
                 self.assertEqual(bool(meters.description), count == 10)
         asyncio.run(run())
 

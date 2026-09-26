@@ -82,7 +82,11 @@ def _load_frame(frame_id):
         # Zmenši/zvětši frame aby odpovídal kartě (1024×1536)
         if frame.size != (W, H):
             frame = ImageOps.fit(frame, (W, H), method=Image.Resampling.LANCZOS)
-        
+
+        # Keep the original glitch pattern, but let more artwork show through.
+        if os.path.splitext(os.path.basename(frame_path))[0] == "glitch":
+            frame.putalpha(frame.getchannel("A").point(lambda alpha: round(alpha * 0.6)))
+
         return frame
     except Exception:
         return None

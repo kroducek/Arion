@@ -13,6 +13,8 @@ from discord import app_commands
 import asyncio
 from functools import partial
 from src.utils.paths import CARDS_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES, FRAMES_INVENTORY, data as _data
+from src.core.cards.frame_service import move_frame, frame_drop_chance
+from src.core.cards.inventory_tools import edit_tags, normalize_tag, select_cards
 from src.core.cards.card_image import apply_frame_to_card
 from src.core.cards.card_render import render_card_showcase, render_album_grid
 from src.utils.json_utils import load_json, save_json, update_json
@@ -372,6 +374,7 @@ class TradeView(discord.ui.View):
             owner_profile = profiles.get(owner_uid)
             for cid in cards:
                 inv[cid]["owner_id"] = recipient_uid
+                inv[cid].pop("tags", None)
                 if owner_profile and owner_profile.get("active_card_id") == cid:
                     owner_profile["active_card_id"] = None
                     profiles_changed = True
@@ -415,7 +418,7 @@ class TradeView(discord.ui.View):
 INVENTORY_PAGE_SIZE = 10
 
 
-def build_inventory_embed(target, sorted_cards: list, page: int, page_size: int = INVENTORY_PAGE_SIZE) -> discord.Embed:
+def build_inventory_embed(target, sorted_cards: list, page: int, page_size: int = INVENTORY_PAGE_SIZE, filter_summary: str = "") -> discord.Embed:
     """Sestaví jednu stránku embedu inventáře pro daného hráče."""
     total = len(sorted_cards)
     total_pages = max(1, math.ceil(total / page_size))
@@ -425,7 +428,7 @@ def build_inventory_embed(target, sorted_cards: list, page: int, page_size: int 
 
     embed = discord.Embed(
         title=f"🎴 Karty — {target.display_name}",
-        description=f"Celkem: **{total}** karet",
+        description=f"Nalezeno: **{total}** karet" + (f"\n{filter_summary}" if filter_summary else ""),
         color=BRAND_PURPLE,
     )
     for i, (unique_id, card) in enumerate(chunk, start=start + 1):
@@ -434,13 +437,14 @@ def build_inventory_embed(target, sorted_cards: list, page: int, page_size: int 
         qual = card.get("quality", "normal")
         qual_data = QUALITIES.get(qual, QUALITIES["normal"])
         frame_text = f"\nRámeček: {card['frame']}" if card.get("frame") else ""
+        tag_text = "\nTagy: " + ", ".join(discord.utils.escape_markdown(t) for t in card.get("tags", [])) if card.get("tags") else ""
         embed.add_field(
             name=f"{i}. {card.get('name', '?')} (Print #{card.get('print_number', '?')})" + (" 🔒" if card.get("locked") else ""),
             value=(
                 f"ID: `{unique_id}`\n"
                 f"Rarita: {rarity.capitalize()} {rarity_emoji}  ·  "
                 f"Kvalita: {qual_data['emoji']} {qual_data['name']}"
-                f"{frame_text}"
+                f"{frame_text}{tag_text}"
             ),
             inline=False,
         )
@@ -452,8 +456,9 @@ def build_inventory_embed(target, sorted_cards: list, page: int, page_size: int 
 class InventoryPaginatorView(discord.ui.View):
     """Tlačítka ⬅️ / ➡️ pro procházení víc stránek inventáře."""
 
-    def __init__(self, invoker_id: int, target, sorted_cards: list, page_size: int = INVENTORY_PAGE_SIZE, timeout: float = 120.0):
+    def __init__(self, invoker_id: int, target, sorted_cards: list, page_size: int = INVENTORY_PAGE_SIZE, timeout: float = 120.0, filter_summary: str = ""):
         super().__init__(timeout=timeout)
+        self.filter_summary = filter_summary
         self.invoker_id = invoker_id
         self.target = target
         self.sorted_cards = sorted_cards
@@ -480,7 +485,7 @@ class InventoryPaginatorView(discord.ui.View):
         self.page = max(0, self.page - 1)
         self._update_buttons()
         await interaction.response.edit_message(
-            embed=build_inventory_embed(self.target, self.sorted_cards, self.page, self.page_size),
+            embed=build_inventory_embed(self.target, self.sorted_cards, self.page, self.page_size, self.filter_summary),
             view=self,
         )
 
@@ -489,7 +494,7 @@ class InventoryPaginatorView(discord.ui.View):
         self.page = min(self.total_pages - 1, self.page + 1)
         self._update_buttons()
         await interaction.response.edit_message(
-            embed=build_inventory_embed(self.target, self.sorted_cards, self.page, self.page_size),
+            embed=build_inventory_embed(self.target, self.sorted_cards, self.page, self.page_size, self.filter_summary),
             view=self,
         )
 
@@ -724,6 +729,47 @@ def ensure_cards_data():
     if updated_cards != cards:
         save_json(CARDS_DATA, updated_cards)
 
+
+
+def retire_chosen_by_fire_frame():
+    """Remove the retired frame from catalog, holdings and equipped cards atomically."""
+    import json
+    from src.database import db
+
+    with db.transaction() as conn:
+        def read(path, default):
+            row = conn.execute("SELECT data FROM docs WHERE name = ?", (os.path.basename(path),)).fetchone()
+            return json.loads(row["data"]) if row else default
+
+        def write(path, value):
+            conn.execute(
+                "INSERT INTO docs (name, data) VALUES (?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET data=excluded.data, updated_at=datetime('now')",
+                (os.path.basename(path), json.dumps(value, ensure_ascii=False)),
+            )
+
+        frames = read(CARDS_FRAMES, [])
+        retired = {"chosen_by_fire", "chosen_by_fire.png"}
+        for frame in frames:
+            if frame.get("image") == "chosen_by_fire.png" or frame.get("id") in retired:
+                if frame.get("id"):
+                    retired.add(frame["id"])
+        remaining = [frame for frame in frames if frame.get("id") not in retired]
+        if remaining != frames:
+            write(CARDS_FRAMES, remaining)
+        holdings = read(FRAMES_INVENTORY, {})
+        cleaned = {uid: [frame for frame in owned if frame.get("id") not in retired]
+                   for uid, owned in holdings.items()}
+        if cleaned != holdings:
+            write(FRAMES_INVENTORY, cleaned)
+        inventory = read(CARDS_INVENTORY, {})
+        changed = False
+        for card in inventory.values():
+            if isinstance(card, dict) and card.get("frame") in retired:
+                card["frame"] = None
+                changed = True
+        if changed:
+            write(CARDS_INVENTORY, inventory)
 
 
 def ensure_frames_data():
@@ -1193,6 +1239,9 @@ class Cards(commands.Cog):
         for f in frames:
             fid  = f.get("id", "")
             name = f.get("name", fid)
+            if fid in seen:
+                continue
+            seen.add(fid)
             if cur and cur not in fid.lower() and cur not in name.lower():
                 continue
             out.append(app_commands.Choice(name=f"{name} ({fid})"[:100], value=fid))
@@ -1386,30 +1435,59 @@ class Cards(commands.Cog):
     # Hráčské příkazy — inventář a karty
     # -----------------------------------------------------------------------
 
-    @cards_group.command(name="inventory", description="Zobrazit své karty")
-    @app_commands.describe(user="Hráč (volitelné — výchozí jsi ty)")
-    async def show_inventory(self, interaction: discord.Interaction, user: discord.Member = None):
-        """Zobrazí inventář hráče se stránkováním, pokud má víc karet, než se vejde na jednu stránku."""
+    @cards_group.command(name="tag", description="Přidat nebo odebrat osobní tag jedné či více kartám")
+    @app_commands.describe(tag="Vlastní tag, např. trade nebo oblíbené", karty="ID karet oddělená čárkou (max. 50)", odebrat="Zapni pro odebrání tagu")
+    async def tag_cards(self, interaction: discord.Interaction, tag: str, karty: str, odebrat: bool = False):
+        ids = _parse_trade_card_ids(karty)
+        try:
+            tag = normalize_tag(tag)
+            update_json(CARDS_INVENTORY, lambda inv: edit_tags(inv, str(interaction.user.id), ids, tag, odebrat))
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        action = "odebrán" if odebrat else "přidán"
+        await interaction.response.send_message(f"🏷️ Tag `{tag}` {action} · {len(ids)} karet.", ephemeral=True)
+
+    @cards_group.command(name="inventory", description="Zobrazit a filtrovat své karty")
+    @app_commands.describe(user="Hráč (výchozí jsi ty)", character="Jméno postavy nebo jeho část",
+        collection="Kolekce", rarity="Rarita", quality="Kvalita", frame="ID rámečku; none = bez rámečku",
+        locked="Ano = zamčené, ne = odemčené", tag="Osobní tag", sort="Řazení výsledků")
+    @app_commands.choices(
+        collection=[app_commands.Choice(name=c.get("name", k), value=k) for k, c in COLLECTIONS.items()],
+        rarity=[app_commands.Choice(name=k.capitalize(), value=k) for k in RARITIES],
+        quality=[app_commands.Choice(name=k.capitalize(), value=k) for k in QUALITIES],
+        sort=[app_commands.Choice(name=label, value=value) for value, label in
+              [("print", "Nejnižší print"), ("newest", "Nejnovější"), ("oldest", "Nejstarší"),
+               ("rarity", "Nejvzácnější"), ("quality", "Nejlepší kvalita")]])
+    async def show_inventory(self, interaction: discord.Interaction, user: discord.Member = None,
+        character: str = None, collection: str = None, rarity: str = None, quality: str = None,
+        frame: str = None, locked: bool = None, tag: str = None, sort: str = "print"):
+        """Filters compose and remain in effect while paging through the results."""
         target = user or interaction.user
         uid = str(target.id)
 
         inv = load_inventory()
-        user_cards = [(cid, card) for cid, card in inv.items() if card.get("owner_id") == uid]
-
+        user_cards = select_cards(inv, uid, character=character, collection=collection, rarity=rarity,
+                                  quality=quality, frame=frame, locked=locked, tag=tag, sort=sort)
+        filters = [("Postava", character), ("Kolekce", collection), ("Rarita", rarity),
+                   ("Kvalita", quality), ("Rámeček", frame), ("Tag", tag)]
+        parts = [f"{label}: {discord.utils.escape_markdown(value[:60])}" for label, value in filters if value]
+        if locked is not None:
+            parts.append("🔒 Zamčené" if locked else "🔓 Odemčené")
+        sorts = {"print": "nejnižší print", "newest": "nejnovější", "oldest": "nejstarší",
+                 "rarity": "nejvzácnější", "quality": "nejlepší kvalita"}
+        parts.append(f"Řazení: {sorts[sort]}")
+        summary = " · ".join(parts)
         if not user_cards:
-            await interaction.response.send_message(f"{target.mention} nemá žádné karty.", ephemeral=True)
+            await interaction.response.send_message("Žádné karty neodpovídají výběru.\n" + summary, ephemeral=True)
             return
-
-        # Stabilní pořadí podle čísla tisku, ať se karty mezi stránkami nepřehazují
-        user_cards.sort(key=lambda item: item[1].get("print_number", 0))
-
-        embed = build_inventory_embed(target, user_cards, page=0)
+        embed = build_inventory_embed(target, user_cards, page=0, filter_summary=summary)
 
         if len(user_cards) <= INVENTORY_PAGE_SIZE:
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        view = InventoryPaginatorView(invoker_id=interaction.user.id, target=target, sorted_cards=user_cards)
+        view = InventoryPaginatorView(invoker_id=interaction.user.id, target=target, sorted_cards=user_cards, filter_summary=summary)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         view.message = await interaction.original_response()
 
@@ -1471,57 +1549,32 @@ class Cards(commands.Cog):
         frames_inv = load_json(FRAMES_INVENTORY, default={})
         owned = frames_inv.get(str(interaction.user.id), [])
         cur = current.lower().strip()
-        out = []
+        out = [app_commands.Choice(name="Sundat rámeček do inventáře", value="remove")] if not cur or cur in "remove sundat odebrat" else []
+        seen = set()
         for f in owned:
             fid  = f.get("id", "")
             name = f.get("name", fid)
+            if fid in seen:
+                continue
+            seen.add(fid)
             if cur and cur not in fid.lower() and cur not in name.lower():
                 continue
             out.append(app_commands.Choice(name=f"{name} ({fid})"[:100], value=fid))
         return out[:25]
 
-    @cards_group.command(name="upgrade", description="Nasadit rámeček na kartu")
-    @app_commands.describe(unique_id="ID karty", frame="Rámeček z tvého inventáře")
+    @cards_group.command(name="upgrade", description="Nasadit nebo sundat rámeček do inventáře")
+    @app_commands.describe(unique_id="ID karty", frame="Rámeček z inventáře; remove = sundat rámeček")
     @app_commands.autocomplete(frame=_ac_owned_frame_id)
     async def upgrade_frame(self, interaction: discord.Interaction, unique_id: str, frame: str):
-        """Aplikuje rámeček na kartu (rámeček se spotřebuje)."""
-        uid = str(interaction.user.id)
-        inv = load_inventory()
-        frames_inv = load_json(FRAMES_INVENTORY, default={})
-
-        if unique_id not in inv:
-            await interaction.response.send_message(
-                embed=create_error_embed("❌ Karta nenalezena", f"ID `{unique_id}` neexistuje."), ephemeral=True
-            )
+        try:
+            frame_id = None if frame.strip().lower() == "remove" else frame
+            card = move_frame(str(interaction.user.id), unique_id, frame_id)
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
             return
-
-        card = inv[unique_id]
-        if card.get("owner_id") != uid:
-            await interaction.response.send_message(
-                embed=create_error_embed("❌ Přístup odepřen", "Tato karta ti nepatří."), ephemeral=True
-            )
-            return
-
-        user_frames = frames_inv.get(uid, [])
-        if frame not in [f.get("id") for f in user_frames]:
-            await interaction.response.send_message(
-                embed=create_error_embed("❌ Rámeček nenalezen", f"Rámeček `{frame}` nemáš v inventáři."), ephemeral=True
-            )
-            return
-
-        card["frame"] = frame
-        inv[unique_id] = card
-        save_json(CARDS_INVENTORY, inv)
-
-        frames_inv[uid] = [f for f in user_frames if f.get("id") != frame]
-        save_json(FRAMES_INVENTORY, frames_inv)
-
-        frame_data = get_frame_by_id(frame)
-        frame_name = frame_data.get("name") if frame_data else frame
-        await interaction.response.send_message(
-            f"✅ Rámeček **{frame_name}** nasazen na kartu **{card.get('name', unique_id)}** (spotřebován z inventáře).",
-            ephemeral=True,
-        )
+        message = ("Rámeček sundán a vrácen do inventáře." if frame_id is None else
+                   "Rámeček nasazen. Případný původní rámeček se vrátil do inventáře.")
+        await interaction.response.send_message(f"✅ **{card.get('name', unique_id)}** · {message}", ephemeral=True)
 
     @cards_group.command(name="frames", description="Rámečky ve tvém inventáři")
     async def show_frames(self, interaction: discord.Interaction):
@@ -1541,14 +1594,15 @@ class Cards(commands.Cog):
         owned_ids = {f.get("id") for f in user_frames}
         for f in all_frames:
             rarity_text = f" · Vyžaduje: {f['rarity_exclusive']}" if f.get("rarity_exclusive") else ""
-            owned_mark = " ✅" if f.get("id") in owned_ids else ""
+            count = sum(1 for entry in user_frames if entry.get("id") == f.get("id"))
+            owned_mark = f" ✅ ×{count}" if count else ""
             embed.add_field(
                 name=f"{f.get('name')}{owned_mark}",
                 value=f"ID: `{f.get('id')}`{rarity_text}",
                 inline=False,
             )
 
-        embed.set_footer(text=f"Vlastníš: {len(user_frames)} z {len(all_frames)} rámečků.")
+        embed.set_footer(text=f"Vlastníš: {len(user_frames)} kusů · {len(owned_ids)} druhů.")
         await interaction.response.send_message(embed=embed)
 
     # -----------------------------------------------------------------------
@@ -1601,6 +1655,10 @@ class Cards(commands.Cog):
         ]
         embed.add_field(name="💎 Kvality karet", value="\n".join(quality_lines), inline=True)
 
+        embed.add_field(name="🖼️ Rámeček při summonu", value=(
+            f"{frame_drop_chance(1)*100:g} % při 1 lístku → {frame_drop_chance(10)*100:g} % při 10 lístcích. "
+            "Rámeček sundáš do inventáře přes `/cards upgrade frame:remove`."), inline=False)
+
         base, boosted = rarity_chances(1), rarity_chances(10)
         embed.add_field(
             name="🎟️ Šance na raritu · 1 → 10 lístků",
@@ -1621,7 +1679,8 @@ class Cards(commands.Cog):
         embed.add_field(name="\u200b", value="\u200b", inline=True)
 
         commands_text = (
-            "`/cards inventory` — tvé karty\n"
+            "`/cards inventory` — tvé karty, filtry a řazení\n"
+            "`/cards tag` — přidat/odebrat tag kartám\n"
             "`/cards show <id>` — detail karty\n"
             "`/cards album <kolekce>` — vizuální album kolekce\n"
             "`/cards profile` — profilová karta\n"
@@ -2135,6 +2194,7 @@ async def setup(bot):
     """Registruje cog do bota."""
     migrate_qualities()
     ensure_cards_data()
+    retire_chosen_by_fire_frame()
     ensure_frames_data()
     _ensure_nocard_png()
     _migrate_stardust_to_economy()

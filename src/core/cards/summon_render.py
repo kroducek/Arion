@@ -71,13 +71,18 @@ def card_back():
     return image.convert("RGB")
 
 
-def card_front(path):
+def card_front(path, frame_id=None):
     art = thumbnail(path) if path else None
     if art is None:
         return card_back()
     image = Image.new("RGB", (150, 220), INK)
     image.paste(art, (2, 3))
     ImageDraw.Draw(image).rounded_rectangle((1, 1, 148, 218), radius=10, outline=GOLD, width=2)
+    if frame_id:
+        from src.core.cards.card_render import _load_frame
+        overlay = _load_frame(frame_id)
+        if overlay is not None:
+            image = Image.alpha_composite(image.convert("RGBA"), overlay.resize(image.size, Image.Resampling.LANCZOS)).convert("RGB")
     return image
 
 
@@ -103,7 +108,7 @@ def night_sky():
 
 
 def render_opening(card, art_path, roll_paths, *,
-                   max_bytes=MAX_BYTES):
+                   max_bytes=MAX_BYTES, roll_frame_ids=None):
     """Return (GIF bytes, playback seconds); raise ValueError above upload budget.
 
     No loop extension means one play, holding the revealed card at the end.
@@ -112,8 +117,13 @@ def render_opening(card, art_path, roll_paths, *,
     mythic = card.get("rarity") == "mythic"
     rng = random.Random(42)
     back = card_back()
-    front = card_front(art_path)
-    thumbs = [card_front(path) for path in roll_paths[:8]] or [back]
+    front = card_front(art_path, card.get("frame"))
+    paths = roll_paths[:8]
+    cosmetic = random.Random()
+    framed = cosmetic.sample(range(len(paths)), min(2, len(paths))) if roll_frame_ids else []
+    chosen = cosmetic.sample(roll_frame_ids, min(2, len(roll_frame_ids))) if roll_frame_ids else []
+    decorations = {index: chosen[i % len(chosen)] for i, index in enumerate(framed)}
+    thumbs = [card_front(path, decorations.get(i)) for i, path in enumerate(paths)] or [back]
     particles = [(rng.randrange(24, 616), rng.randrange(90, 365), rng.random()) for _ in range(28)]
     accent = RARITY_COLORS.get(card.get("rarity"), PURPLE)
     duration = 12.0 if mythic else 10.8
