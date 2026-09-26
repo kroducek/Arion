@@ -12,7 +12,7 @@ from discord.ext import commands
 from discord import app_commands
 import asyncio
 from functools import partial
-from src.utils.paths import CARDS_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES, FRAMES_INVENTORY, data as _data
+from src.utils.paths import CARDS_DIR, FRAMES_DIR, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES, FRAMES_INVENTORY, data as _data
 from src.core.cards.frame_service import move_frame, frame_drop_chance
 from src.core.cards.inventory_tools import edit_tags, normalize_tag, select_cards
 from src.core.cards.card_image import apply_frame_to_card
@@ -1189,7 +1189,8 @@ class Cards(commands.Cog):
                 await interaction.followup.send("❌ Příloha není obrázek. Použij PNG.", ephemeral=True)
                 return
             try:
-                dest = os.path.join(CARDS_DIR, safe_image)
+                os.makedirs(FRAMES_DIR, exist_ok=True)
+                dest = os.path.join(FRAMES_DIR, safe_image)
                 image_data = await attachment.read()
                 with open(dest, "wb") as f:
                     f.write(image_data)
@@ -1198,13 +1199,10 @@ class Cards(commands.Cog):
                 await interaction.followup.send(f"❌ Nepodařilo se uložit obrázek: {e}", ephemeral=True)
                 return
         else:
-            # Rámečky nemají vlastní resolver cesty jako karty (get_card_image_path
-            # kontroluje CARDS_DIR) — pokud jsi PNG nahrál jinam, tohle upozornění
-            # bude falešně negativní, ale registraci to neblokuje.
-            if get_card_image_path(safe_image):
-                image_status = "✅ nalezen v adresáři karet"
+            if os.path.isfile(os.path.join(FRAMES_DIR, safe_image)):
+                image_status = "✅ nalezen v adresáři rámečků"
             else:
-                image_status = "⚠️ v adresáři karet nenalezen — zkontroluj, že leží tam, kde ho čeká apply_frame_to_card"
+                image_status = "⚠️ obrázek chybí v src/assets/frames"
 
         new_frame = {
             "id": frame_id,
@@ -1236,6 +1234,7 @@ class Cards(commands.Cog):
         frames = load_json(CARDS_FRAMES, default=[])
         cur = current.lower().strip()
         out = []
+        seen = set()
         for f in frames:
             fid  = f.get("id", "")
             name = f.get("name", fid)
