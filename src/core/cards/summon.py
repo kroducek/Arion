@@ -354,7 +354,7 @@ class Summon(commands.Cog):
     )
     @app_commands.choices(crate=[
         app_commands.Choice(name="Základní bedna", value="basic"),
-        app_commands.Choice(name="Dekorativní bedna · garantovaný rámeček", value="decorative"),
+        app_commands.Choice(name="Dekorativní bedna", value="decorative"),
     ])
     async def give_crate(
         self,
