@@ -14,6 +14,10 @@ class NoCrates(ValueError):
     pass
 
 
+class NoEligibleFrames(ValueError):
+    pass
+
+
 class EmptyCardPool(ValueError):
     pass
 
@@ -23,6 +27,7 @@ class OpeningReward:
     unique_id: str
     card: dict
     tickets: int
+    guaranteed_frame: bool = False
 
 
 def settle_opening(uid, crate, tickets, *, preview=False):
@@ -49,8 +54,11 @@ def settle_opening(uid, crate, tickets, *, preview=False):
         inventory = read(CARDS_INVENTORY, {})
         tickets = max(1, min(10, int(tickets)))
         unique_id, card = draw_random_card(uid, templates, inventory, tickets=tickets)
-        if random.random() < frame_drop_chance(tickets):
+        guaranteed = crate == "decorative"
+        if guaranteed or random.random() < frame_drop_chance(tickets):
             pool = eligible_frames(read(CARDS_FRAMES, []), card.get("rarity"))
+            if guaranteed and not pool:
+                raise NoEligibleFrames()
             if pool:
                 card["frame"] = random.choice(pool)["id"]
         if not preview:
@@ -58,4 +66,4 @@ def settle_opening(uid, crate, tickets, *, preview=False):
             owned[crate] -= 1
             write(CARDS_CRATES, crates)
             write(CARDS_INVENTORY, inventory)
-        return OpeningReward(unique_id, card, tickets)
+        return OpeningReward(unique_id, card, tickets, guaranteed)

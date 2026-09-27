@@ -315,7 +315,7 @@ KRONIKA = {
                 "emoji": "🎁",
                 "commands": (
                     "`/summon crates` — Tvoje bedny\n"
-                    "`/summon daily` — Denní odměna\n"
+                    "`/summon daily` — Denní bedna + dekorativní za každý 7. den streaku\n"
                     "`/summon open` — Otevři bednu\n"
                     "`/cards album` — Tvoje album kolekce\n"
                     "`/cards trade` — Obchoduj s hráčem"

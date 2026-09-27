@@ -108,7 +108,7 @@ def night_sky():
 
 
 def render_opening(card, art_path, roll_paths, *,
-                   max_bytes=MAX_BYTES, roll_frame_ids=None):
+                   max_bytes=MAX_BYTES, roll_frame_ids=None, crate_name="Základní bedna"):
     """Return (GIF bytes, playback seconds); raise ValueError above upload budget.
 
     No loop extension means one play, holding the revealed card at the end.
@@ -158,7 +158,7 @@ def render_opening(card, art_path, roll_paths, *,
         d.rounded_rectangle((16, 14, 623, 405), radius=16, outline=(65, 52, 84))
         label(d, (320, 37), "A U R I O N I S   /   C A R D S", 12, GOLD)
         if t < 1.04:
-            title, subtitle = "Pečeť se probouzí", "Základní bedna"
+            title, subtitle = "Pečeť se probouzí", crate_name
         elif t < 2.0:
             title, subtitle = "Pečeť se otevírá", "Tvá karta čeká na odhalení"
         elif t < reveal_at:

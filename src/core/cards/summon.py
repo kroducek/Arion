@@ -21,7 +21,7 @@ from src.utils.admin_gate import admin_only
 from src.core.cards.summon_render import render_opening
 from src.core.cards.frame_service import eligible_frames, frame_drop_chance
 from src.utils.paths import CARDS_FRAMES
-from src.core.cards.summon_reward import settle_opening, NoCrates, EmptyCardPool
+from src.core.cards.summon_reward import settle_opening, NoCrates, EmptyCardPool, NoEligibleFrames
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 CRATES = {
+    "decorative": {
+        "name": "Dekorativní bedna", "emoji": "🎨", "color": 0x58C9C2,
+        "description": "Jedna karta se zaručeným rámečkem. Odměna za každý 7. den streaku.",
+        "gifs": ["crate_open.gif", "crate_open2.gif"],
+    },
     "basic": {
         "name": "Základní bedna",
         "emoji": "📦",
@@ -127,20 +132,20 @@ def get_roll_images(count: int) -> list:
     return frames
 
 
-def luck_embed(tickets: int):
+def luck_embed(tickets: int, guaranteed_frame: bool = False):
     """Ticket progress stays below the opening GIF and final card."""
     embed = discord.Embed(color=BRAND_PURPLE)
     embed.add_field(name=f"Lístky štěstí · {tickets}/{MAX_TICKETS}",
                     value=TICKET_EMOJI * tickets + "▫️" * (MAX_TICKETS - tickets), inline=False)
-    embed.add_field(name="🖼️ Šance na rámeček", value=f"{frame_drop_chance(tickets) * 100:.2f} %", inline=False)
+    embed.add_field(name="🖼️ Šance na rámeček", value="100 % · garantovaný" if guaranteed_frame else f"{frame_drop_chance(tickets) * 100:.2f} %", inline=False)
     if tickets == MAX_TICKETS:
         embed.description = "🎟️ **Dokonalé štěstí · maximální bonus k raritě!**"
     return embed
 
 
 def streak_bar(streak: int, cap: int = 7) -> str:
-    """Řádek streaku — plamínky za dosažené dny v rámci týdenního cyklu (nad cap se jen dopočítávají čísla)."""
-    filled = min(streak, cap)
+    """Plamínky za dosažené dny aktuálního sedmidenního cyklu."""
+    filled = (streak - 1) % cap + 1 if streak > 0 else 0
     return f"{'🔥' * filled}{'▫️' * (cap - filled)}"
 
 
@@ -187,6 +192,41 @@ def days_word(n: int) -> str:
     return "dní"
 
 
+class DailyAlreadyClaimed(ValueError):
+    pass
+
+
+def claim_daily_reward(uid, now):
+    """Commit the streak and both rewards atomically, including repeated claims."""
+    import json
+    from src.database import db
+    with db.transaction() as conn:
+        def read(path):
+            row = conn.execute("SELECT data FROM docs WHERE name=?", (os.path.basename(path),)).fetchone()
+            return json.loads(row["data"]) if row else {}
+        def write(path, value):
+            conn.execute("INSERT INTO docs(name,data) VALUES (?,?) ON CONFLICT(name) DO UPDATE SET data=excluded.data, updated_at=datetime('now')",
+                         (os.path.basename(path), json.dumps(value)))
+        data = read(DAILY_DATA)
+        old = data.get(uid, {})
+        last = old.get("last_claim")
+        gap = (_local_date(now) - _local_date(_parse_utc(last))).days if last else None
+        if gap is not None and gap <= 0:
+            raise DailyAlreadyClaimed()
+        streak = old.get("streak", 0) + 1 if gap == 1 else 1
+        maximum = max(old.get("max_streak", 0), streak)
+        bonus = streak % 7 == 0
+        crates = read(CARDS_CRATES)
+        owned = crates.setdefault(uid, dict(STARTER_CRATES))
+        owned["basic"] = owned.get("basic", 0) + 1
+        if bonus:
+            owned["decorative"] = owned.get("decorative", 0) + 1
+        data[uid] = {"last_claim": now.isoformat(), "streak": streak, "max_streak": maximum}
+        write(DAILY_DATA, data)
+        write(CARDS_CRATES, crates)
+        return streak, maximum, bool(last) and streak == 1 and old.get("streak", 0) > 1, streak > 1 and streak > old.get("max_streak", 0), bonus
+
+
 # ---------------------------------------------------------------------------
 # Cog
 # ---------------------------------------------------------------------------
@@ -222,7 +262,7 @@ class Summon(commands.Cog):
         embed.set_footer(text="⚜️ Aurionis")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @summon_group.command(name="daily", description="Vyzvedni si denní odměnu (jednou za 24 hodin)")
+    @summon_group.command(name="daily", description="Denní bedna; každý 7. den streaku navíc dekorativní")
     async def daily(self, interaction: discord.Interaction):
         """Denní odměna — 1× Základní bedna. Počítá se i day streak a nejdelší streak."""
         uid = str(interaction.user.id)
@@ -234,41 +274,15 @@ class Summon(commands.Cog):
             return
 
         now = datetime.now(timezone.utc)
-        today = _local_date(now)
-        data = load_daily()
-        state = data.get(uid, {"last_claim": None, "streak": 0, "max_streak": 0})
-
-        last_claim_raw = state.get("last_claim")
-        if last_claim_raw:
-            last_claim = _parse_utc(last_claim_raw)
-            last_date = _local_date(last_claim)
-
-            if last_date == today:
-                remaining = _next_reset_at(now) - now
-                await interaction.response.send_message(
-                    f"⏳ Dnešní odměnu jsi už vyzvedl. Resetuje se o půlnoci — zkus to znovu za **{format_remaining(remaining)}**.",
-                    ephemeral=True,
-                )
-                return
-
-            days_gap = (today - last_date).days
-            new_streak = state.get("streak", 0) + 1 if days_gap == 1 else 1
-        else:
-            new_streak = 1
-
-        streak_broken = bool(last_claim_raw) and new_streak == 1 and state.get("streak", 0) > 1
-        new_max_streak = max(state.get("max_streak", 0), new_streak)
-        is_new_record = new_streak > 1 and new_streak > state.get("max_streak", 0)
-
         self._claiming_daily.add(uid)
         try:
-            data[uid] = {
-                "last_claim": now.isoformat(),
-                "streak": new_streak,
-                "max_streak": new_max_streak,
-            }
-            save_json(DAILY_DATA, data)
-            change_crates(uid, DAILY_REWARD_CRATE, 1)
+            try:
+                new_streak, new_max_streak, streak_broken, is_new_record, decorative_bonus = claim_daily_reward(uid, now)
+            except DailyAlreadyClaimed:
+                remaining = _next_reset_at(now) - now
+                await interaction.response.send_message(
+                    f"⏳ Dnešní odměnu už máš. Další za **{format_remaining(remaining)}** (půlnoc v ČR).", ephemeral=True)
+                return
 
             crate_data = CRATES[DAILY_REWARD_CRATE]
             gif_path = get_crate_gif_path(DAILY_REWARD_CRATE)
@@ -297,6 +311,7 @@ class Summon(commands.Cog):
                 description=(
                     f"### +1× {crate_data['emoji']} {crate_data['name']}\n"
                     f"-# {crate_data['description']}"
+                    + ("\n### +1× 🎨 Dekorativní bedna\nRámeček při otevření je garantovaný!" if decorative_bonus else "")
                 ),
                 color=BRAND_PURPLE,
             )
@@ -307,6 +322,9 @@ class Summon(commands.Cog):
                 value=f"{streak_bar(new_streak)}\n**{new_streak}** {days_word(new_streak)} v kuse",
                 inline=False,
             )
+            final_embed.add_field(name="🎨 Odměna za streak", value=(
+                "Týden splněn — dekorativní bedna přidána! Další za 7 dní." if decorative_bonus else
+                f"Do dekorativní bedny zbývá **{7 - new_streak % 7}** dní. Každý 7. den získáš rámeček na 100 %."), inline=False)
             final_embed.add_field(
                 name="🏆 Rekord",
                 value=f"**{new_max_streak}** {days_word(new_max_streak)}" + (" 🆕" if is_new_record else ""),
@@ -336,6 +354,7 @@ class Summon(commands.Cog):
     )
     @app_commands.choices(crate=[
         app_commands.Choice(name="Základní bedna", value="basic"),
+        app_commands.Choice(name="Dekorativní bedna · garantovaný rámeček", value="decorative"),
     ])
     async def give_crate(
         self,
@@ -391,6 +410,7 @@ class Summon(commands.Cog):
     @app_commands.describe(crate="Typ bedny (výchozí: základní)")
     @app_commands.choices(crate=[
         app_commands.Choice(name="Základní bedna", value="basic"),
+        app_commands.Choice(name="Dekorativní bedna · garantovaný rámeček", value="decorative"),
     ])
     async def open_crate(self, interaction: discord.Interaction, crate: str = "basic"):
         """Otevře bednu — animace a náhodná karta do inventáře."""
@@ -423,7 +443,7 @@ class Summon(commands.Cog):
         """Edit only embeds so the existing crate GIF keeps playing."""
         for current in range(1, reward.tickets + 1):
             await asyncio.sleep(0.65)
-            meters = luck_embed(current)
+            meters = luck_embed(current, getattr(reward, "guaranteed_frame", False))
             await message.edit(embeds=[intro, meters])
 
     async def _run_opening(
@@ -449,15 +469,17 @@ class Summon(commands.Cog):
             intro.set_image(url="attachment://crate_open.gif")
             files.append(discord.File(gif_path, filename="crate_open.gif"))
         message = await interaction.followup.send(
-            embeds=[intro, luck_embed(0)], files=files, wait=True)
+            embeds=[intro, luck_embed(0, crate == "decorative")], files=files, wait=True)
         try:
             reward = settle_opening(
                 str(interaction.user.id), crate,
                 forced_tickets if forced_tickets is not None else random.randint(1, MAX_TICKETS),
                 preview=is_test,
             )
-        except (NoCrates, EmptyCardPool) as error:
+        except (NoCrates, EmptyCardPool, NoEligibleFrames) as error:
             text = "Nemáš žádnou bednu tohoto typu." if isinstance(error, NoCrates) else "Databáze karet je prázdná. Bedna zůstává u tebe."
+            if isinstance(error, NoEligibleFrames):
+                text = "Pro tuto kartu není dostupný rámeček. Dekorativní bedna zůstává u tebe; kontaktuj admina."
             await message.edit(embed=discord.Embed(title="Otevření není dostupné", description=text,
                                                   color=BRAND_PURPLE), attachments=[])
             return
@@ -479,6 +501,7 @@ class Summon(commands.Cog):
                         asyncio.to_thread(
                             render_opening, reward.card, get_card_image_path(reward.card.get("image")),
                             get_roll_images(8),
+                            crate_name=crate_data["name"],
                             roll_frame_ids=[f["id"] for f in eligible_frames(load_json(CARDS_FRAMES, default=[]))],
                             max_bytes=min(MAX_ROLL_IMAGE_BYTES, getattr(interaction, "filesize_limit", MAX_ROLL_IMAGE_BYTES)),
                         ),
@@ -494,7 +517,7 @@ class Summon(commands.Cog):
                 intro.title = "Odhalení karty"
                 intro.description = None
                 intro.set_image(url="attachment://summon.gif")
-                await message.edit(embeds=[intro, luck_embed(reward.tickets)],
+                await message.edit(embeds=[intro, luck_embed(reward.tickets, getattr(reward, "guaranteed_frame", False))],
                                    attachments=[discord.File(io.BytesIO(animation), filename="summon.gif")])
                 await asyncio.sleep(duration + 0.4)
         except Exception:
@@ -520,7 +543,7 @@ class Summon(commands.Cog):
             summary += f"\n🖼️ Bonusový rámeček: **{card['frame']}** · sundání: `/cards upgrade frame:remove`"
         view = None if is_test else KeepBurnView(uid=str(interaction.user.id),
                                                  unique_id=reward.unique_id, card=card)
-        meters = luck_embed(reward.tickets)
+        meters = luck_embed(reward.tickets, getattr(reward, "guaranteed_frame", False))
         result_embeds = [meters]
         if showcase:
             card_embed = discord.Embed(color=BRAND_PURPLE)
