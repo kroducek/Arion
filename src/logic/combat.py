@@ -875,7 +875,11 @@ class EOTView(ui.View):
         # jeho tah. Tik může aktéra srazit, pak se tah předá dál (a tikne zas).
         tick_lines: list[str] = []
         if combat.get("auto_tick", True):
-            for _ in range(len(order) + 1):
+            ticked: set[str] = set()
+            while next_actor not in ticked:
+                ticked.add(next_actor)
+                if is_down(combat, next_actor):
+                    break
                 tick_lines += self.cog._tick_actor(combat, next_actor)
                 if not is_down(combat, next_actor):
                     break
@@ -1570,20 +1574,25 @@ class CombatCog(commands.Cog):
         """
         bs = _bs()
         stat = (combat.get("stats") or {}).get(actor)
-        if not bs or not stat or not stat.get("statuses"):
+        if not bs or not stat:
+            return []
+        uid = _actor_uid(actor)
+        if not stat.get("statuses"):
+            # Nátěrům na zbraních ubere kolo i tah beze statusů.
+            if uid is not None:
+                _writeback_player_state(uid, stat, bs)
             return []
         reg = bs.load_statuses()
         before = stat_snapshot(stat)
         dmg, log = bs.tick_statuses(stat, reg)
-        if not log:
-            return []
         if dmg:
             stat["hp"] = max(0, stat.get("hp", 0) - dmg)
             log_event(combat, "status", actor, before, stat_snapshot(stat),
                       detail=f"statusy −{dmg}")
-        uid = _actor_uid(actor)
         if uid is not None:
             _writeback_player_state(uid, stat, bs)
+        if not log:
+            return []
         lines = [console(f"🩸 Status: **{actor}** — " + " · ".join(log))]
         if dmg:
             hp, max_hp = stat.get("hp", 0), stat.get("max_hp", 0)
