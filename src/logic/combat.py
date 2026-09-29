@@ -15,6 +15,7 @@ from src.database.profiles import (
 )
 from src.logic.dice import DiceError, item_damage_expr, roll_expr
 from src.logic.inventory import TOULEC_ITEM_ID, _remove_from_inventory
+from src.utils.admin_gate import admin_only, mark_admin
 
 # Munice a zbraně, které ji potřebují.
 AMMO_CATEGORY     = "náboje"
@@ -605,6 +606,7 @@ class EOTView(ui.View):
 
     @ui.button(label="⏭️  End of Turn", style=discord.ButtonStyle.danger)
     async def eot_button(self, interaction: discord.Interaction, button: ui.Button):
+        self.cog.reload_state()
         if self.channel_id not in self.cog.active_combats:
             return await interaction.response.send_message(
                 "❌ *Combat byl ukončen.*", ephemeral=True
@@ -679,6 +681,7 @@ class InitiativeView(ui.View):
 
     @ui.button(label="Hodit iniciativu (1d20)", emoji="🎲", style=discord.ButtonStyle.primary)
     async def roll(self, interaction: discord.Interaction, button: ui.Button):
+        self.cog.reload_state()
         combat = self.cog.active_combats.get(self.channel_id)
         if not combat:
             return await interaction.response.send_message("❌ *Combat už neběží.*", ephemeral=True)
@@ -890,6 +893,7 @@ class AttackView(ui.View):
     # ── aplikace zásahu ──────────────────────────────────────────────────────
 
     async def resolve_hit(self, interaction: discord.Interaction, damage: int):
+        self.cog.reload_state()
         combat = self.cog.active_combats.get(self.channel_id)
         if not combat or self.target not in combat["stats"]:
             return await interaction.response.send_message(
@@ -979,6 +983,7 @@ class AttackView(ui.View):
 
     @ui.button(label="Reakce (1d20)", emoji="🎲", style=discord.ButtonStyle.secondary)
     async def reaction(self, interaction: discord.Interaction, button: ui.Button):
+        self.cog.reload_state()
         combat = self.cog.active_combats.get(self.channel_id)
         if not combat:
             return await interaction.response.send_message(
@@ -1007,6 +1012,28 @@ class CombatCog(commands.Cog):
         self.active_combats = self._load_state()
 
     # ── Persistence ───────────────────────────────────────────────────────────
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Před každým příkazem cogu načte stav boje z DB.
+
+        Hráčskou a vypravěčskou konzoli obsluhují dva procesy (ArionDND a
+        ArionDM), takže stav v paměti jednoho z nich může být zastaralý.
+        """
+        self.reload_state()
+        return True
+
+    def reload_state(self) -> None:
+        """Přepíše stav boje tím z DB; slovníky bojů si drží identitu."""
+        fresh = self._load_state()
+        for channel_id, combat in fresh.items():
+            current = self.active_combats.get(channel_id)
+            if current is None:
+                self.active_combats[channel_id] = combat
+            else:
+                current.clear()
+                current.update(combat)
+        for channel_id in [c for c in self.active_combats if c not in fresh]:
+            del self.active_combats[channel_id]
 
     def save_state(self):
         """Uloží stav boje (volají i jiné cogy, např. perky)."""
@@ -1169,6 +1196,7 @@ class CombatCog(commands.Cog):
                 for sid, s in reg.items() if cur in sid.lower() or cur in s.get("name","").lower()][:25]
 
     @combat_effect.command(name="add", description="[DM] Přidej status aktérovi.")
+    @mark_admin
     @app_commands.describe(target="Aktér (hráč/NPC).", status="Status.", source="Odkud efekt je.")
     @app_commands.choices(source=[
         app_commands.Choice(name="zbraň",     value="zbran"),
@@ -1201,6 +1229,7 @@ class CombatCog(commands.Cog):
             f"(zdroj: {SOURCE_LABEL.get(source, source)}).")
 
     @combat_effect.command(name="clear", description="[DM] Vyléč statusy aktéra (dle typu).")
+    @mark_admin
     @app_commands.describe(target="Aktér.", cure="Typ léčení.")
     @app_commands.choices(cure=[
         app_commands.Choice(name="fyzické", value="fyzické"),
@@ -1243,6 +1272,7 @@ class CombatCog(commands.Cog):
             f"**{target}** statusy:\n{desc or '*žádné*'}", ephemeral=True)
 
     @combat_effect.command(name="autotick", description="[DM] Zapni/vypni auto-odečet dmg ze statusů.")
+    @mark_admin
     async def combat_status_autotick(self, interaction: discord.Interaction, zapnuto: bool):
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message("❌ Jen GM (admin).", ephemeral=True)
@@ -1347,6 +1377,7 @@ class CombatCog(commands.Cog):
     # ── /combat add_npc ───────────────────────────────────────────────────────
 
     @combat_group.command(name="add_npc", description="GM přidá NPC/potvoru s HP, DEF a FUR")
+    @admin_only()
     @app_commands.describe(
         name="Jméno NPC",
         hp="Maximum životů (výchozí: 100)",
@@ -1408,7 +1439,7 @@ class CombatCog(commands.Cog):
         name="add_player_stats",
         description="GM přidá HP/DEF/FUR hráči (např. pro tracking zranění)"
     )
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         mention="Hráč (mention)",
         hp="Maximum životů",
@@ -1451,6 +1482,7 @@ class CombatCog(commands.Cog):
     # ── /combat add_boss ──────────────────────────────────────────────────────
 
     @combat_group.command(name="add_boss", description="GM přidá bosse s odděleným boss barem")
+    @admin_only()
     @app_commands.describe(
         name="Jméno bosse",
         hp="Maximum životů (výchozí: 200)",
@@ -1505,7 +1537,7 @@ class CombatCog(commands.Cog):
     # ── /combat sethp ─────────────────────────────────────────────────────────
 
     @combat_group.command(name="sethp", description="Admin: nastaví HP NPC/hráči během combatu")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(
         name="Jméno NPC nebo mention hráče (@mention nebo přesné jméno)",
         hp="Nové HP (záporná hodnota = poškození, kladná = absolutní nastavení)",
@@ -1593,7 +1625,7 @@ class CombatCog(commands.Cog):
     # ── /combat setdef ────────────────────────────────────────────────────────
 
     @combat_group.command(name="setdef", description="Admin: nastaví DEF NPC/hráči")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(name="Jméno NPC nebo mention hráče", defense="Nová hodnota obrany")
     async def combat_setdef(self, interaction: discord.Interaction, name: str, defense: int):
         channel_id = interaction.channel_id
@@ -1622,7 +1654,7 @@ class CombatCog(commands.Cog):
     # ── /combat setfur ────────────────────────────────────────────────────────
 
     @combat_group.command(name="setfur", description="Admin: nastaví FUR (zuřivost) NPC/hráči")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(name="Jméno NPC nebo mention hráče", fury="Nová hodnota zuřivosti")
     async def combat_setfur(self, interaction: discord.Interaction, name: str, fury: int):
         channel_id = interaction.channel_id
@@ -1651,7 +1683,7 @@ class CombatCog(commands.Cog):
     # ── /combat setinit ───────────────────────────────────────────────────────
 
     @combat_group.command(name="setinit", description="Admin: nastaví iniciativu aktérovi")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     @app_commands.describe(name="Jméno NPC nebo mention hráče", value="Nová iniciativa")
     async def combat_setinit(self, interaction: discord.Interaction, name: str, value: int):
         channel_id = interaction.channel_id
@@ -1677,6 +1709,7 @@ class CombatCog(commands.Cog):
     # ── /combat remove ────────────────────────────────────────────────────────
 
     @combat_group.command(name="remove", description="Odebere někoho z pořadí")
+    @admin_only()
     async def combat_remove(self, interaction: discord.Interaction, name: str):
         channel_id = interaction.channel_id
         if channel_id not in self.active_combats:
@@ -1722,7 +1755,7 @@ class CombatCog(commands.Cog):
         name="setorder",
         description="Uzavře pořadí do pevné smyčky a spustí combat"
     )
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def combat_setorder(self, interaction: discord.Interaction):
         channel_id = interaction.channel_id
         if channel_id not in self.active_combats or not self.active_combats[channel_id]["order"]:
@@ -1755,6 +1788,7 @@ class CombatCog(commands.Cog):
     # ── /combat end ───────────────────────────────────────────────────────────
 
     @combat_group.command(name="end", description="Ukončí combat a vymaže data")
+    @admin_only()
     async def combat_end(self, interaction: discord.Interaction):
         channel_id = interaction.channel_id
         combat = self.active_combats.pop(channel_id, None)
@@ -2102,7 +2136,7 @@ class CombatCog(commands.Cog):
     @combat_group.command(
         name="undo",
         description="[GM] Vrátí poslední změnu HP zpět.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def combat_undo(self, interaction: discord.Interaction):
         combat = self.active_combats.get(interaction.channel_id)
         if not combat:
@@ -2129,7 +2163,7 @@ class CombatCog(commands.Cog):
     @combat_group.command(
         name="autoapply",
         description="[GM] Aplikovat damage z /attack rovnou, bez potvrzení.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def combat_autoapply(self, interaction: discord.Interaction, zapnuto: bool):
         combat = self.active_combats.get(interaction.channel_id)
         if not combat:
@@ -2143,7 +2177,7 @@ class CombatCog(commands.Cog):
     @combat_group.command(
         name="verbose",
         description="[GM] Dlouhé embedy místo krátkých hlášek při úpravě HP.")
-    @app_commands.checks.has_permissions(administrator=True)
+    @admin_only()
     async def combat_verbose(self, interaction: discord.Interaction, zapnuto: bool):
         combat = self.active_combats.get(interaction.channel_id)
         if not combat:

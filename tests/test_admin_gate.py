@@ -73,6 +73,15 @@ class AdminGateTest(unittest.TestCase):
             if name in self.all_commands:
                 self.assertIn(name, self.player, f"{name} má zůstat hráčům")
 
+    def test_combat_je_rozdeleny_mezi_konzole(self):
+        """Vypravěčské zásahy do boje jedou pod ArionDM, hráčská část zůstává."""
+        for name in ("combat sethp", "combat add_npc", "combat add_boss", "combat end",
+                     "combat setorder", "combat undo", "combat effect add"):
+            self.assertIn(name, self.admin, f"{name} má být v ArionDM")
+        for name in ("combat start", "combat join", "combat status", "combat summary",
+                     "combat log", "combat effect list", "attack"):
+            self.assertIn(name, self.player, f"{name} má zůstat hráčům")
+
     def test_prikazy_na_behovy_stav_zustavaji_hostiteli(self):
         """`/kostky cancel` ruší hru drženou v paměti ArionBOTu — v ArionDM nemá co dělat."""
         self.assertIn("kostky cancel", self.player)
