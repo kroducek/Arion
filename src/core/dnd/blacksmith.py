@@ -10,13 +10,15 @@ Tři vrstvy:
   3) AKTIVNÍ STATUS na postavě — zapsaný na "nositeli" (profil hráče nebo
      combat-stat NPC) jako {status, zdroj, kol_zbyva, dmg}.
 
-Combat integrace: combat.py si přes tick_statuses() nechá spočítat dmg na konci
-kola a odečte ho z HP (auto-tick je default). Léčení sundává statusy dle cure.
+Combat integrace: combat.py si přes tick_statuses() nechá spočítat dmg na začátku
+tahu nositele a odečte ho z HP (auto-tick je default). Léčení sundává statusy
+dle cure.
 """
 import os
 import re
 import random
 import logging
+import unicodedata
 from typing import Optional
 
 import discord
@@ -46,6 +48,14 @@ CURES   = ["fyzické", "magické", "obojí"]
 SOURCES = ["zbran", "runa", "prostredi", "schopnost"]
 SOURCE_LABELS = {"zbran": "zbraň", "runa": "runa", "prostredi": "prostředí", "schopnost": "schopnost"}
 TICKS   = ["kazde_kolo", "pri_zasahu"]
+
+
+def norm_tick(value) -> str:
+    """Sjednotí zápis ticku — `každé kolo`, `Každé_kolo` i `` → `kazde_kolo`."""
+    txt = unicodedata.normalize("NFKD", str(value or ""))
+    txt = txt.encode("ascii", "ignore").decode().strip().lower()
+    txt = re.sub(r"[\s-]+", "_", txt)
+    return txt or "kazde_kolo"
 
 # ── Výchozí registr (nasadí se při prvním běhu / po smazání souboru) ──────────
 DEFAULT_STATUSES: dict[str, dict] = {
@@ -153,7 +163,7 @@ def apply_status(carrier: dict, status_id: str, source: str,
     return inst
 
 def tick_statuses(carrier: dict, registry: Optional[dict] = None) -> tuple[int, list[str]]:
-    """Konec kola: statusy s tick='kazde_kolo' udělí dmg a sníží kol_zbyva.
+    """Tah nositele: statusy s tick='kazde_kolo' udělí dmg a sníží kol_zbyva.
 
     Vrací (celkový_dmg, log_řádky). Vypršelé statusy odstraní.
     Statusy s tick='pri_zasahu' (momentální) se NEtikají.
@@ -165,7 +175,7 @@ def tick_statuses(carrier: dict, registry: Optional[dict] = None) -> tuple[int, 
     survivors = []
     for inst in statuses:
         sdef = reg.get(inst.get("status"), {})
-        if sdef.get("tick") != "kazde_kolo":
+        if norm_tick(sdef.get("tick")) != "kazde_kolo":
             survivors.append(inst)
             continue
         dmg = roll_dice(inst.get("dmg") or sdef.get("dmg", ""))
@@ -455,7 +465,7 @@ class BlacksmithCog(commands.Cog):
         reg[sid] = {
             "name": name.strip(), "emoji": (emoji or "•").strip(),
             "kind": kind, "cure": cure, "dmg": (dmg or "").strip(),
-            "duration": max(0, duration), "tick": tick,
+            "duration": max(0, duration), "tick": norm_tick(tick),
             "proc": (proc or "").strip(), "proc_roll": (proc_roll or "").strip(),
             "desc": (desc or "").strip(),
         }
