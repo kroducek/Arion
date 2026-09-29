@@ -124,5 +124,37 @@ class TestSummary(unittest.TestCase):
         self.assertIn("jed", fields["Statusy"])
 
 
+class TestPersistentViews(unittest.TestCase):
+    def test_tlacitka_nemaji_timeout(self):
+        cog = object()
+        self.assertIsNone(combat.AttackView(cog).timeout)
+        self.assertIsNone(combat.EOTView(cog).timeout)
+        self.assertIsNone(combat.InitiativeView(cog, 1, "<@1>").timeout)
+
+    def test_tlacitka_maji_custom_id(self):
+        for child in combat.AttackView(object()).children:
+            self.assertTrue(child.custom_id.startswith("arion:combat:"))
+
+    def test_payload_a_hydrate_prezije_restart(self):
+        view = combat.AttackView(object(), 5, "<@1>", 1, "Goblin", 7, "luk",
+                                 mana_cost=2, ammo_note="−1 Šíp",
+                                 weapon_label="Luk", roll_info="1d8 → 7",
+                                 resources={"uid": 1, "mana": 2},
+                                 extra_statuses=[("jed", "zbran")])
+        restored = combat.AttackView(object())
+        self.assertTrue(restored.persistent)
+        restored.hydrate(view.payload())
+        self.assertEqual(restored.target, "Goblin")
+        self.assertEqual(restored.damage, 7)
+        self.assertEqual(restored.extra_statuses, [("jed", "zbran")])
+
+    def test_vyhodnoceny_utok_se_z_cekajicich_smaze(self):
+        view = combat.AttackView(object())
+        view.message_id = "42"
+        state = {combat.PENDING_KEY: {"42": {"target": "Goblin"}}}
+        view._forget_pending(state)
+        self.assertEqual(state[combat.PENDING_KEY], {})
+
+
 if __name__ == "__main__":
     unittest.main()

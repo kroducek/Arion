@@ -35,11 +35,26 @@ class TestNpcWeapons(unittest.TestCase):
             combat.set_npc_weapon(stat, "main", "kladivo")
         self.assertIsNone(combat.npc_weapon(stat, "main"))
 
-    def test_prazdny_vyraz_zbran_smaze(self):
+    def test_pomlcka_zbran_smaze(self):
         stat = {}
         combat.set_npc_weapon(stat, "main", "1d8")
-        self.assertEqual(combat.set_npc_weapon(stat, "main", ""), {})
+        self.assertEqual(combat.set_npc_weapon(stat, "main", "-"), {})
         self.assertIsNone(combat.npc_weapon(stat, "main"))
+
+    def test_status_jde_doplnit_bez_dmg(self):
+        stat = {}
+        combat.set_npc_weapon(stat, "main", "1d8", "Úzká čepel")
+        weapon = combat.set_npc_weapon(stat, "main", status="jed")
+        self.assertEqual(weapon, {"dmg": "1d8", "name": "Úzká čepel", "status": "jed"})
+
+    def test_status_jde_sundat(self):
+        stat = {}
+        combat.set_npc_weapon(stat, "main", "1d8", status="jed")
+        self.assertNotIn("status", combat.set_npc_weapon(stat, "main", status="-"))
+
+    def test_bez_dmg_a_bez_zbrane_je_chyba(self):
+        with self.assertRaises(DiceError):
+            combat.set_npc_weapon({}, "main", status="jed")
 
     def test_bez_nazvu_se_pouzije_slot(self):
         stat = {}
