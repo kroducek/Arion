@@ -174,22 +174,41 @@ def normalize_dmg_expr(raw: str) -> str:
     return expr
 
 
-def set_npc_weapon(stat: dict, slot: str, expr: str, name: str = "",
-                   status: str = "") -> dict:
-    """Uloží zbraň NPC do statů. `expr` prázdný = zbraň se smaže.
+CLEAR_TOKENS = {"-", "—", "smazat", "zadny", "žádný", "none", "zrušit"}
+
+
+def set_npc_weapon(stat: dict, slot: str, expr: str | None = None,
+                   name: str | None = None,
+                   status: str | None = None) -> dict:
+    """Založí nebo upraví zbraň NPC. `None` = pole se nemění.
+
+    Zbraň se smaže jen `expr` z `CLEAR_TOKENS` (`-`), aby šlo doplňovat samotný
+    status už nastavené zbrani; `status="-"` status sundá.
 
     `status` je id statusu z blacksmithu (jed, krácení…), který zbraň doručí
     při potvrzeném zásahu — NPC tak umí to samé co hráčská natřená zbraň.
     """
     weapons = stat.setdefault("weapons", {})
-    if not str(expr or "").strip():
+    expr_txt = str(expr).strip() if expr is not None else ""
+    if expr is not None and expr_txt.lower() in CLEAR_TOKENS:
         weapons.pop(slot, None)
         return {}
-    weapon = {"dmg": normalize_dmg_expr(expr)}
-    if name.strip():
+
+    current = weapons.get(slot)
+    weapon = dict(current) if isinstance(current, dict) else {}
+    if expr_txt:
+        weapon["dmg"] = normalize_dmg_expr(expr_txt)
+    if not weapon.get("dmg"):
+        raise DiceError("zbraň nemá damage")
+
+    if name is not None and name.strip():
         weapon["name"] = name.strip()
-    if status.strip():
-        weapon["status"] = status.strip()
+    if status is not None:
+        status_txt = status.strip()
+        if not status_txt or status_txt.lower() in CLEAR_TOKENS:
+            weapon.pop("status", None)
+        else:
+            weapon["status"] = status_txt
     weapons[slot] = weapon
     return weapon
 
@@ -769,20 +788,26 @@ def _build_order_embed(title: str, combat: dict, note: str = "") -> discord.Embe
 # ── EOT Button View ────────────────────────────────────────────────────────────
 
 class EOTView(ui.View):
-    def __init__(self, cog: "CombatCog", channel_id: int):
+    """Tlačítko konce tahu. Bez `channel_id` slouží jako persistent view — kanál
+    si vezme z interakce, takže tlačítko šlape i po restartu bota.
+    """
+
+    def __init__(self, cog: "CombatCog", channel_id: int | None = None):
         super().__init__(timeout=None)
         self.cog = cog
         self.channel_id = channel_id
 
-    @ui.button(label="⏭️  End of Turn", style=discord.ButtonStyle.danger)
+    @ui.button(label="⏭️  End of Turn", style=discord.ButtonStyle.danger,
+               custom_id="arion:combat:eot")
     async def eot_button(self, interaction: discord.Interaction, button: ui.Button):
         self.cog.reload_state()
-        if self.channel_id not in self.cog.active_combats:
+        channel_id = self.channel_id if self.channel_id is not None else interaction.channel_id
+        if channel_id not in self.cog.active_combats:
             return await interaction.response.send_message(
                 "❌ *Combat byl ukončen.*", ephemeral=True
             )
 
-        combat = self.cog.active_combats[self.channel_id]
+        combat = self.cog.active_combats[channel_id]
 
         if not combat.get("locked"):
             return await interaction.response.send_message(
@@ -843,7 +868,7 @@ class EOTView(ui.View):
         lines = turn_console(combat, next_actor, new_round=new_round)
         lines += [console(f"💀 *{who} je mimo boj — tah přeskočen.*") for who in skipped]
         lines += tick_lines
-        view = EOTView(self.cog, self.channel_id)
+        view = EOTView(self.cog, channel_id)
         await interaction.response.send_message(content=lines[0], view=view)
         await self.cog._stream(interaction, lines)
         if tick_lines:
@@ -858,7 +883,7 @@ class InitiativeView(ui.View):
     """Ephemeral tlačítko pro hod iniciativy. Zapíše číslo do combat['initiative']."""
 
     def __init__(self, cog, channel_id: int, actor: str):
-        super().__init__(timeout=120)
+        super().__init__(timeout=None)
         self.cog        = cog
         self.channel_id = channel_id
         self.actor      = actor
@@ -1021,16 +1046,26 @@ class DamageModal(ui.Modal, title="Upravit poškození"):
         await self.view_ref.resolve_hit(interaction, value)
 
 
-class AttackView(ui.View):
-    """Útok čeká na potvrzení — cíl může uhnout, GM upravit číslo."""
+PENDING_KEY = "pending_attacks"
+PENDING_LIMIT = 25
 
-    def __init__(self, cog: "CombatCog", channel_id: int, attacker: str,
-                 attacker_uid: int | None, target: str, damage: int,
-                 weapon_id: str | None, mana_cost: int = 0,
+
+class AttackView(ui.View):
+    """Útok čeká na potvrzení — cíl může uhnout, GM upravit číslo.
+
+    Tlačítka nemají timeout a útok se ukládá do stavu boje pod id zprávy, takže
+    se dají dokliknout i po hodinách RP nebo po restartu bota — prazdná instance
+    zaregistrovaná jako persistent view si data dotaže z DB.
+    """
+
+    def __init__(self, cog: "CombatCog", channel_id: int | None = None,
+                 attacker: str = "", attacker_uid: int | None = None,
+                 target: str = "", damage: int = 0,
+                 weapon_id: str | None = None, mana_cost: int = 0,
                  ammo_note: str = "", weapon_label: str = "",
                  roll_info: str = "", resources: dict | None = None,
                  extra_statuses: list | None = None):
-        super().__init__(timeout=600)
+        super().__init__(timeout=None)
         self.resources = resources or {}
         self.extra_statuses = list(extra_statuses or [])
         self.cog = cog
@@ -1045,6 +1080,62 @@ class AttackView(ui.View):
         self.weapon_label = weapon_label
         self.roll_info = roll_info
         self.resolved = False
+        self.message_id: str | None = None
+        # Prazdná instance = persistent view registrovaná při startu bota.
+        self.persistent = not target
+
+    # ── stav přeživší restart ──────────────────────────────────────
+
+    def payload(self) -> dict:
+        return {
+            "attacker": self.attacker,
+            "attacker_uid": self.attacker_uid,
+            "target": self.target,
+            "damage": self.damage,
+            "weapon_id": self.weapon_id,
+            "mana_cost": self.mana_cost,
+            "ammo_note": self.ammo_note,
+            "weapon_label": self.weapon_label,
+            "roll_info": self.roll_info,
+            "resources": self.resources,
+            "extra_statuses": [list(s) for s in self.extra_statuses],
+        }
+
+    def hydrate(self, data: dict) -> None:
+        self.attacker = data.get("attacker", "")
+        self.attacker_uid = data.get("attacker_uid")
+        self.target = data.get("target", "")
+        self.damage = int(data.get("damage", 0) or 0)
+        self.weapon_id = data.get("weapon_id")
+        self.mana_cost = int(data.get("mana_cost", 0) or 0)
+        self.ammo_note = data.get("ammo_note", "")
+        self.weapon_label = data.get("weapon_label", "")
+        self.roll_info = data.get("roll_info", "")
+        self.resources = data.get("resources") or {}
+        self.extra_statuses = [tuple(s) for s in (data.get("extra_statuses") or [])]
+        self.resolved = False
+
+    async def _ensure_state(self, interaction: discord.Interaction) -> bool:
+        """Persistent instance nemá vlastní stav — načte si útok podle id zprávy."""
+        if not self.persistent:
+            return True
+        self.cog.reload_state()
+        self.channel_id = interaction.channel_id
+        message = interaction.message
+        combat = self.cog.active_combats.get(interaction.channel_id) or {}
+        data = (combat.get(PENDING_KEY) or {}).get(str(message.id) if message else "")
+        if not data:
+            await interaction.response.send_message(
+                "⌛ *Tenhle útok už neplatí — hoď ho znovu přes `/attack`.*",
+                ephemeral=True)
+            return False
+        self.hydrate(data)
+        self.message_id = str(message.id)
+        return True
+
+    def _forget_pending(self, state: dict) -> None:
+        if self.message_id:
+            (state.get(PENDING_KEY) or {}).pop(self.message_id, None)
 
     # ── oprávnění ────────────────────────────────────────────────────────────
 
@@ -1111,6 +1202,7 @@ class AttackView(ui.View):
             log_event(state, "attack", self.target, before, stat_snapshot(stat),
                       detail=out["change_str"], actor=self.attacker,
                       resources=self.resources)
+            self._forget_pending(state)
             out["max_hp"] = stat.get("max_hp", 0)
             out["stat"] = stat
             return out
@@ -1159,15 +1251,21 @@ class AttackView(ui.View):
 
     # ── tlačítka ─────────────────────────────────────────────────────────────
 
-    @ui.button(label="Zasáhl", emoji="✅", style=discord.ButtonStyle.success)
+    @ui.button(label="Zasáhl", emoji="✅", style=discord.ButtonStyle.success,
+               custom_id="arion:combat:attack:hit")
     async def hit(self, interaction: discord.Interaction, button: ui.Button):
+        if not await self._ensure_state(interaction):
+            return
         if not self._may_resolve(interaction):
             return await interaction.response.send_message(
                 "❌ *Rozhodnout může GM, útočník nebo cíl.*", ephemeral=True)
         await self.resolve_hit(interaction, self.damage)
 
-    @ui.button(label="Uhnul / minul", emoji="🛡️", style=discord.ButtonStyle.secondary)
+    @ui.button(label="Uhnul / minul", emoji="🛡️", style=discord.ButtonStyle.secondary,
+               custom_id="arion:combat:attack:miss")
     async def miss(self, interaction: discord.Interaction, button: ui.Button):
+        if not await self._ensure_state(interaction):
+            return
         if not self._may_resolve(interaction):
             return await interaction.response.send_message(
                 "❌ *Rozhodnout může GM, útočník nebo cíl.*", ephemeral=True)
@@ -1189,6 +1287,7 @@ class AttackView(ui.View):
             detail = f"minul ({self.damage} dmg)"
             if self.weapon_label:
                 detail = f"{self.weapon_label} — {detail}"
+            self._forget_pending(state)
             return log_event(state, "miss", self.target, snapshot, snapshot,
                              detail=detail, actor=self.attacker, revert=False)
 
@@ -1202,15 +1301,21 @@ class AttackView(ui.View):
             lines.append(console(spent["mana_note"]))
         await self._replace_with_console(interaction, lines)
 
-    @ui.button(label="Upravit", emoji="✏️", style=discord.ButtonStyle.primary)
+    @ui.button(label="Upravit", emoji="✏️", style=discord.ButtonStyle.primary,
+               custom_id="arion:combat:attack:edit")
     async def edit(self, interaction: discord.Interaction, button: ui.Button):
+        if not await self._ensure_state(interaction):
+            return
         if not self._may_resolve(interaction):
             return await interaction.response.send_message(
                 "❌ *Rozhodnout může GM, útočník nebo cíl.*", ephemeral=True)
         await interaction.response.send_modal(DamageModal(self, self.damage))
 
-    @ui.button(label="Reakce (1d20)", emoji="🎲", style=discord.ButtonStyle.secondary)
+    @ui.button(label="Reakce (1d20)", emoji="🎲", style=discord.ButtonStyle.secondary,
+               custom_id="arion:combat:attack:reaction")
     async def reaction(self, interaction: discord.Interaction, button: ui.Button):
+        if not await self._ensure_state(interaction):
+            return
         self.cog.reload_state()
         combat = self.cog.active_combats.get(self.channel_id)
         if not combat:
@@ -1238,6 +1343,11 @@ class CombatCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.active_combats = self._load_state()
+
+    async def cog_load(self):
+        # Persistent views: tlačítka bez timeoutu fungují i po restartu bota.
+        self.bot.add_view(EOTView(self))
+        self.bot.add_view(AttackView(self))
 
     # ── Persistence ───────────────────────────────────────────────────────────
 
@@ -1301,6 +1411,24 @@ class CombatCog(commands.Cog):
             logging.exception("[combat] atomický zápis stavu selhal")
             return None
         return box["result"]
+
+    async def _store_pending(self, interaction: discord.Interaction,
+                             view: "AttackView") -> None:
+        """Uloží čekající útok k id zprávy, ať ho tlačítka najdou i po restartu."""
+        try:
+            message = await interaction.original_response()
+        except Exception:
+            logging.exception("[combat] id zprávy útoku se nepodařilo zjistit")
+            return
+        view.message_id = str(message.id)
+
+        def change(combat: dict):
+            pending = combat.setdefault(PENDING_KEY, {})
+            pending[view.message_id] = view.payload()
+            for stale in list(pending)[:-PENDING_LIMIT]:
+                pending.pop(stale, None)
+
+        self.mutate_combat(interaction.channel_id, change)
 
     # ── Konzole ───────────────────────────────────────────────────────────────
 
@@ -2047,7 +2175,7 @@ class CombatCog(commands.Cog):
     @app_commands.describe(
         name="NPC nebo boss v boji",
         zbran="Který slot upravuješ",
-        dmg="Damage (`1d8`, `2d6+2`, holé číslo = kostka). Prázdné = zbraň smazat.",
+        dmg="Damage (`1d8`, `2d6+2`, holé číslo = kostka). `-` = zbraň smazat.",
         nazev="Název zbraně (jen do výpisu).",
         status="Status, který zbraň doručí při zásahu (jed, krácení…).",
     )
@@ -2074,9 +2202,12 @@ class CombatCog(commands.Cog):
 
         stat = combat["stats"][name]
         try:
-            weapon = set_npc_weapon(stat, zbran.value, dmg or "", nazev or "",
-                                    status or "")
+            weapon = set_npc_weapon(stat, zbran.value, dmg, nazev, status)
         except DiceError:
+            if not npc_weapon(stat, zbran.value):
+                return await interaction.response.send_message(
+                    f"❌ *{name} zatím {NPC_SLOTS[zbran.value]} nemá — zadej i `dmg`.*",
+                    ephemeral=True)
             return await interaction.response.send_message(
                 "❌ *Damage nejde hodit — použij zápis jako `1d8`, `2d6+2` nebo `16`.*",
                 ephemeral=True)
@@ -2520,6 +2651,7 @@ class CombatCog(commands.Cog):
 
         self._save_state()
         await interaction.response.send_message(embed=embed, view=view)
+        await self._store_pending(interaction, view)
 
     # ── /combat attack_npc ────────────────────────────────────────────────────
 
@@ -2684,6 +2816,7 @@ class CombatCog(commands.Cog):
                           extra_statuses=statuses)
         self._save_state()
         await interaction.response.send_message(embed=embed, view=view)
+        await self._store_pending(interaction, view)
 
     # ── /combat log a /combat undo ────────────────────────────────────
 
