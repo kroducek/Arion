@@ -76,7 +76,8 @@ class AdminGateTest(unittest.TestCase):
     def test_combat_je_rozdeleny_mezi_konzole(self):
         """Vypravěčské zásahy do boje jedou pod ArionDM, hráčská část zůstává."""
         for name in ("combat sethp", "combat add_npc", "combat add_boss", "combat end",
-                     "combat setorder", "combat undo", "combat effect add"):
+                     "combat setorder", "combat undo", "combat effect add",
+                     "combat attack_npc", "combat setdmg"):
             self.assertIn(name, self.admin, f"{name} má být v ArionDM")
         for name in ("combat start", "combat join", "combat status", "combat summary",
                      "combat log", "combat effect list", "attack"):
