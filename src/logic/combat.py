@@ -1,3 +1,4 @@
+import copy
 import discord
 import asyncio
 import logging
@@ -6,7 +7,7 @@ from typing import Optional
 from discord.ext import commands
 from discord import app_commands, ui
 from src.utils.paths import COMBAT_STATE
-from src.utils.json_utils import load_json, save_json
+from src.utils.json_utils import load_json, save_json, update_json
 from src.database.profiles import (
     load_items as _load_items_db,
     load_profiles as _load_profiles,
@@ -14,7 +15,11 @@ from src.database.profiles import (
     save_profiles as _save_profiles,
 )
 from src.logic.dice import DiceError, implicit_die, item_damage_expr, roll_expr
-from src.logic.inventory import TOULEC_ITEM_ID, _remove_from_inventory
+from src.logic.inventory import (
+    TOULEC_ITEM_ID,
+    _add_to_inventory,
+    _remove_from_inventory,
+)
 from src.utils.admin_gate import admin_only, mark_admin
 
 # Munice a zbraně, které ji potřebují.
@@ -40,8 +45,13 @@ def _actor_uid(actor: str):
         return int(digits) if digits else None
     return None
 
-def _writeback_player_state(uid: int, carrier: dict, bs) -> None:
-    """Hráči zapíše hp_cur + statusy zpět do profilu a ubere kolo jeho nátěrům."""
+def _writeback_player_state(uid: int, carrier: dict, bs,
+                            tick_coatings: bool = True) -> None:
+    """Hráči zapíše hp_cur + statusy zpět do profilu a ubere kolo jeho nátěrům.
+
+    `tick_coatings=False` je zápis, který změnu jen vrací (undo) — tam by bylo
+    ubírání kol nátěrům navíc.
+    """
     try:
         profiles = _load_profiles()
         p = profiles.get(_pk(profiles, uid))
@@ -49,7 +59,7 @@ def _writeback_player_state(uid: int, carrier: dict, bs) -> None:
             return
         p["hp_cur"]   = max(0, min(carrier.get("hp", 0), p.get("hp_max", 50)))
         p["statuses"] = carrier.get("statuses", [])
-        if bs:
+        if bs and tick_coatings:
             bs.tick_coatings(p)
         _save_profiles(profiles)
     except Exception:
@@ -164,8 +174,13 @@ def normalize_dmg_expr(raw: str) -> str:
     return expr
 
 
-def set_npc_weapon(stat: dict, slot: str, expr: str, name: str = "") -> dict:
-    """Uloží zbraň NPC do statů. `expr` prázdný = zbraň se smaže."""
+def set_npc_weapon(stat: dict, slot: str, expr: str, name: str = "",
+                   status: str = "") -> dict:
+    """Uloží zbraň NPC do statů. `expr` prázdný = zbraň se smaže.
+
+    `status` je id statusu z blacksmithu (jed, krácení…), který zbraň doručí
+    při potvrzeném zásahu — NPC tak umí to samé co hráčská natřená zbraň.
+    """
     weapons = stat.setdefault("weapons", {})
     if not str(expr or "").strip():
         weapons.pop(slot, None)
@@ -173,8 +188,16 @@ def set_npc_weapon(stat: dict, slot: str, expr: str, name: str = "") -> dict:
     weapon = {"dmg": normalize_dmg_expr(expr)}
     if name.strip():
         weapon["name"] = name.strip()
+    if status.strip():
+        weapon["status"] = status.strip()
     weapons[slot] = weapon
     return weapon
+
+
+def npc_weapon_statuses(weapon: dict) -> list[tuple[str, str]]:
+    """Statusy, které zbraň NPC doručuje — formát sdílený s hráčskými zbraněmi."""
+    status = str((weapon or {}).get("status") or "").strip()
+    return [(status, "zbran")] if status else []
 
 
 def npc_weapon(stat: dict, slot: str) -> dict | None:
@@ -193,7 +216,9 @@ def npc_weapons_line(stat: dict) -> str:
     for slot, emoji in (("main", "⚔️"), ("bonus", "🗡️")):
         weapon = npc_weapon(stat, slot)
         if weapon:
-            bits.append(f"{emoji} {npc_weapon_label(weapon, slot)} `{weapon['dmg']}`")
+            venom = f" 🩸{weapon['status']}" if weapon.get("status") else ""
+            bits.append(
+                f"{emoji} {npc_weapon_label(weapon, slot)} `{weapon['dmg']}`{venom}")
     return "  ·  ".join(bits)
 
 
@@ -325,7 +350,12 @@ def release_action(combat: dict, actor: str, action: str) -> None:
 
 
 def reset_turn(combat: dict, actor: str, reaction: bool = False) -> None:
-    """Konec tahu aktéra — akce zase k dispozici. Reakce jen na začátku kola."""
+    """Vyčistí počítadla aktéra — volá se na konci i na začátku jeho tahu.
+
+    Začátek tahu musí smazat i akce, které aktér utratil mimo svůj tah
+    (NPC útok z `/combat attack_npc`, reakce) — jinak by si je ukousl z
+    příštího tahu. `reaction=True` vrací i reakci (začátek tahu, nové kolo).
+    """
     state = turn_state(combat, actor)
     for key in ("attack", "bonus", "perk"):
         state[key] = 0
@@ -342,21 +372,28 @@ def reset_reactions(combat: dict) -> None:
 # ── Log boje + undo ──────────────────────────────────────────────────────────
 
 LOG_LIMIT = 60
-LOG_ICON = {"attack": "⚔️", "sethp": "🩹", "status": "🩸", "perk": "✨", "miss": "🛡️"}
+LOG_ICON = {"attack": "⚔️", "sethp": "🩹", "status": "🩸", "perk": "✨", "miss": "🛡️",
+            "effect": "🧪", "cure": "🌿", "stat": "🛡", "remove": "❌"}
+
+SNAPSHOT_KEYS = ("hp", "fur", "def", "max_hp")
 
 
 def stat_snapshot(stat: dict) -> dict:
-    """HP a furioka aktéra — podklad pro undo."""
-    return {"hp": int(stat.get("hp", 0) or 0), "fur": int(stat.get("fur", 0) or 0)}
+    """Stav aktéra pro undo — čísla i statusy (kopie, ne odkaz)."""
+    snap = {key: int(stat.get(key, 0) or 0) for key in SNAPSHOT_KEYS}
+    snap["statuses"] = copy.deepcopy(stat.get("statuses") or [])
+    return snap
 
 
 def log_event(combat: dict, kind: str, target: str, before: dict, after: dict,
               detail: str = "", actor: str | None = None,
-              revert: bool = True) -> dict:
+              revert: bool = True, resources: dict | None = None) -> dict:
     """Zapíše událost do logu boje. Vrací zapsaný záznam.
 
     `revert=False` je zápis bez změny stavu (minutý útok) — undo ani shrnutí
-    ho neřeší, slouží jen jako stopa v historii.
+    ho neřeší, slouží jen jako stopa v historii. `resources` drží, co útok
+    stál útočníka (`{"uid": 1, "mana": 10, "ammo_id": "sip", "ammo_qty": 1}`),
+    aby to undo mohlo vrátit.
     """
     event = {
         "id": int(combat.get("log_seq", 0)) + 1,
@@ -369,6 +406,7 @@ def log_event(combat: dict, kind: str, target: str, before: dict, after: dict,
         "round": int(combat.get("round", 1)),
         "undone": False,
         "revert": revert,
+        "resources": resources or {},
     }
     combat["log_seq"] = event["id"]
     log = combat.setdefault("log", [])
@@ -378,9 +416,10 @@ def log_event(combat: dict, kind: str, target: str, before: dict, after: dict,
 
 
 def undo_last(combat: dict) -> dict | None:
-    """Vrátí poslední nezrušenou změnu HP/FUR zpět. None = není co vracet.
+    """Vrátí poslední nezrušenou změnu zpět. None = není co vracet.
 
-    Statusy ani spotřebovanou manu nevrací — ty řeší `/combat effect clear`.
+    Vrací všechno, co je v `before`: HP, furioka, DEF i statusy. Spotřebovanou
+    manu a munici řeší cog přes `event["resources"]`.
     """
     for event in reversed(combat.get("log", [])):
         if event.get("undone") or not event.get("revert", True):
@@ -388,11 +427,46 @@ def undo_last(combat: dict) -> dict | None:
         stat = combat.get("stats", {}).get(event["target"])
         if stat is None:
             continue
-        stat["hp"] = event["before"].get("hp", stat.get("hp", 0))
-        stat["fur"] = event["before"].get("fur", stat.get("fur", 0))
+        before = event.get("before", {})
+        for key in SNAPSHOT_KEYS:
+            if key in before:
+                stat[key] = before[key]
+        if "statuses" in before:
+            stat["statuses"] = copy.deepcopy(before["statuses"])
         event["undone"] = True
         return event
     return None
+
+
+def refund_resources(event: dict) -> str:
+    """Vrátí útočníkovi manu a munici z vráceného útoku. Vrací poznámku do konzole."""
+    res = event.get("resources") or {}
+    uid = res.get("uid")
+    if not uid:
+        return ""
+    notes = []
+    try:
+        profiles = _load_profiles()
+        profile = profiles.get(_pk(profiles, int(uid)))
+        if not profile:
+            return ""
+        mana = int(res.get("mana", 0) or 0)
+        if mana:
+            cur = profile.get("mana_cur", profile.get("mana_max", 20))
+            profile["mana_cur"] = min(profile.get("mana_max", cur + mana), cur + mana)
+            notes.append(f"🔷 mana `{cur}` → `{profile['mana_cur']}`")
+        ammo_id = res.get("ammo_id")
+        ammo_qty = int(res.get("ammo_qty", 0) or 0)
+        if ammo_id and ammo_qty:
+            store = profile.setdefault("inventory", [])
+            _add_to_inventory(store, str(ammo_id), ammo_qty)
+            notes.append(f"🎯 +{ammo_qty} {ammo_id}")
+        if notes:
+            _save_profiles(profiles)
+    except Exception:
+        logging.exception("[combat] vrácení many/munice selhalo")
+        return ""
+    return "  ·  ".join(notes)
 
 
 def format_log_event(event: dict) -> str:
@@ -400,7 +474,12 @@ def format_log_event(event: dict) -> str:
     who = f"{event['actor']} → " if event.get("actor") else ""
     hp_from = event["before"].get("hp", 0)
     hp_to = event["after"].get("hp", 0)
-    change = "minul" if not event.get("revert", True) else f"{hp_from} → {hp_to} HP"
+    if not event.get("revert", True):
+        change = "minul"
+    elif hp_from == hp_to:
+        change = f"{hp_to} HP"        # změna mimo HP (status, DEF) — detail řekne co
+    else:
+        change = f"{hp_from} → {hp_to} HP"
     line = (f"`{event['id']:>2}` ⟳{event.get('round', 1)} {icon} {who}"
             f"**{event['target']}** {change}")
     if event.get("detail"):
@@ -421,6 +500,33 @@ MEDALS = ("🥇", "🥈", "🥉")
 
 def is_player(actor: str) -> bool:
     return actor.startswith("<@")
+
+
+def is_down(combat: dict, actor: str) -> bool:
+    """Aktér na 0 HP — padl, takže nehraje a neútočí se na něj."""
+    stat = combat.get("stats", {}).get(actor)
+    return stat is not None and int(stat.get("hp", 0) or 0) <= 0
+
+
+def advance_turn(combat: dict) -> tuple[str, int, list[str]]:
+    """Posune pořadí na dalšího živého aktéra.
+
+    Vrací `(další aktér, kolik kol přibylo, přeskočení padlí)`. Padlí se
+    přeskakují, ať GM nemusí mrtvé NPC ručně odebírat; když padli všichni,
+    zůstane na řadě ten, kdo byl (wipeout si vezme slovo hned potom).
+    """
+    order = combat["order"]
+    rounds = 0
+    skipped: list[str] = []
+    for _ in range(len(order)):
+        combat["current_index"] = (combat["current_index"] + 1) % len(order)
+        if combat["current_index"] == 0:
+            rounds += 1
+        actor = order[combat["current_index"]]
+        if not is_down(combat, actor):
+            return actor, rounds, skipped
+        skipped.append(actor)
+    return order[combat["current_index"]], rounds, skipped
 
 
 def damage_tally(combat: dict) -> list[tuple[str, dict]]:
@@ -485,6 +591,13 @@ def build_summary_embed(combat: dict, title: str) -> discord.Embed:
         value=", ".join(fallen) if fallen else "—",
         inline=True,
     )
+    afflicted = [
+        f"{actor}: " + ", ".join(
+            str(s.get("status")) for s in stat.get("statuses") or [])
+        for actor, stat in stats.items() if stat.get("statuses")
+    ]
+    if afflicted:
+        embed.add_field(name="Statusy", value="\n".join(afflicted), inline=False)
     embed.set_footer(text="⚔️ uděleno · 🩸 utrženo · 💚 vyléčeno")
     return embed
 
@@ -700,28 +813,33 @@ class EOTView(ui.View):
                 ephemeral=True,
             )
 
-        # Advance
+        # Advance — padlí aktéři se přeskakují
         reset_turn(combat, current_actor)
         clear_buffs(combat, current_actor)
-        combat["current_index"] = (combat["current_index"] + 1) % len(order)
-        next_actor = order[combat["current_index"]]
+        next_actor, rounds, skipped = advance_turn(combat)
         combat["active_player"] = next_actor
+        # Začátek tahu maže i akce utracené mimo tah (NPC útok, reakce).
+        reset_turn(combat, next_actor, reaction=True)
 
         # Nové kolo (pořadí se obtočilo) → auto-tick statusů (dmg z jedu/krvácení atd.)
         tick_lines: list[str] = []
-        new_round = combat["current_index"] == 0
+        new_round = rounds > 0
         if new_round:
-            combat["round"] = int(combat.get("round", 1)) + 1
+            combat["round"] = int(combat.get("round", 1)) + rounds
             reset_reactions(combat)
             if combat.get("auto_tick", True):
                 tick_lines = self.cog._tick_round(combat)
         self.cog._save_state()
 
-        lines = turn_console(combat, next_actor, new_round=new_round) + tick_lines
+        lines = turn_console(combat, next_actor, new_round=new_round)
+        lines += [console(f"💀 *{who} je mimo boj — tah přeskočen.*") for who in skipped]
+        lines += tick_lines
         view = EOTView(self.cog, self.channel_id)
         await interaction.response.send_message(content=lines[0], view=view)
         await self.cog._stream(interaction, lines)
         if tick_lines:
+            if combat.get("boss"):
+                asyncio.create_task(self.cog._update_boss_bar(combat))
             await self.cog.check_wipeout(interaction.channel, combat)
 
 
@@ -901,8 +1019,11 @@ class AttackView(ui.View):
                  attacker_uid: int | None, target: str, damage: int,
                  weapon_id: str | None, mana_cost: int = 0,
                  ammo_note: str = "", weapon_label: str = "",
-                 roll_info: str = ""):
+                 roll_info: str = "", resources: dict | None = None,
+                 extra_statuses: list | None = None):
         super().__init__(timeout=600)
+        self.resources = resources or {}
+        self.extra_statuses = list(extra_statuses or [])
         self.cog = cog
         self.channel_id = channel_id
         self.attacker = attacker
@@ -961,13 +1082,38 @@ class AttackView(ui.View):
             return await interaction.response.send_message(
                 "❌ *Cíl už není v boji.*", ephemeral=True)
 
-        stat = combat["stats"][self.target]
-        before = stat_snapshot(stat)
-        result = apply_hit(stat, damage)
-        max_hp = stat.get("max_hp", 0)
+        bs = _bs()
+        delivered = self.cog._consume_weapon(self.attacker_uid, self.weapon_id,
+                                             self.mana_cost)
+        statuses = list(delivered.get("statuses") or []) + self.extra_statuses
+        reg = bs.load_statuses() if bs else {}
+        applied: list[str] = []
 
-        log_event(combat, "attack", self.target, before, stat_snapshot(stat),
-                  detail=result["change_str"], actor=self.attacker)
+        def change(state: dict) -> dict | None:
+            stat = state.get("stats", {}).get(self.target)
+            if stat is None:
+                return None
+            before = stat_snapshot(stat)
+            out = apply_hit(stat, damage)
+            for status_id, source in statuses:
+                if bs and bs.apply_status(stat, status_id, source, reg):
+                    sdef = reg.get(status_id, {})
+                    applied.append(f"{sdef.get('emoji', '•')} {sdef.get('name', status_id)}")
+            log_event(state, "attack", self.target, before, stat_snapshot(stat),
+                      detail=out["change_str"], actor=self.attacker,
+                      resources=self.resources)
+            out["max_hp"] = stat.get("max_hp", 0)
+            out["stat"] = stat
+            return out
+
+        result = self.cog.mutate_combat(self.channel_id, change)
+        if result is None:
+            self.resolved = False
+            return await interaction.response.send_message(
+                "❌ *Cíl už není v boji.*", ephemeral=True)
+        combat = self.cog.active_combats[self.channel_id]
+        stat = result["stat"]
+        max_hp = result["max_hp"]
 
         roll_info = self.roll_info
         if roll_info and damage != self.damage:
@@ -976,21 +1122,10 @@ class AttackView(ui.View):
         notes = []
         if self.ammo_note:
             notes.append(self.ammo_note)
-        bs = _bs()
-        delivered = self.cog._consume_weapon(self.attacker_uid, self.weapon_id,
-                                             self.mana_cost)
         if delivered.get("mana_note"):
             notes.append(delivered["mana_note"])
-        if bs and delivered.get("statuses"):
-            reg = bs.load_statuses()
-            applied = []
-            for status_id, source in delivered["statuses"]:
-                inst = bs.apply_status(stat, status_id, source, reg)
-                if inst:
-                    sdef = reg.get(status_id, {})
-                    applied.append(f"{sdef.get('emoji', '•')} {sdef.get('name', status_id)}")
-            if applied:
-                notes.append("Doručeno: " + " · ".join(applied))
+        if applied:
+            notes.append("Doručeno: " + " · ".join(applied))
 
         uid = _actor_uid(self.target)
         if uid is not None:
@@ -1000,7 +1135,6 @@ class AttackView(ui.View):
                 _writeback_hp_to_profile(uid, stat["hp"])
 
         self._disable()
-        self.cog._save_state()
 
         lines = hp_console(self.target, result["old_hp"], result["new_hp"], max_hp,
                            result["change_str"], attacker=self.attacker,
@@ -1032,22 +1166,30 @@ class AttackView(ui.View):
                 "⏳ *Tenhle útok už je vyhodnocený.*", ephemeral=True)
         self.resolved = True
         self._disable()
-        self.cog.reload_state()
-        combat = self.cog.active_combats.get(self.channel_id)
-        stat = (combat or {}).get("stats", {}).get(self.target)
-        if stat is not None:
+        # Runa procne vždycky, když ji útočník použije — mana se strhává i při
+        # minutí, stejně jako se už odčetla munice při výstřelu.
+        spent = self.cog._consume_weapon(self.attacker_uid, self.weapon_id,
+                                         self.mana_cost, deliver_statuses=False)
+
+        def change(state: dict) -> dict | None:
+            stat = state.get("stats", {}).get(self.target)
+            if stat is None:
+                return None
             snapshot = stat_snapshot(stat)
             detail = f"minul ({self.damage} dmg)"
             if self.weapon_label:
                 detail = f"{self.weapon_label} — {detail}"
-            log_event(combat, "miss", self.target, snapshot, snapshot,
-                      detail=detail, actor=self.attacker, revert=False)
-            self.cog._save_state()
+            return log_event(state, "miss", self.target, snapshot, snapshot,
+                             detail=detail, actor=self.attacker, revert=False)
+
+        self.cog.mutate_combat(self.channel_id, change)
         lines = miss_console(self.target, self.attacker, self.damage,
                              weapon=self.weapon_label or None,
                              roll_info=self.roll_info or None)
         if self.ammo_note:
             lines.append(console(self.ammo_note))
+        if spent.get("mana_note"):
+            lines.append(console(spent["mana_note"]))
         await self._replace_with_console(interaction, lines)
 
     @ui.button(label="Upravit", emoji="✏️", style=discord.ButtonStyle.primary)
@@ -1114,6 +1256,39 @@ class CombatCog(commands.Cog):
     def save_state(self):
         """Uloží stav boje (volají i jiné cogy, např. perky)."""
         self._save_state()
+
+    def mutate_combat(self, channel_id: int, change):
+        """Atomicky změní jeden boj: čerstvý stav z DB → `change(combat)` → uložit.
+
+        Hráčská (ArionDND) i vypravěčská (ArionDM) konzole píšou do stejného
+        dokumentu, takže read-modify-write musí proběhnout v jedné transakci —
+        jinak by zápis jednoho procesu přepsal změnu druhého. Vrací návratovou
+        hodnotu `change`, nebo None když v kanále žádný boj není.
+        """
+        box: dict = {"result": None}
+
+        def mutate(raw: dict):
+            key = str(channel_id)
+            stored = raw.get(key)
+            if stored is None:
+                self.active_combats.pop(channel_id, None)
+                return raw
+            combat = self.active_combats.get(channel_id)
+            if combat is None:
+                combat = stored
+                self.active_combats[channel_id] = combat
+            else:
+                combat.clear()
+                combat.update(stored)
+            box["result"] = change(combat)
+            raw[key] = combat
+            return raw
+
+        try:
+            update_json(COMBAT_STATE, mutate)
+        except Exception:
+            logging.exception("[combat] atomický zápis stavu selhal")
+        return box["result"]
 
     # ── Konzole ───────────────────────────────────────────────────────────────
 
@@ -1292,9 +1467,15 @@ class CombatCog(commands.Cog):
         if not bs:
             return await interaction.response.send_message("❌ Status engine nedostupný.", ephemeral=True)
         reg  = bs.load_statuses()
+        before = stat_snapshot(combat["stats"][target])
         inst = bs.apply_status(combat["stats"][target], status, source, reg)
         if not inst:
             return await interaction.response.send_message(f"❌ Status `{status}` neexistuje.", ephemeral=True)
+        log_event(combat, "effect", target, before,
+                  stat_snapshot(combat["stats"][target]),
+                  detail=f"+{reg.get(status, {}).get('name', status)} "
+                         f"({SOURCE_LABEL.get(source, source)})",
+                  actor=interaction.user.mention)
         uid = _actor_uid(target)
         if uid is not None:
             _writeback_player_state(uid, combat["stats"][target], bs)
@@ -1324,11 +1505,15 @@ class CombatCog(commands.Cog):
         if not bs:
             return await interaction.response.send_message("❌ Status engine nedostupný.", ephemeral=True)
         carrier = combat["stats"][target]
+        before = stat_snapshot(carrier)
         if cure == "vse":
             removed = [s.get("status") for s in carrier.get("statuses", [])]
             carrier["statuses"] = []
         else:
             removed = bs.cure_statuses(carrier, cure)
+        log_event(combat, "cure", target, before, stat_snapshot(carrier),
+                  detail=f"sundáno: {', '.join(removed) if removed else 'nic'}",
+                  actor=interaction.user.mention)
         uid = _actor_uid(target)
         if uid is not None:
             _writeback_player_state(uid, carrier, bs)
@@ -1768,7 +1953,12 @@ class CombatCog(commands.Cog):
             )
 
         old_def        = stats[name]["def"]
+        before = stat_snapshot(stats[name])
         stats[name]["def"] = max(0, defense)
+        log_event(self.active_combats[channel_id], "stat", name, before,
+                  stat_snapshot(stats[name]),
+                  detail=f"DEF {old_def} → {stats[name]['def']}",
+                  actor=interaction.user.mention)
         self._save_state()
 
         embed = discord.Embed(
@@ -1797,7 +1987,12 @@ class CombatCog(commands.Cog):
             )
 
         old_fur        = stats[name].get("fur", 0)
+        before = stat_snapshot(stats[name])
         stats[name]["fur"] = max(0, fury)
+        log_event(self.active_combats[channel_id], "stat", name, before,
+                  stat_snapshot(stats[name]),
+                  detail=f"FUR {old_fur} → {stats[name]['fur']}",
+                  actor=interaction.user.mention)
         self._save_state()
 
         embed = discord.Embed(
@@ -1842,24 +2037,33 @@ class CombatCog(commands.Cog):
         zbran="Který slot upravuješ",
         dmg="Damage (`1d8`, `2d6+2`, holé číslo = kostka). Prázdné = zbraň smazat.",
         nazev="Název zbraně (jen do výpisu).",
+        status="Status, který zbraň doručí při zásahu (jed, krácení…).",
     )
     @app_commands.choices(zbran=[
         app_commands.Choice(name="hlavní zbraň",   value="main"),
         app_commands.Choice(name="bonusová zbraň", value="bonus"),
     ])
-    @app_commands.autocomplete(name=_ac_actor)
+    @app_commands.autocomplete(name=_ac_actor, status=_ac_status_id)
     async def combat_setdmg(self, interaction: discord.Interaction, name: str,
                             zbran: app_commands.Choice[str],
                             dmg: Optional[str] = None,
-                            nazev: Optional[str] = None):
+                            nazev: Optional[str] = None,
+                            status: Optional[str] = None):
         combat = self.active_combats.get(interaction.channel_id)
         if not combat or name not in combat["stats"]:
             return await interaction.response.send_message(
                 f"⚠️ *`{name}` nemá zaznamenané stats.*", ephemeral=True)
 
+        bs = _bs()
+        reg = bs.load_statuses() if bs else {}
+        if status and status not in reg:
+            return await interaction.response.send_message(
+                f"❌ *Status `{status}` neexistuje.*", ephemeral=True)
+
         stat = combat["stats"][name]
         try:
-            weapon = set_npc_weapon(stat, zbran.value, dmg or "", nazev or "")
+            weapon = set_npc_weapon(stat, zbran.value, dmg or "", nazev or "",
+                                    status or "")
         except DiceError:
             return await interaction.response.send_message(
                 "❌ *Damage nejde hodit — použij zápis jako `1d8`, `2d6+2` nebo `16`.*",
@@ -1869,9 +2073,14 @@ class CombatCog(commands.Cog):
         if not weapon:
             return await interaction.response.send_message(
                 f"🗑️ *{name} už {NPC_SLOTS[zbran.value]} nemá.*")
+        venom = ""
+        if weapon.get("status"):
+            sdef = reg.get(weapon["status"], {})
+            venom = (f"  {sdef.get('emoji', '🩸')} doručuje "
+                     f"**{sdef.get('name', weapon['status'])}**")
         await interaction.response.send_message(
             f"⚔️ *{name} — {NPC_SLOTS[zbran.value]}: "
-            f"**{npc_weapon_label(weapon, zbran.value)}** `{weapon['dmg']}`*")
+            f"**{npc_weapon_label(weapon, zbran.value)}** `{weapon['dmg']}`*{venom}")
 
     # ── /combat remove ────────────────────────────────────────────────────────
 
@@ -1895,6 +2104,11 @@ class CombatCog(commands.Cog):
             )
 
         removed_idx = order.index(to_remove)
+        gone = combat["stats"].get(to_remove) or {}
+        snapshot = stat_snapshot(gone)
+        log_event(combat, "remove", to_remove, snapshot, snapshot,
+                  detail="odebrán z boje", actor=interaction.user.mention,
+                  revert=False)
         order.remove(to_remove)
         combat["stats"].pop(to_remove, None)
         combat.get("initiative", {}).pop(to_remove, None)
@@ -1983,8 +2197,13 @@ class CombatCog(commands.Cog):
     # ── /attack ───────────────────────────────────────────────────────────────
 
     def _consume_weapon(self, uid: int | None, weapon_id: str | None,
-                        mana_cost: int = 0, runes_active: bool = True) -> dict:
-        """Při potvrzeném zásahu: doručené statusy, úbytek nátěru a many."""
+                        mana_cost: int = 0, runes_active: bool = True,
+                        deliver_statuses: bool = True) -> dict:
+        """Spotřeba zbraně: doručené statusy, úbytek nátěru a many.
+
+        `deliver_statuses=False` je minutý útok — mana se strhává (runa procla),
+        ale nátěr zůstává a nic se nedoručí.
+        """
         out = {"statuses": [], "mana_note": ""}
         if uid is None or not weapon_id:
             return out
@@ -1995,7 +2214,7 @@ class CombatCog(commands.Cog):
                 return out
             entry = _weapon_entry(profile, weapon_id)
             bs = _bs()
-            if entry is not None and bs:
+            if entry is not None and bs and deliver_statuses:
                 delivered = bs.weapon_delivered(entry)
                 out["statuses"] = [(sid, src) for sid, src in delivered
                                    if runes_active or src != "runa"]
@@ -2086,6 +2305,10 @@ class CombatCog(commands.Cog):
         actor = interaction.user.mention
         action = (akce.value if akce else "attack")
         is_gm = interaction.user.guild_permissions.administrator
+        if is_down(combat, cil) and not (force and is_gm):
+            return await interaction.response.send_message(
+                f"💀 *`{cil}` už je na zemi — škoda rány.* (GM může přes `force`.)",
+                ephemeral=True)
         if not use_action(combat, actor, action, force=force and is_gm):
             return await interaction.response.send_message(
                 f"⛔ *{ACTION_LABEL[action].capitalize()} jsi v tomhle tahu už použil.* "
@@ -2132,6 +2355,7 @@ class CombatCog(commands.Cog):
         ammo_line  = ""
         ammo_note  = ""
         ammo_bit   = ""
+        ammo_spent: str | None = None
         if ammo:
             db_ammo = items_db.get(ammo) or {}
             if db_ammo.get("category") != AMMO_CATEGORY:
@@ -2160,6 +2384,7 @@ class CombatCog(commands.Cog):
                 ammo_bit    = f"{ammo_expr} → {ammo_total}"
             _consume_ammo(profile, ammo)
             _save_profiles(profiles)
+            ammo_spent = ammo
             ammo_line = (f"🎯 **{db_ammo.get('name', ammo)}**{ammo_detail}  "
                          f"*(zbývá {have_ammo - 1})*")
             ammo_note = (f"🎯 −1 {db_ammo.get('name', ammo)}  "
@@ -2230,16 +2455,19 @@ class CombatCog(commands.Cog):
         )
         embed.set_footer(text="Damage se aplikuje až po potvrzení — cíl má prostor na reakci.")
 
+        resources = {"uid": interaction.user.id, "mana": mana_cost,
+                     "ammo_id": ammo_spent, "ammo_qty": 1 if ammo_spent else 0}
         view = AttackView(self, interaction.channel_id, actor,
                           interaction.user.id, cil, damage, weapon_id, mana_cost,
-                          ammo_note, weapon_label, roll_info)
+                          ammo_note, weapon_label, roll_info, resources=resources)
 
         if combat.get("auto_apply"):
             stat = combat["stats"][cil]
             before = stat_snapshot(stat)
             result = apply_hit(stat, damage)
             log_event(combat, "attack", cil, before, stat_snapshot(stat),
-                      detail=result["change_str"], actor=actor)
+                      detail=result["change_str"], actor=actor,
+                      resources=resources)
             delivered = self._consume_weapon(interaction.user.id, weapon_id,
                                              mana_cost, runes_active)
             notes = []
@@ -2336,6 +2564,9 @@ class CombatCog(commands.Cog):
         if cil == utocnik:
             return await interaction.response.send_message(
                 "❌ *NPC nemůže útočit samo na sebe.*", ephemeral=True)
+        if is_down(combat, cil) and not force:
+            return await interaction.response.send_message(
+                f"💀 *`{cil}` už leží — útok povolí `force`.*", ephemeral=True)
 
         attacker_stat = combat["stats"][utocnik]
         if int(attacker_stat.get("hp", 0) or 0) <= 0 and not force:
@@ -2397,15 +2628,26 @@ class CombatCog(commands.Cog):
         )
         embed.set_footer(text="Damage se aplikuje až po potvrzení — cíl má prostor na reakci.")
 
+        # Status ze zbraně NPC (jed, krácení…) — doručí se stejně jako u hráče.
+        statuses = npc_weapon_statuses(weapon) if weapon and not dmg else []
+
         if combat.get("auto_apply"):
             stat = combat["stats"][cil]
             before = stat_snapshot(stat)
             result = apply_hit(stat, damage)
+            bs = _bs()
+            applied = []
+            if bs and statuses:
+                reg = bs.load_statuses()
+                for status_id, source in statuses:
+                    if bs.apply_status(stat, status_id, source, reg):
+                        sdef = reg.get(status_id, {})
+                        applied.append(
+                            f"{sdef.get('emoji', '•')} {sdef.get('name', status_id)}")
             log_event(combat, "attack", cil, before, stat_snapshot(stat),
                       detail=result["change_str"], actor=utocnik)
             uid = _actor_uid(cil)
             if uid is not None:
-                bs = _bs()
                 if bs:
                     _writeback_player_state(uid, stat, bs)
                 else:
@@ -2414,7 +2656,8 @@ class CombatCog(commands.Cog):
             lines = hp_console(cil, result["old_hp"], result["new_hp"],
                                stat.get("max_hp", 0), result["change_str"],
                                attacker=utocnik, weapon=weapon_label,
-                               roll_info=roll_info)
+                               roll_info=roll_info,
+                               notes=["Doručeno: " + " · ".join(applied)] if applied else None)
             header = f"{desc}\n"
             await interaction.response.send_message(header + lines[0])
             asyncio.create_task(self._stream(interaction, lines, header))
@@ -2424,7 +2667,8 @@ class CombatCog(commands.Cog):
             return
 
         view = AttackView(self, interaction.channel_id, utocnik, None, cil,
-                          damage, None, 0, "", weapon_label, roll_info)
+                          damage, None, 0, "", weapon_label, roll_info,
+                          extra_statuses=statuses)
         self._save_state()
         await interaction.response.send_message(embed=embed, view=view)
 
@@ -2467,12 +2711,20 @@ class CombatCog(commands.Cog):
 
         target = event["target"]
         stat = combat["stats"][target]
+        bs = _bs()
         uid = _actor_uid(target)
         if uid is not None:
-            _writeback_hp_to_profile(uid, stat["hp"])
+            # Statusy i HP musí zpátky do profilu, jinak se stav rozejde.
+            if bs:
+                _writeback_player_state(uid, stat, bs, tick_coatings=False)
+            else:
+                _writeback_hp_to_profile(uid, stat["hp"])
+        refund = refund_resources(event)
         self._save_state()
 
         lines = undo_console(event, target, stat["hp"], stat.get("max_hp", 0))
+        if refund:
+            lines.append(console(refund))
         await interaction.response.send_message(lines[0])
         asyncio.create_task(self._stream(interaction, lines))
         if combat.get("boss", {}).get("name") == target:
