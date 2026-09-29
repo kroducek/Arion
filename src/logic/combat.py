@@ -829,6 +829,15 @@ class EOTView(ui.View):
             reset_reactions(combat)
             if combat.get("auto_tick", True):
                 tick_lines = self.cog._tick_round(combat)
+                # Tik statusů mohl srazit toho, kdo je zrovna na řadě.
+                if is_down(combat, next_actor):
+                    skipped.append(next_actor)
+                    next_actor, extra_rounds, more = advance_turn(combat)
+                    skipped += more
+                    combat["active_player"] = next_actor
+                    reset_turn(combat, next_actor, reaction=True)
+                    if extra_rounds:
+                        combat["round"] = int(combat.get("round", 1)) + extra_rounds
         self.cog._save_state()
 
         lines = turn_console(combat, next_actor, new_round=new_round)
@@ -1110,7 +1119,8 @@ class AttackView(ui.View):
         if result is None:
             self.resolved = False
             return await interaction.response.send_message(
-                "❌ *Cíl už není v boji.*", ephemeral=True)
+                "❌ *Cíl už není v boji, nebo se zásah nepodařilo uložit — zkus to znovu.*",
+                ephemeral=True)
         combat = self.cog.active_combats[self.channel_id]
         stat = result["stat"]
         max_hp = result["max_hp"]
@@ -1263,7 +1273,8 @@ class CombatCog(commands.Cog):
         Hráčská (ArionDND) i vypravěčská (ArionDM) konzole píšou do stejného
         dokumentu, takže read-modify-write musí proběhnout v jedné transakci —
         jinak by zápis jednoho procesu přepsal změnu druhého. Vrací návratovou
-        hodnotu `change`, nebo None když v kanále žádný boj není.
+        hodnotu `change`, nebo None když v kanále žádný boj není. Když zápis
+        selže, vrací taky None — volající pak zásah nesmí hlásit jako platný.
         """
         box: dict = {"result": None}
 
@@ -1288,6 +1299,7 @@ class CombatCog(commands.Cog):
             update_json(COMBAT_STATE, mutate)
         except Exception:
             logging.exception("[combat] atomický zápis stavu selhal")
+            return None
         return box["result"]
 
     # ── Konzole ───────────────────────────────────────────────────────────────
@@ -2465,9 +2477,6 @@ class CombatCog(commands.Cog):
             stat = combat["stats"][cil]
             before = stat_snapshot(stat)
             result = apply_hit(stat, damage)
-            log_event(combat, "attack", cil, before, stat_snapshot(stat),
-                      detail=result["change_str"], actor=actor,
-                      resources=resources)
             delivered = self._consume_weapon(interaction.user.id, weapon_id,
                                              mana_cost, runes_active)
             notes = []
@@ -2485,6 +2494,10 @@ class CombatCog(commands.Cog):
                         applied.append(f"{sdef.get('emoji', '•')} {sdef.get('name', status_id)}")
                 if applied:
                     notes.append("Doručeno: " + " · ".join(applied))
+            # Log až po doručení statusů, jinak by je `after` neobsahoval.
+            log_event(combat, "attack", cil, before, stat_snapshot(stat),
+                      detail=result["change_str"], actor=actor,
+                      resources=resources)
             uid = _actor_uid(cil)
             if uid is not None:
                 if bs:
