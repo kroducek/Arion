@@ -285,9 +285,26 @@ def miss_console(target: str, attacker: str, damage: int,
     ]
 
 
+def status_tracker(stat: dict, registry: dict | None = None) -> str:
+    """Statusy aktéra s trackerem dmg: `🧪 Jed I. 1d5 (2 kol)`."""
+    reg = registry if registry is not None else {}
+    bits = []
+    for inst in stat.get("statuses") or []:
+        sdef = reg.get(inst.get("status"), {})
+        name = sdef.get("name", inst.get("status"))
+        dmg = inst.get("dmg") or sdef.get("dmg", "")
+        dmg_txt = f" `{dmg}`" if dmg else ""
+        left = inst.get("kol_zbyva", 0)
+        left_txt = f" *({left} kol)*" if left else ""
+        bits.append(f"{sdef.get('emoji', '•')} {name}{dmg_txt}{left_txt}")
+    return "  ·  ".join(bits)
+
+
 def hp_recap_console(combat: dict) -> list[str]:
     """Přehled HP všech bojovníků — řádek na jednoho, ve stylu konzole."""
     stats = combat.get("stats", {})
+    bs = _bs()
+    reg = bs.load_statuses() if bs else {}
     lines = []
     for name in (combat.get("order") or list(stats)):
         s = stats.get(name)
@@ -297,6 +314,9 @@ def hp_recap_console(combat: dict) -> list[str]:
         bar = _make_bar(hp, max_hp, 8)
         dead = "  💀" if hp == 0 else ""
         lines.append(console(f"❤️ **{name}** `{hp}/{max_hp}` {bar}{dead}"))
+        tracker = status_tracker(s, reg)
+        if tracker:
+            lines.append(console(f"Status: {tracker}"))
     return lines
 
 
@@ -846,23 +866,28 @@ class EOTView(ui.View):
         # Začátek tahu maže i akce utracené mimo tah (NPC útok, reakce).
         reset_turn(combat, next_actor, reaction=True)
 
-        # Nové kolo (pořadí se obtočilo) → auto-tick statusů (dmg z jedu/krvácení atd.)
-        tick_lines: list[str] = []
         new_round = rounds > 0
         if new_round:
             combat["round"] = int(combat.get("round", 1)) + rounds
             reset_reactions(combat)
-            if combat.get("auto_tick", True):
-                tick_lines = self.cog._tick_round(combat)
-                # Tik statusů mohl srazit toho, kdo je zrovna na řadě.
-                if is_down(combat, next_actor):
-                    skipped.append(next_actor)
-                    next_actor, extra_rounds, more = advance_turn(combat)
-                    skipped += more
-                    combat["active_player"] = next_actor
-                    reset_turn(combat, next_actor, reaction=True)
-                    if extra_rounds:
-                        combat["round"] = int(combat.get("round", 1)) + extra_rounds
+
+        # Statusy tikají tomu, kdo přichází na tah — jed tak ubírá HP každý
+        # jeho tah. Tik může aktéra srazit, pak se tah předá dál (a tikne zas).
+        tick_lines: list[str] = []
+        if combat.get("auto_tick", True):
+            for _ in range(len(order) + 1):
+                tick_lines += self.cog._tick_actor(combat, next_actor)
+                if not is_down(combat, next_actor):
+                    break
+                skipped.append(next_actor)
+                next_actor, extra_rounds, more = advance_turn(combat)
+                skipped += more
+                combat["active_player"] = next_actor
+                reset_turn(combat, next_actor, reaction=True)
+                if extra_rounds:
+                    combat["round"] = int(combat.get("round", 1)) + extra_rounds
+                    reset_reactions(combat)
+                    new_round = True
         self.cog._save_state()
 
         lines = turn_console(combat, next_actor, new_round=new_round)
@@ -1537,32 +1562,36 @@ class CombatCog(commands.Cog):
 
     # ── Statusy: tick + ovládání ───────────────────────────────────────────────
 
-    def _tick_round(self, combat: dict) -> list[str]:
-        """Konec kola: u všech aktérů udělí dmg ze statusů a sníží trvání.
+    def _tick_actor(self, combat: dict, actor: str) -> list[str]:
+        """Začátek tahu: statusy aktéra udělí dmg a uberou kolo trvání.
 
-        Hráčům zapíše hp + statusy zpět do profilu a uberou kolo jejich nátěrům.
+        Hráči zapíše hp + statusy zpět do profilu a ubere kolo jeho nátěrům.
         Vrací řádky konzole (prázdný seznam, když se nic nestalo).
         """
         bs = _bs()
-        if not bs:
+        stat = (combat.get("stats") or {}).get(actor)
+        if not bs or not stat or not stat.get("statuses"):
             return []
-        reg   = bs.load_statuses()
-        lines = []
-        for actor, s in combat["stats"].items():
-            before = stat_snapshot(s)
-            dmg, log = bs.tick_statuses(s, reg)
-            if dmg:
-                s["hp"] = max(0, s.get("hp", 0) - dmg)
-                log_event(combat, "status", actor, before, stat_snapshot(s),
-                          detail=f"statusy −{dmg}")
-            uid = _actor_uid(actor)
-            if uid is not None:
-                _writeback_player_state(uid, s, bs)
-            if log:
-                lines.append(console(f"🩸 **{actor}**: " + " · ".join(log)))
-        if not lines:
+        reg = bs.load_statuses()
+        before = stat_snapshot(stat)
+        dmg, log = bs.tick_statuses(stat, reg)
+        if not log:
             return []
-        return [console("── statusy na konci kola ──")] + lines
+        if dmg:
+            stat["hp"] = max(0, stat.get("hp", 0) - dmg)
+            log_event(combat, "status", actor, before, stat_snapshot(stat),
+                      detail=f"statusy −{dmg}")
+        uid = _actor_uid(actor)
+        if uid is not None:
+            _writeback_player_state(uid, stat, bs)
+        lines = [console(f"🩸 Status: **{actor}** — " + " · ".join(log))]
+        if dmg:
+            hp, max_hp = stat.get("hp", 0), stat.get("max_hp", 0)
+            bar = _make_bar(hp, max_hp, 8)
+            dead = "  💀" if hp == 0 else ""
+            lines.append(console(
+                f"❤️ `{before.get('hp', hp)}` → `{hp}/{max_hp}` {bar}{dead}"))
+        return lines
 
     combat_group = app_commands.Group(
         name="combat", description="Bojový systém — start, join, správa aktérů a efektů (DM)")
@@ -1741,11 +1770,13 @@ class CombatCog(commands.Cog):
         # ── Synchronizace stats z profilu ────────────────────────────────────
         synced = _sync_player_from_profile(user, interaction.user.id)
         if synced:
+            statuses = (combat["stats"].get(user) or {}).get("statuses") or []
             combat["stats"][user] = {
                 "hp":     synced["hp"],
                 "max_hp": synced["max_hp"],
                 "def":    synced["def"],
                 "fur":    synced["fur"],
+                "statuses": statuses,
             }
 
         if combat.get("active_player") is None:
