@@ -1,4 +1,5 @@
 import discord
+from src.logic import furioku as energy
 from discord.ext import commands
 from discord import app_commands
 from typing import Optional
@@ -36,12 +37,6 @@ ELEMENTS: dict[str, dict] = {
 def rank_xp_threshold(rank: int) -> int:
     return int(100 * (rank ** 1.6))
 
-def rank_up_chance(rank: int) -> float:
-    return max(0.10, 0.75 - (rank - 1) * 0.07)
-
-FURY_TO_SPIRIT_XP   = 1
-RANKUP_FURY_BONUS   = 0.25   # +25% fury při rank-upu
-
 BREED_CHANCE: dict[int, float] = {0: 0.80, 1: 0.55, 2: 0.30, 3: 0.10}
 BREED_ELEMENT_BONUS   = 0.15
 BREED_ELEMENT_PENALTY = 0.10
@@ -71,7 +66,10 @@ def rank_color(rank: int) -> int:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _load() -> dict:
-    return load_json(DATA_FILE)
+    data = load_json(DATA_FILE)
+    for profile in data.values():
+        energy.normalize(profile)
+    return data
 
 def _save(data: dict) -> None:
     save_json(DATA_FILE, data)
@@ -102,67 +100,17 @@ def _default_spirit(name: str, rank: int, fury: int,
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_equipped_spirit(profile: dict) -> dict | None:
-    spirits      = profile.get("spirits", [])
-    equipped_idx = profile.get("equipped_spirit_idx")
-    if equipped_idx is None or not (0 <= equipped_idx < len(spirits)):
-        return None
-    return spirits[equipped_idx]
+    spirits = energy.equipped(profile)
+    return spirits[0] if spirits else None
+
 
 def spirit_fury_bonus(profile: dict) -> int:
-    spirit = get_equipped_spirit(profile)
-    return spirit["fury"] if spirit else 0
+    return sum(s['fury_cur'] for s in energy.equipped(profile))
+
 
 def fury_display(profile: dict) -> tuple[int, int, int]:
-    fury_cur = profile.get("fury_cur", 0)
-    fury_max = profile.get("fury_max", 0)
-    bonus    = spirit_fury_bonus(profile)
-    return fury_cur, fury_max, bonus
+    return profile.get('fury_cur', 0), profile.get('fury_max', 0), spirit_fury_bonus(profile)
 
-def grant_spirit_xp(profile: dict, fury_used: int) -> dict | None:
-    """
-    Přidá XP equipnutému duchovi.
-    Vrátí result dict nebo None pokud XP nestačí na threshold.
-    result: {ranked_up, old_rank, new_rank, spirit_name, fury_gained}
-    fury_gained je vyplněno jen při ranked_up=True (+25% fury bonus).
-    """
-    spirit = get_equipped_spirit(profile)
-    if not spirit or fury_used <= 0:
-        return None
-
-    gained = fury_used * FURY_TO_SPIRIT_XP
-    spirit["xp"]       = spirit.get("xp", 0) + gained
-    spirit["total_xp"] = spirit.get("total_xp", 0) + gained
-
-    threshold = spirit.get("xp_threshold", rank_xp_threshold(spirit["rank"]))
-    if spirit["xp"] < threshold:
-        return None
-
-    old_rank = spirit["rank"]
-    chance   = rank_up_chance(old_rank)
-    spirit["xp"] -= threshold
-
-    if random.random() < chance:
-        spirit["rank"]        += 1
-        spirit["xp_threshold"] = rank_xp_threshold(spirit["rank"])
-        # +25% fury bonus při rank-upu
-        fury_bonus = max(1, int(spirit["fury"] * RANKUP_FURY_BONUS))
-        spirit["fury"] += fury_bonus
-        return {
-            "ranked_up":   True,
-            "old_rank":    old_rank,
-            "new_rank":    spirit["rank"],
-            "spirit_name": spirit["name"],
-            "fury_gained": fury_bonus,
-        }
-    else:
-        spirit["xp_threshold"] = int(threshold * 1.2)
-        return {
-            "ranked_up":   False,
-            "old_rank":    old_rank,
-            "new_rank":    old_rank,
-            "spirit_name": spirit["name"],
-            "fury_gained": 0,
-        }
 
 def breed_spirits(profile: dict, idx_a: int, idx_b: int) -> dict:
     spirits = profile.get("spirits", [])
@@ -188,51 +136,21 @@ def breed_spirits(profile: dict, idx_a: int, idx_b: int) -> dict:
 
     success = random.random() < chance
 
-    for idx in sorted([idx_a, idx_b], reverse=True):
-        spirits.pop(idx)
-
-    equipped_idx = profile.get("equipped_spirit_idx")
-    if equipped_idx is not None:
-        removed_lower  = min(idx_a, idx_b)
-        removed_higher = max(idx_a, idx_b)
-        if equipped_idx in (idx_a, idx_b):
-            profile["equipped_spirit_idx"] = None
-        elif equipped_idx > removed_higher:
-            profile["equipped_spirit_idx"] -= 2
-        elif equipped_idx > removed_lower:
-            profile["equipped_spirit_idx"] -= 1
-
+    energy.normalize(profile)
+    consumed = weaker['id']
     if success:
-        new_rank   = max(rank_a, rank_b) + 1
-        new_fury   = a["fury"] + b["fury"]
-        new_elem   = elem_a if elem_a == elem_b else f"{elem_a}/{elem_b}"
-        new_spirit = _default_spirit(
-            name=stronger["name"],
-            rank=new_rank,
-            fury=new_fury,
-            element=new_elem,
-            description=stronger.get("description", ""),
-        )
-        spirits.append(new_spirit)
-        profile["equipped_spirit_idx"] = len(spirits) - 1
-        return {
-            "success":       True,
-            "chance":        chance,
-            "new_spirit":    new_spirit,
-            "survivor":      None,
-            "consumed_name": weaker["name"],
-        }
+        stronger['rank'] += 1
+        gain = weaker['fury_max']
     else:
-        stronger["fury"] = int(stronger["fury"] * 1.05)
-        spirits.append(stronger)
-        profile["equipped_spirit_idx"] = len(spirits) - 1
-        return {
-            "success":       False,
-            "chance":        chance,
-            "new_spirit":    None,
-            "survivor":      stronger,
-            "consumed_name": weaker["name"],
-        }
+        gain = int(stronger['fury_max'] * .05)
+    stronger['fury_max'] += gain
+    stronger['fury_cur'] += weaker['fury_cur'] if success else gain
+    stronger['fury'] = stronger['fury_max']
+    stronger['xp_threshold'] = rank_xp_threshold(stronger['rank'])
+    spirits[:] = [s for s in spirits if s['id'] != consumed]
+    energy.normalize(profile)
+    return dict(success=success, chance=chance, new_spirit=stronger if success else None,
+                survivor=stronger, consumed_name=weaker['name'])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS
@@ -247,7 +165,7 @@ def _spirit_line(s: dict, equipped: bool = False) -> str:
     thresh = s.get("xp_threshold", rank_xp_threshold(s["rank"]))
     return (
         f"{SPIRIT_EMO} **{s['name']}** {emoji}  ·  {rank_label(s['rank'])}  ·  "
-        f"{s['fury']} {FU_EMO}  ·  XP: {s.get('xp', 0)}/{thresh}{eq}"
+        f"{s.get('fury_cur', s['fury'])}/{s.get('fury_max', s['fury'])} {FU_EMO}  ·  XP: {s.get('xp', 0)}/{thresh}{eq}"
     )
 
 def _spirit_embed(s: dict, title: str = None) -> discord.Embed:
@@ -257,7 +175,7 @@ def _spirit_embed(s: dict, title: str = None) -> discord.Embed:
     embed  = discord.Embed(title=title or f"{SPIRIT_EMO} {s['name']}", color=color)
     embed.add_field(name="Rank",    value=rank_label(s["rank"]),       inline=True)
     embed.add_field(name="Element", value=f"{emoji} {elem}",           inline=True)
-    embed.add_field(name="Furioka", value=f"{s['fury']} {FU_EMO}",     inline=True)
+    embed.add_field(name="Furioka", value=f"{s.get('fury_cur', s['fury'])}/{s.get('fury_max', s['fury'])} {FU_EMO}",     inline=True)
     thresh = s.get("xp_threshold", rank_xp_threshold(s["rank"]))
     embed.add_field(
         name="Progres",
@@ -336,7 +254,7 @@ class BreedConfirmView(discord.ui.View):
                 title="✨ Šlechtění úspěšné!",
                 description=(
                     f"**{self.a_name}** a **{self.b_name}** se sloučili!\n"
-                    f"Nový duch **{ns['name']}** je equipnutý a připraven."
+                    f"**{ns['name']}** přežil a zesílil; jeho identita a XP zůstávají."
                 ),
                 color=rank_color(ns["rank"]),
             )
@@ -376,13 +294,7 @@ class BreedConfirmView(discord.ui.View):
 # ══════════════════════════════════════════════════════════════════════════════
 #
 # Uloženo v profilu:
-#   profile["furioka"] = {
-#       "def_amount": int,   # kolik VLASTNÍ furioku je nasazeno do obrany
-#       "atk_amount": int,   # kolik VLASTNÍ furioku je nasazeno do útoku
-#       "def_spirit": bool,  # je do obrany nasazen equipnutý duch? (vyžaduje Jednotu)
-#       "atk_spirit": bool,  # je do útoku nasazen equipnutý duch?
-#   }
-# Duch smí být nasazen jen do JEDNÉ role naráz (nedá se rozdvojit).
+# Energy allocation and spirit selection are shared with combat.
 
 PERK_JEDNOTA = "furioku_jednota"
 PERK_OBRANA  = "furioku_obrana"
@@ -390,15 +302,8 @@ PERK_UTOK    = "furioku_utok"
 
 
 def _furioka(profile: dict) -> dict:
-    f = profile.setdefault("furioka", {})
-    f.setdefault("atk_amount", 0)      # furioku vložená do útoku (plochý +dmg)
-    f.setdefault("def_amount", 0)      # furioku vložená do obrany (pohltí zásah)
-    f.setdefault("use_spirit", False)  # sjednotit ducha? (slije jeho fury do zásoby)
-    # migrace ze starého modelu (duch dumpnutý do role) → jen zapni sjednocení
-    if f.pop("atk_spirit", False) or f.pop("def_spirit", False):
-        f["use_spirit"] = True
-    return f
-
+    energy.normalize(profile)
+    return profile['furioka']
 
 def _owned_perks(user_id: int) -> list[str]:
     """Perky aktivní postavy — načteno z perks cogu, s bezpečným fallbackem."""
@@ -410,76 +315,21 @@ def _owned_perks(user_id: int) -> list[str]:
 
 
 def furioku_pool(profile: dict, user_id: int) -> int:
-    """Kolik furioku má hráč K DISPOZICI pro nasazení.
-
-    S perkem Jednota a zapnutým sjednocením se do zásoby SLIJE fury ducha —
-    duch nedává svou fury jako samostatný bonus, jen zvětší společný zásobník.
-    """
-    f    = _furioka(profile)
-    pool = profile.get("fury_cur", 0)
-    if f["use_spirit"] and PERK_JEDNOTA in _owned_perks(user_id):
-        spirit = get_equipped_spirit(profile)
-        if spirit:
-            pool += spirit.get("fury", 0)
-    return pool
+    return energy.pool(profile, _owned_perks(user_id))
 
 
 def furioka_bonuses(profile: dict, user_id: int) -> tuple[int, int]:
-    """(útočný přídavek k dmg, kolik dmg pohltí obrana). Pro combat.py.
-
-    Útok = plochý bonus k dmg rollu (1d15 + atk).
-    Obrana = štít, který pohlcuje příchozí poškození 1:1 (10 dmg → −10 furioku).
-    Obojí čerpá ze společné zásoby (fury + případně sloučený duch); součet nikdy
-    nepřesáhne, co má hráč reálně k dispozici — a jen když má příslušný perk.
-    """
-    f     = _furioka(profile)
-    perks = _owned_perks(user_id)
-    pool  = furioku_pool(profile, user_id)
-
-    atk = f["atk_amount"] if PERK_UTOK   in perks else 0
-    dfn = f["def_amount"] if PERK_OBRANA in perks else 0
-
-    # součet nasazené furioku nesmí přesáhnout zásobu — útok má přednost, zbytek do obrany
-    if atk > pool:
-        atk = pool
-    if atk + dfn > pool:
-        dfn = max(0, pool - atk)
-    return atk, dfn
+    return energy.bonuses(profile, _owned_perks(user_id))
 
 
 def furioka_absorb(profile: dict, user_id: int, incoming_dmg: int) -> tuple[int, int]:
-    """Aplikuje obranný štít na příchozí poškození.
-
-    Vrátí (zbylé_poškození, pohlceno). Spotřebovanou furioku ODEČTE:
-    nejdřív z vlastní fury_cur, teprv pak (u sloučeného ducha) z fury ducha.
-    Combat tuhle funkci zavolá při zásahu.
-    """
-    _, dfn = furioka_bonuses(profile, user_id)
-    absorbed = min(dfn, max(0, incoming_dmg))
-    if absorbed <= 0:
-        return incoming_dmg, 0
-
-    f = _furioka(profile)
-    f["def_amount"] = max(0, f["def_amount"] - absorbed)
-
-    # odečti spotřebovanou furioku ze zásoby (vlastní dřív než duchova)
-    rem = absorbed
-    own = profile.get("fury_cur", 0)
-    take_own = min(own, rem)
-    profile["fury_cur"] = own - take_own
-    rem -= take_own
-    if rem > 0 and f["use_spirit"]:
-        spirit = get_equipped_spirit(profile)
-        if spirit:
-            spirit["fury"] = max(0, spirit.get("fury", 0) - rem)
-
-    return incoming_dmg - absorbed, absorbed
+    return energy.absorb(profile, incoming_dmg, _owned_perks(user_id))
 
 
 def _furioka_embed(profile: dict, user_id: int) -> discord.Embed:
     f      = _furioka(profile)
     perks  = _owned_perks(user_id)
-    spirit = get_equipped_spirit(profile)
+    spirits = energy.equipped(profile)
     pool   = furioku_pool(profile, user_id)
     fury_cur = profile.get("fury_cur", 0)
 
@@ -490,11 +340,7 @@ def _furioka_embed(profile: dict, user_id: int) -> discord.Embed:
     atk, dfn = furioka_bonuses(profile, user_id)
     volne    = max(0, pool - atk - dfn)
 
-    src = f"{FU_EMO} **{fury_cur}** vlastní"
-    if f["use_spirit"] and has_jednota and spirit:
-        src += f"  +  👻 **{spirit.get('fury',0)}** ({spirit['name']})  =  **{pool}** v zásobě"
-    else:
-        src = f"Zásoba: {FU_EMO} **{pool}**"
+    src = f"Vlastní: **{fury_cur}/{profile.get('fury_max', 0)}** · Dostupné: **{pool}**"
 
     embed = discord.Embed(
         title=f"{FU_EMO}  Správa furioku",
@@ -516,18 +362,9 @@ def _furioka_embed(profile: dict, user_id: int) -> discord.Embed:
         inline=True,
     )
 
-    if spirit:
-        state = "✅ sloučen" if (f["use_spirit"] and has_jednota) else "nesloučen"
-        embed.add_field(
-            name="👻 Duch",
-            value=(f"**{spirit['name']}** · {rank_label(spirit['rank'])} · "
-                   f"{FU_EMO} {spirit.get('fury',0)}\n-# {state}"
-                   + ("" if has_jednota else "  ·  *vyžaduje perk Jednota*")),
-            inline=False,
-        )
-    else:
-        embed.add_field(name="👻 Duch",
-                        value="*Nemáš equipnutého ducha (`/duch equip`).*", inline=False)
+    lines = [f"{'🔗' if s['id'] in f['spirit_ids'] and has_jednota else '👻'} **{s['name']}** · {s['fury_cur']}/{s['fury_max']}" for s in spirits]
+    embed.add_field(name="Duchové", value=("\n".join(lines)[:1000] or "Nasadit ducha: `/duch equip`."), inline=False)
+    embed.add_field(name="Jednota", value="`/furioku duch:jméno` přepne zapojení ducha. Pořadí zapojení určuje spotřebu; nejdřív vlastní energie.", inline=False)
 
     fu_perks = [p for p in perks if p.startswith("furioku_")]
     if fu_perks:
@@ -552,13 +389,14 @@ class FurioukaView(discord.ui.View):
     def __init__(self, user_id: int):
         super().__init__(timeout=300)
         self.user_id = user_id
+        self.profile_key = pkey(user_id)
 
     def _get(self):
         data = _load()
-        return data, data.get(pkey(self.user_id))
+        return data, data.get(self.profile_key)
 
     async def _guard(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.user_id:
+        if interaction.user.id != self.user_id or pkey(self.user_id) != self.profile_key:
             await interaction.response.send_message("❌ Toto není tvůj panel.", ephemeral=True)
             return False
         return True
@@ -579,7 +417,7 @@ class FurioukaView(discord.ui.View):
         if new < 0:
             return None
         other = f["def_amount"] if role == "atk" else f["atk_amount"]
-        if new + other > furioku_pool(profile, self.user_id):
+        if delta > 0 and new + other > furioku_pool(profile, self.user_id):
             return "Nemáš tolik furioku v zásobě."
         f[key] = new
         return None
@@ -617,7 +455,7 @@ class FurioukaView(discord.ui.View):
         await self._refresh(interaction, data, profile)
 
     # ── sloučit ducha ──
-    @discord.ui.button(label="Sjednotit ducha", emoji="👻", style=discord.ButtonStyle.primary, row=2)
+    @discord.ui.button(label="Sjednotit / odpojit všechny", emoji="👻", style=discord.ButtonStyle.primary, row=2)
     async def toggle_spirit(self, interaction, _b):
         if not await self._guard(interaction): return
         data, profile = self._get()
@@ -629,7 +467,9 @@ class FurioukaView(discord.ui.View):
             return await interaction.response.send_message(
                 "❌ Nemáš equipnutého ducha.", ephemeral=True)
         f = _furioka(profile)
-        f["use_spirit"] = not f["use_spirit"]
+        ids = [s["id"] for s in energy.equipped(profile)]
+        f["spirit_ids"] = [] if f["spirit_ids"] == ids else ids
+        f["use_spirit"] = bool(f["spirit_ids"])
         await self._refresh(interaction, data, profile)
 
     @discord.ui.button(label="Sundat vše", emoji="🔄", style=discord.ButtonStyle.secondary, row=2)
@@ -642,13 +482,17 @@ class FurioukaView(discord.ui.View):
 
 
 async def open_furioka(interaction: discord.Interaction, user_id: int):
-    """Vstupní bod pro /staty tlačítko Furioku."""
+    """Otevře hráčský panel /furioku."""
     data = _load()
     profile = data.get(pkey(user_id))
     if not profile:
         await interaction.response.send_message(
             "Nemáš profil — projdi nejdřív tutoriálem.", ephemeral=True)
         return
+    energy.normalize(profile)
+    _save(data)
+    if not profile.get("furioku_unlocked"):
+        return await interaction.response.send_message("?????????", ephemeral=True)
     await interaction.response.send_message(
         embed=_furioka_embed(profile, user_id),
         view=FurioukaView(user_id), ephemeral=True)
@@ -665,6 +509,28 @@ class Spirits(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    @app_commands.command(name="furioku", description="Správa vlastní energie, duchů a Jednoty.")
+    @app_commands.describe(duch="Volitelně přepni Jednotu konkrétního nasazeného ducha.")
+    async def furioku(self, interaction: discord.Interaction, duch: str | None = None):
+        data = _load()
+        profile = data.get(pkey(interaction.user.id), {})
+        energy.normalize(profile)
+        if not profile.get('furioku_unlocked'):
+            return await interaction.response.send_message("?????????", ephemeral=True)
+        if duch:
+            if PERK_JEDNOTA not in _owned_perks(interaction.user.id):
+                return await interaction.response.send_message("❌ Chybí perk Furioku: Jednota.", ephemeral=True)
+            spirit = next((s for s in energy.equipped(profile) if s['name'].lower() == duch.lower()), None)
+            if spirit is None:
+                return await interaction.response.send_message("❌ Nejprve ducha nasaď přes /duch equip.", ephemeral=True)
+            ids = profile['furioka']['spirit_ids']
+            if spirit['id'] in ids:
+                ids.remove(spirit['id'])
+            else:
+                ids.append(spirit['id'])
+        _save(data)
+        await open_furioka(interaction, interaction.user.id)
 
     # ── /duch pridat ──────────────────────────────────────────────────────────
 
@@ -705,6 +571,7 @@ class Spirits(commands.Cog):
 
         spirit = _default_spirit(name, rank, fury, element.value, description)
         spirits.append(spirit)
+        energy.normalize(profile)
         _save(data)
 
         embed = _spirit_embed(spirit, title=f"✅ Duch přidán — {name}")
@@ -735,69 +602,15 @@ class Spirits(commands.Cog):
             await interaction.followup.send(f"❌ **{member.display_name}** nemá profil.")
             return
 
-        spirit = get_equipped_spirit(profile)
-        if spirit is None:
-            await interaction.followup.send(f"❌ **{member.display_name}** nemá equipnutého ducha.")
-            return
-
-        spirit_name = spirit["name"]
-        result = grant_spirit_xp(profile, amount)
+        results = energy.grant_xp(profile, amount)
+        if not results:
+            return await interaction.followup.send("❌ Hráč nemá nasazené duchy.")
         _save(data)
-
-        # Znovu načti ducha po uložení
-        spirit = get_equipped_spirit(profile)
-
-        if result and result["ranked_up"]:
-            # Veřejný embed do kanálu
-            embed = discord.Embed(
-                title=f"⬆️ {member.display_name}'s duch postoupil na vyšší rank!",
-                description=(
-                    f"{SPIRIT_EMO} **{spirit['name']}** "
-                    f"{rank_label(result['old_rank'])} → **{rank_label(result['new_rank'])}**\n\n"
-                    f"Furioka: **{spirit['fury']}** {FU_EMO} "
-                    f"*(+{result['fury_gained']} za rank-up)*"
-                ),
-                color=rank_color(spirit["rank"]),
-            )
-            embed.set_footer(text=f"+{amount} XP")
-            # Ephemeral potvrzení DM
-            await interaction.followup.send("✅ XP přidáno — duch postoupil!", ephemeral=True)
-            # Veřejný announce do kanálu
-            await interaction.channel.send(content=member.mention, embed=embed)
-
-        elif result and not result["ranked_up"]:
-            thresh = spirit.get("xp_threshold", rank_xp_threshold(spirit["rank"]))
-            # Ephemeral info pro DM
-            await interaction.followup.send(
-                f"✅ +**{amount} XP** pro ducha **{spirit_name}**.\n"
-                f"XP: **{spirit['xp']}** / {thresh}",
-                ephemeral=True,
-            )
-            # Veřejný embed — pokus o rank-up selhal
-            embed = discord.Embed(
-                title=f"💨 {member.display_name}'s duch se pokusil postoupit...",
-                description=(
-                    f"{SPIRIT_EMO} **{spirit['name']}** se pokusil o rank-up, ale tentokrát to nevyšlo.\n"
-                    f"Threshold se zvýšil — příště bude potřeba více síly.\n\n"
-                    f"XP: **{spirit['xp']}** / {thresh}"
-                ),
-                color=0x888780,
-            )
-            await interaction.channel.send(content=member.mention, embed=embed)
-
-        else:
-            # XP přidáno ale threshold ještě nedosažen — jen ephemeral
-            thresh = spirit.get("xp_threshold", rank_xp_threshold(spirit["rank"]))
-            await interaction.followup.send(
-                f"✅ +**{amount} XP** pro ducha **{spirit_name}**.\n"
-                f"XP: **{spirit['xp']}** / {thresh}",
-                ephemeral=True,
-            )
-
-    # ── /duch slechtit ────────────────────────────────────────────────────────
+        lines = [f"👻 **{r['spirit_name']}**: +{amount} XP · rank {r['old_rank']} → {r['new_rank']}" for r in results]
+        await interaction.followup.send("\n".join(lines)[:1900])
 
     @duch.command(name="slechtit", description="Pokus o šlechtění dvou duchů — silnější může pohltit slabšího!")
-    @app_commands.describe(jmeno_a="Jméno prvního ducha", jmeno_b="Jméno druhého ducha")
+    @app_commands.describe(jmeno_a="První duch; při shodném ranku přežije tento", jmeno_b="Jméno druhého ducha")
     async def duch_slechtit(
         self, interaction: discord.Interaction,
         jmeno_a: str, jmeno_b: str,
@@ -891,6 +704,12 @@ class Spirits(commands.Cog):
             logger.exception("[spirits] autocomplete jména selhal")
             return []
 
+    @furioku.autocomplete("duch")
+    async def furioku_duch_autocomplete(self, interaction: discord.Interaction, current: str):
+        profile = _load().get(pkey(interaction.user.id), {})
+        return [app_commands.Choice(name=s['name'][:100], value=s['name'])
+                for s in energy.equipped(profile) if current.lower() in s['name'].lower()][:25]
+
     @duch.command(name="equip", description="Nasaď si strážného ducha (DM může i jiným).")
     @app_commands.describe(name="Jméno ducha", member="[DM] Hráč (prázdné = ty)")
     @app_commands.autocomplete(name=_ac_spirit_name)
@@ -921,16 +740,12 @@ class Spirits(commands.Cog):
             await interaction.followup.send(f"❌ {who} ducha **{name}**.\nDostupní: {names}")
             return
 
-        old_idx = profile.get("equipped_spirit_idx")
-        profile["equipped_spirit_idx"] = idx
+        energy.normalize(profile)
+        spirit = spirits[idx]
+        if spirit['id'] not in profile['equipped_spirit_ids']:
+            profile['equipped_spirit_ids'].append(spirit['id'])
         _save(data)
-
-        spirit  = spirits[idx]
-        old_str = (
-            f" *(předtím: {spirits[old_idx]['name']})*"
-            if old_idx is not None and old_idx != idx and 0 <= old_idx < len(spirits)
-            else ""
-        )
+        old_str = ""
         who = "Sis" if target.id == interaction.user.id else f"**{target.display_name}**"
         await interaction.followup.send(
             f"✅ {who} nasadil **{spirit['name']}** "
@@ -941,9 +756,10 @@ class Spirits(commands.Cog):
 
     @duch.command(name="unequip", description="Sundej si strážného ducha (DM může i jiným).")
     @app_commands.describe(member="[DM] Hráč (prázdné = ty)")
+    @app_commands.autocomplete(name=_ac_spirit_name)
     async def duch_unequip(
         self, interaction: discord.Interaction,
-        member: discord.Member = None,
+        name: str, member: discord.Member = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if member is not None and member.id != interaction.user.id:
@@ -959,13 +775,11 @@ class Spirits(commands.Cog):
             await interaction.followup.send(f"❌ **{target.display_name}** nemá profil.")
             return
 
-        spirit = get_equipped_spirit(profile)
+        spirit = next((s for s in energy.equipped(profile) if s['name'].lower() == name.lower()), None)
         if spirit is None:
-            who = "Nemáš" if target.id == interaction.user.id else f"**{target.display_name}** nemá"
-            await interaction.followup.send(f"ℹ️ {who} equipnutého ducha.")
-            return
-
-        profile["equipped_spirit_idx"] = None
+            return await interaction.followup.send("❌ Tento duch není nasazený.")
+        profile['equipped_spirit_ids'].remove(spirit['id'])
+        energy.normalize(profile)
         _save(data)
         await interaction.followup.send(f"✅ Duch **{spirit['name']}** sundán. Zůstává v kolekci.")
 
@@ -1009,6 +823,9 @@ class Spirits(commands.Cog):
 
         changes = []
         if nove_fury is not None and nove_fury >= 0:
+            energy.normalize(profile)
+            spirit["fury_cur"] = min(nove_fury, spirit["fury_cur"])
+            spirit["fury_max"] = nove_fury
             spirit["fury"] = nove_fury
             changes.append(f"furioka → **{nove_fury}**")
         if novy_rank is not None and novy_rank >= 1:
@@ -1065,13 +882,9 @@ class Spirits(commands.Cog):
             await interaction.followup.send(f"❌ Hráč nemá ducha **{name}**.\nDostupní: {names}")
             return
 
-        equipped_idx = profile.get("equipped_spirit_idx")
-        if equipped_idx == idx:
-            profile["equipped_spirit_idx"] = None
-        elif equipped_idx is not None and equipped_idx > idx:
-            profile["equipped_spirit_idx"] -= 1
-
+        energy.normalize(profile)
         spirits.pop(idx)
+        energy.normalize(profile)
         _save(data)
         await interaction.followup.send(f"✅ Duch **{name}** trvale odebrán hráči **{member.display_name}**.")
 
@@ -1094,7 +907,8 @@ class Spirits(commands.Cog):
             return
 
         spirits      = profile.get("spirits", [])
-        equipped_idx = profile.get("equipped_spirit_idx")
+        energy.normalize(profile)
+        equipped_ids = profile["equipped_spirit_ids"]
 
         if not spirits:
             await interaction.followup.send(f"*{target.display_name} nemá žádného strážného ducha.*", ephemeral=True)
@@ -1102,7 +916,7 @@ class Spirits(commands.Cog):
 
         lines = []
         for i, s in enumerate(spirits):
-            line = _spirit_line(s, equipped=(i == equipped_idx))
+            line = _spirit_line(s, equipped=(s["id"] in equipped_ids))
             if s.get("description"):
                 line += f"\n-# *{s['description']}*"
             lines.append(line)
@@ -1134,14 +948,15 @@ class Spirits(commands.Cog):
             return
 
         spirits      = profile.get("spirits", [])
-        equipped_idx = profile.get("equipped_spirit_idx")
+        energy.normalize(profile)
+        equipped_ids = profile["equipped_spirit_ids"]
         idx          = next((i for i, s in enumerate(spirits) if s["name"].lower() == name.lower()), None)
         if idx is None:
             await interaction.followup.send(f"❌ Duch **{name}** nenalezen.")
             return
 
         spirit   = spirits[idx]
-        equipped = (idx == equipped_idx)
+        equipped = (spirit["id"] in equipped_ids)
         title    = f"{SPIRIT_EMO} {spirit['name']}" + (" ◀ equipnutý" if equipped else "")
         embed    = _spirit_embed(spirit, title=title)
         await interaction.followup.send(embed=embed)

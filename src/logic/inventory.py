@@ -753,14 +753,8 @@ def _format_bonus(bonus: dict) -> str:
 
 def _recalc_fury_from_vliv(profile: dict) -> None:
     """Přepočítá fury_max podle celkového Vlivu (1 Vliv = 5 fury_max)."""
-    total   = (profile.get("vliv_svetlo", 0)
-               + profile.get("vliv_temnota", 0)
-               + profile.get("vliv_rovnovaha", 0))
-    new_max = total * 5
-    old_max = profile.get("fury_max", 0)
-    delta   = new_max - old_max
-    profile["fury_max"] = new_max
-    profile["fury_cur"] = max(0, min(new_max, profile.get("fury_cur", 0) + delta))
+    from src.logic.furioku import recalc
+    recalc(profile)
 
 
 def _apply_equip_bonus(profile: dict, bonus: dict) -> None:

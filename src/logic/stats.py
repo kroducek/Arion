@@ -520,6 +520,8 @@ def add_xp(user_id: int, amount: int, reason: str = "") -> dict:
         p["ap"]     = p.get("ap", 0) + lap
         cap = get_xp_cap(p["level"])
 
+    from src.logic.furioku import grant_xp
+    spirit_results = grant_xp(p, amount)
     _append_xp_log(p, amount, level_before, new_level, reason)
     _save(data)
     return {
@@ -530,6 +532,7 @@ def add_xp(user_id: int, amount: int, reason: str = "") -> dict:
         "ap_gained":     ap_gained,
         "xp":            p["xp"],
         "cap":           get_xp_cap(new_level),
+        "spirits":       spirit_results,
     }
 
 
@@ -705,10 +708,6 @@ class StatPointView(discord.ui.View):
         pbtn.callback = self._open_perk_upgrades
         self.add_item(pbtn)
 
-        fbtn = discord.ui.Button(label="🔥 Furioku", style=discord.ButtonStyle.primary, row=action_row)
-        fbtn.callback = self._open_furioka
-        self.add_item(fbtn)
-
         # Potvrzovací tlačítka — jen když je co potvrdit (draft neprázdný).
         # Klikáním se body plánují do draftu; teprve ✅ je zapíše, ↩️ zahodí.
         if self.draft:
@@ -777,20 +776,6 @@ class StatPointView(discord.ui.View):
         embed = view._header(p)
         embed.description = "↩️ *Změny zrušeny.*\n\n" + embed.description
         await interaction.response.edit_message(embed=embed, view=view)
-
-    async def _open_furioka(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("❌ Toto není tvůj výběr.", ephemeral=True)
-            return
-        try:
-            from src.logic.spirits import open_furioka
-            await open_furioka(interaction, self.user_id)
-        except Exception:
-            logger.exception("[StatPointView] otevření furioku selhalo")
-            try:
-                await interaction.response.send_message("❌ Nepovedlo se otevřít furioku.", ephemeral=True)
-            except Exception:
-                pass
 
     async def _open_perk_upgrades(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
@@ -1239,6 +1224,9 @@ class Stats(commands.Cog):
             if amount > 0:
                 with use_slot(member.id, slot):
                     result = add_xp(member.id, amount, reason=reason)
+                spirit_note = "\n".join(f"👻 {r['spirit_name']}: +{amount} XP · rank {r['new_rank']}" for r in result.get('spirits', []))
+                if spirit_note:
+                    note += "\n" + spirit_note[:1200]
                 if result["leveled_up"]:
                     cap_str = f"/ {result['cap']:,}" if result["cap"] else "(MAX)"
                     levels_str = (

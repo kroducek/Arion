@@ -1,4 +1,5 @@
 import copy
+from src.logic import furioku as energy
 import discord
 import asyncio
 import logging
@@ -43,16 +44,86 @@ def _bs():
             "blacksmith modul nedostupný — statusy v boji vypnuty")
         return None
 
+def _merge_energy(profile, state):
+    if state is None:
+        return
+    energy.normalize(profile)
+    profile['fury_cur'] = max(0, min(profile.get('fury_max', 0), state.get('fury_cur', 0)))
+    profile['furioka']['atk_amount'] = state['furioka']['atk_amount']
+    profile['furioka']['def_amount'] = state['furioka']['def_amount']
+    current = {s['id']: s for s in state['spirits']}
+    for spirit in profile['spirits']:
+        if spirit['id'] in current:
+            spirit['fury_cur'] = min(spirit['fury_max'], current[spirit['id']]['fury_cur'])
+
+
+def _energy_state(profile):
+    energy.normalize(profile)
+    return copy.deepcopy({k: profile.get(k) for k in ('fury_cur', 'fury_max', 'spirits', 'equipped_spirit_ids', 'furioka')})
+
+
+def _refresh_energy(combat):
+    profiles = _load_profiles()
+    from src.logic.spirits import _owned_perks
+    for actor, stat in combat.get('stats', {}).items():
+        uid = _actor_uid(actor)
+        if uid is None:
+            continue
+        key = stat.get('profile_key') or _pk(profiles, uid)
+        profile = profiles.get(key)
+        if profile is None:
+            continue
+        stat['profile_key'] = key
+        stat['energy'] = _energy_state(profile)
+        from src.database.characters import use_slot
+        with use_slot(uid, key.split(':')[-1]):
+            stat['energy_perks'] = _owned_perks(uid)
+        stat['fur'] = energy.pool(stat['energy'], stat['energy_perks'])
+        stat['fur_max'] = profile.get('fury_max', 0)
+
+
+def _absorb_energy(stat, damage):
+    if 'energy' in stat:
+        rest, absorbed = energy.absorb(stat['energy'], damage, stat.get('energy_perks', []))
+        stat['fur'] = energy.pool(stat['energy'], stat.get('energy_perks', []))
+        return rest, absorbed
+    # NPCs retain their explicitly configured shield.
+    absorbed = min(max(0, stat.get('fur', 0)), damage)
+    stat['fur'] = max(0, stat.get('fur', 0) - absorbed)
+    return damage - absorbed, absorbed
+
+
+def _attack_energy(combat, actor, resources):
+    stat = combat.get('stats', {}).get(actor, {})
+    if 'energy' not in stat:
+        return 0
+    before = copy.deepcopy(stat['energy'])
+    amount = energy.attack(stat['energy'], stat.get('energy_perks', []))
+    stat['fur'] = energy.pool(stat['energy'], stat.get('energy_perks', []))
+    if amount:
+        resources['energy_before'] = before
+        resources['profile_key'] = stat.get('profile_key')
+    return amount
+
+
+def _writeback_attack(combat, actor, resources):
+    if resources.get('energy_before') and _actor_uid(actor):
+        stat = combat['stats'][actor]
+        profiles = _load_profiles()
+        profile = profiles.get(stat.get('profile_key') or _pk(profiles, _actor_uid(actor)))
+        if profile is not None:
+            _merge_energy(profile, stat['energy'])
+            _save_profiles(profiles)
+
+
 def apply_status_dmg(stat: dict, dmg: int) -> int:
     """Dmg ze statusu: DEF ignoruje, napřed ubere furioku, zbytek jde do HP.
 
     Mutuje `stat` (fur, hp). Vrací, kolik pohltila furioka.
     """
     dmg = max(0, int(dmg))
-    fur = int(stat.get("fur", 0) or 0)
-    absorbed = min(fur, dmg)
-    stat["fur"] = fur - absorbed
-    stat["hp"] = max(0, int(stat.get("hp", 0) or 0) - (dmg - absorbed))
+    rest, absorbed = _absorb_energy(stat, dmg)
+    stat['hp'] = max(0, int(stat.get('hp', 0) or 0) - rest)
     return absorbed
 
 def deliver_statuses(stat: dict, statuses: list, bs, reg: dict) -> list[str]:
@@ -85,14 +156,15 @@ def _actor_uid(actor: str):
     return None
 
 def _writeback_player_state(uid: int, carrier: dict, bs=None) -> None:
-    """Hráči zapíše hp_cur + statusy zpět do profilu."""
+    """Zapíše HP, statusy a energii do postavy svázané s bojem."""
     try:
         profiles = _load_profiles()
-        p = profiles.get(_pk(profiles, uid))
+        p = profiles.get(carrier.get("profile_key") or _pk(profiles, uid))
         if not p:
             return
         p["hp_cur"]   = max(0, min(carrier.get("hp", 0), p.get("hp_max", 50)))
         p["statuses"] = carrier.get("statuses", [])
+        _merge_energy(p, carrier.get('energy'))
         _save_profiles(profiles)
     except Exception:
         logging.exception("[combat] writeback hp/statusů selhal")
@@ -131,22 +203,6 @@ def _sync_player_from_profile(mention: str, user_id: int) -> dict | None:
         "fur_max": fur_max,   # uložíme pro referenci
     }
 
-def _writeback_hp_to_profile(user_id: int, new_hp: int):
-    """
-    Zapíše nové hp_cur zpět do profiles.json pro daného hráče.
-    """
-    try:
-        profiles = _load_profiles()
-        profile  = profiles.get(_pk(profiles, user_id))
-        if not profile:
-            return
-        hp_max = profile.get("hp_max", 50)
-        profile["hp_cur"] = max(0, min(new_hp, hp_max))
-        _save_profiles(profiles)
-    except Exception:
-        logging.exception("[combat] Nelze zapsat HP zpět do profilu")
-
-
 # ── Bar helpers ───────────────────────────────────────────────────────────────
 
 def _make_bar(current: int, maximum: int, length: int = 10) -> str:
@@ -163,12 +219,8 @@ def apply_hit(stat: dict, raw_hit: int) -> dict:
     """
     raw_hit = max(0, int(raw_hit))
     dfn = int(stat.get("def", 0) or 0)
-    fur = int(stat.get("fur", 0) or 0)
-
     after_def = max(0, raw_hit - dfn)
-    absorbed = min(fur, after_def)
-    stat["fur"] = fur - absorbed
-    final = after_def - absorbed
+    final, absorbed = _absorb_energy(stat, after_def)
 
     old_hp = int(stat.get("hp", 0) or 0)
     stat["hp"] = max(0, old_hp - final)
@@ -453,6 +505,8 @@ def stat_snapshot(stat: dict) -> dict:
     """Stav aktéra pro undo — čísla i statusy (kopie, ne odkaz)."""
     snap = {key: int(stat.get(key, 0) or 0) for key in SNAPSHOT_KEYS}
     snap["statuses"] = copy.deepcopy(stat.get("statuses") or [])
+    if "energy" in stat:
+        snap["energy"] = copy.deepcopy(stat["energy"])
     return snap
 
 
@@ -504,6 +558,13 @@ def undo_last(combat: dict) -> dict | None:
                 stat[key] = before[key]
         if "statuses" in before:
             stat["statuses"] = copy.deepcopy(before["statuses"])
+        if 'energy' in before:
+            stat['energy'] = copy.deepcopy(before['energy'])
+        attacker = combat.get('stats', {}).get(event.get('actor'))
+        original = event.get('resources', {}).get('energy_before')
+        if attacker is not None and original is not None:
+            attacker['energy'] = copy.deepcopy(original)
+            attacker['fur'] = energy.pool(original, attacker.get('energy_perks', []))
         event["undone"] = True
         return event
     return None
@@ -518,9 +579,12 @@ def refund_resources(event: dict) -> str:
     notes = []
     try:
         profiles = _load_profiles()
-        profile = profiles.get(_pk(profiles, int(uid)))
+        profile = profiles.get(res.get("profile_key") or _pk(profiles, int(uid)))
         if not profile:
             return ""
+        _merge_energy(profile, res.get("energy_before"))
+        if res.get("energy_before"):
+            notes.append("🔥 Obnovena furioku hráče i duchů a přidělení do útoku.")
         mana = int(res.get("mana", 0) or 0)
         if mana:
             cur = profile.get("mana_cur", profile.get("mana_max", 20))
@@ -1275,7 +1339,8 @@ class AttackView(ui.View):
             if stat is None:
                 return None
             before = stat_snapshot(stat)
-            out = apply_hit(stat, damage)
+            fury_bonus = _attack_energy(state, self.attacker, self.resources)
+            out = apply_hit(stat, damage + fury_bonus)
             applied[:] = deliver_statuses(stat, statuses, bs, reg)
             out["new_hp"] = stat["hp"]
             log_event(state, "attack", self.target, before, stat_snapshot(stat),
@@ -1293,6 +1358,7 @@ class AttackView(ui.View):
                 "❌ *Cíl už není v boji, nebo se zásah nepodařilo uložit — zkus to znovu.*",
                 ephemeral=True)
         combat = self.cog.active_combats[self.channel_id]
+        _writeback_attack(combat, self.attacker, self.resources)
         stat = result["stat"]
         max_hp = result["max_hp"]
 
@@ -1310,10 +1376,7 @@ class AttackView(ui.View):
 
         uid = _actor_uid(self.target)
         if uid is not None:
-            if bs:
-                _writeback_player_state(uid, stat, bs)
-            else:
-                _writeback_hp_to_profile(uid, stat["hp"])
+            _writeback_player_state(uid, stat, bs)
 
         self._disable()
 
@@ -1480,6 +1543,7 @@ class CombatCog(commands.Cog):
             else:
                 combat.clear()
                 combat.update(stored)
+            _refresh_energy(combat)
             box["result"] = change(combat)
             raw[key] = combat
             return raw
@@ -1569,6 +1633,7 @@ class CombatCog(commands.Cog):
                 combat.setdefault("initiative", {})
                 combat.setdefault("round", 1)
                 combat.setdefault("log", [])
+                _refresh_energy(combat)
             return state
         except Exception:
             logging.exception("[combat] Nelze načíst stav")
@@ -1842,6 +1907,7 @@ class CombatCog(commands.Cog):
                 "statuses": statuses,
             }
 
+        _refresh_energy(combat)
         if combat.get("active_player") is None:
             combat["active_player"] = user
         self._save_state()
@@ -2131,7 +2197,7 @@ class CombatCog(commands.Cog):
             # Parsujeme user ID z mentiony: <@123456> nebo <@!123456>
             try:
                 uid = int(name.strip("<@!>"))
-                _writeback_hp_to_profile(uid, new_hp)
+                _writeback_player_state(uid, stats[name])
             except ValueError:
                 pass
 
@@ -2223,6 +2289,11 @@ class CombatCog(commands.Cog):
         old_fur        = stats[name].get("fur", 0)
         before = stat_snapshot(stats[name])
         stats[name]["fur"] = max(0, fury)
+        if 'energy' in stats[name]:
+            state = stats[name]['energy']
+            state['fury_cur'] = min(state.get('fury_max', 0), max(0, fury))
+            stats[name]['fur'] = energy.pool(state, stats[name].get('energy_perks', []))
+            _writeback_player_state(_actor_uid(name), stats[name])
         log_event(self.active_combats[channel_id], "stat", name, before,
                   stat_snapshot(stats[name]),
                   detail=f"FUR {old_fur} → {stats[name]['fur']}",
@@ -2689,7 +2760,7 @@ class CombatCog(commands.Cog):
             description=desc,
             color=discord.Color.orange(),
         )
-        embed.set_footer(text="Damage se aplikuje až po potvrzení — cíl má prostor na reakci.")
+        embed.set_footer(text="Zásah spotřebuje i aktuálně přidělenou útočnou furioku; minutí ji zachová.")
 
         resources = {"uid": interaction.user.id, "mana": mana_cost,
                      "ammo_id": ammo_spent, "ammo_qty": 1 if ammo_spent else 0}
@@ -2700,7 +2771,8 @@ class CombatCog(commands.Cog):
         if combat.get("auto_apply"):
             stat = combat["stats"][cil]
             before = stat_snapshot(stat)
-            result = apply_hit(stat, damage)
+            fury_bonus = _attack_energy(combat, actor, resources)
+            result = apply_hit(stat, damage + fury_bonus)
             delivered = self._consume_weapon(interaction.user.id, weapon_id,
                                              mana_cost, runes_active)
             notes = []
@@ -2718,12 +2790,10 @@ class CombatCog(commands.Cog):
             log_event(combat, "attack", cil, before, stat_snapshot(stat),
                       detail=result["change_str"], actor=actor,
                       resources=resources)
+            _writeback_attack(combat, actor, resources)
             uid = _actor_uid(cil)
             if uid is not None:
-                if bs:
-                    _writeback_player_state(uid, stat, bs)
-                else:
-                    _writeback_hp_to_profile(uid, stat["hp"])
+                _writeback_player_state(uid, stat, bs)
             self._save_state()
             lines = hp_console(cil, result["old_hp"], result["new_hp"],
                                stat.get("max_hp", 0), result["change_str"],
@@ -2965,10 +3035,7 @@ class CombatCog(commands.Cog):
                       detail=result["change_str"], actor=utocnik)
             uid = _actor_uid(cil)
             if uid is not None:
-                if bs:
-                    _writeback_player_state(uid, stat, bs)
-                else:
-                    _writeback_hp_to_profile(uid, stat["hp"])
+                _writeback_player_state(uid, stat, bs)
             self._save_state()
             lines = hp_console(cil, result["old_hp"], result["new_hp"],
                                stat.get("max_hp", 0), result["change_str"],
@@ -3033,10 +3100,7 @@ class CombatCog(commands.Cog):
         uid = _actor_uid(target)
         if uid is not None:
             # Statusy i HP musí zpátky do profilu, jinak se stav rozejde.
-            if bs:
-                _writeback_player_state(uid, stat, bs)
-            else:
-                _writeback_hp_to_profile(uid, stat["hp"])
+            _writeback_player_state(uid, stat, bs)
         refund = refund_resources(event)
         self._save_state()
 

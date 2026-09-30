@@ -351,17 +351,8 @@ def _apply_vliv_fury(profile: dict) -> None:
     `fury_max_bonus` je furioku získaná JINAK než Vlivem (odměna, event, DM).
     Přepočet z Vlivu ji nesmí smazat — proto se drží zvlášť a jen se přičte.
     """
-    total_vliv = (
-        profile.get("vliv_svetlo",    0) +
-        profile.get("vliv_temnota",   0) +
-        profile.get("vliv_rovnovaha", 0)
-    )
-    bonus   = profile.get("fury_max_bonus", 0)
-    new_max = total_vliv * 5 + bonus
-    old_max = profile.get("fury_max", 0)
-    delta   = new_max - old_max
-    profile["fury_max"] = new_max
-    profile["fury_cur"] = max(0, min(new_max, profile.get("fury_cur", 0) + delta))
+    from src.logic.furioku import recalc
+    recalc(profile)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STRÁŽNÝ DUCH — importováno z spirits.py
@@ -397,9 +388,9 @@ def _build_prukaz_embed(target, profile) -> discord.Embed:
     except Exception:
         pass
     lines.append(f"-# {COIN} **{balance}**  \u00b7  {COIN_SILVER} **{silver_bal}**  \u00b7  {COIN_STARDUST} **{stardust_bal}**")
-    if equipped_spirit:
-        sf = f"+{equipped_spirit['fury']}" if equipped_spirit["fury"] > 0 else str(equipped_spirit["fury"])
-        lines.append(f"-# {SPIRIT_EMO} *Strážný duch: {equipped_spirit['name']} ({sf} {FU_EMO})*")
+    from src.logic.furioku import equipped
+    for spirit in equipped(profile):
+        lines.append(f"-# {SPIRIT_EMO} *{spirit['name']}: {spirit['fury_cur']}/{spirit['fury_max']} {FU_EMO}*")
 
     bio = profile.get("bio", "")
     if bio:
@@ -479,13 +470,15 @@ def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
     hunger_bar = _hunger_bar(hunger_cur, hunger_max)
     mana_bar = _mana_bar(mana_cur, mana_max)
     fury_total = fury_cur + spirit_bonus
-    fury_bar = _bar(fury_total, fury_max + spirit_bonus if fury_max > 0 else 1)
+    from src.logic.furioku import equipped
+    total_max = fury_max + sum(s["fury_max"] for s in equipped(profile))
+    fury_bar = _bar(fury_total, total_max or 1)
     xp_bar = _bar(xp, cap if cap else 1)
     def_str = f"  \u00b7  \U0001f6e1\ufe0f **{total_def}** DEF" if total_def else ""
     xp_str = f"{xp} (MAX)" if not cap else f"{xp}/{cap}"
     # Furioka popisek
     if spirit_bonus > 0 and equipped_spirit:
-        fury_display_str = f"{fury_cur}/{fury_max}  *(+{spirit_bonus} od {equipped_spirit['name']})*"
+        fury_display_str = f"{fury_cur}/{fury_max}  *(duchové: {spirit_bonus} aktuální energie)*"
     else:
         fury_display_str = f"{fury_cur}/{fury_max}"
 
@@ -702,8 +695,8 @@ async def _test_stats_payload(target, profile):
         total_def = 0
     try:
         _fc, _fm, spirit_bonus = fury_display(profile)
-        _sp = get_equipped_spirit(profile)
-        spirit_name = _sp["name"] if (_sp and spirit_bonus) else None
+        from src.logic.furioku import equipped
+        spirit_name = ", ".join(s["name"] for s in equipped(profile)) or None
     except Exception:
         spirit_bonus, spirit_name = 0, None
     status_names = []
@@ -759,7 +752,8 @@ async def _test_prukaz_payload(target, profile, guild_id=None):
     gold      = economy.get(pkey(target.id), 0)
     silver    = get_balance(target.id, "silver")
     stardust  = get_balance(target.id, "stardust")
-    spirit    = get_equipped_spirit(profile)
+    from src.logic.furioku import equipped
+    spirit_names = ", ".join(s["name"] for s in equipped(profile))
     pbytes    = await _fetch_portrait_bytes(target, profile)
     rep_line  = None
     if guild_id is not None:
@@ -771,7 +765,7 @@ async def _test_prukaz_payload(target, profile, guild_id=None):
             pass
     buf   = await asyncio.to_thread(
         render_prukaz_card, profile, char_name, gold, silver, stardust,
-        profile.get("rank", "F3"), spirit["name"] if spirit else None,
+        profile.get("rank", "F3"), spirit_names or None,
         portrait_bytes=pbytes, reputation=rep_line)
     file  = discord.File(buf, filename="card.png")
     embed = discord.Embed(color=profile.get("accent_color") or 0x3498db)
@@ -851,6 +845,8 @@ def _rest_heal(profile: dict, pct: float) -> list[str]:
         profile[f"{key}_cur"] = new
         if new != cur:
             lines.append(f"{emoji} {label}: {cur} → **{new}** / {mx}")
+    from src.logic.furioku import rest
+    lines.extend(rest(profile, pct))
     return lines
 
 
@@ -1253,12 +1249,9 @@ class Profile(commands.Cog):
                 except Exception:
                     logger.exception("[dmset] výpočet DEF selhal")
                     dfn = 0
-                fur = profile.get("fury_cur", 0)
-
-                after_def       = max(0, hodnota - dfn)
-                absorbed_by_fur = min(fur, after_def)
-                profile["fury_cur"] = fur - absorbed_by_fur   # furioku se spotřebuje
-                final_dmg = after_def - absorbed_by_fur
+                from src.logic.spirits import furioka_absorb
+                after_def = max(0, hodnota - dfn)
+                final_dmg, absorbed_by_fur = furioka_absorb(profile, member.id, after_def)
                 new = max(0, old - final_dmg)
 
                 parts = [f"zásah {hodnota}"]
