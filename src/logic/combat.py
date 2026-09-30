@@ -8,6 +8,7 @@ from discord.ext import commands
 from discord import app_commands, ui
 from src.utils.paths import COMBAT_STATE
 from src.utils.json_utils import load_json, save_json, update_json
+from src.database.characters import active_name as _active_char_name
 from src.database.profiles import (
     load_items as _load_items_db,
     load_profiles as _load_profiles,
@@ -548,6 +549,24 @@ WIPEOUT_TITLE = {
     "players": "💀  Družina padla!",
 }
 MEDALS = ("🥇", "🥈", "🥉")
+
+
+def actor_label(actor: str, guild=None) -> str:
+    """Čitelné jméno aktéra pro autocomplete — u hráče postava a přezdívka místo <@id>."""
+    uid = _actor_uid(actor)
+    if uid is None:
+        return actor
+    try:
+        char = _active_char_name(uid)
+    except Exception:
+        char = None
+    member = guild.get_member(uid) if guild else None
+    nick = member.display_name if member else None
+    if char and nick and char != nick:
+        return f"🧑 {char} (@{nick})"
+    if char or nick:
+        return f"🧑 {char or nick}"
+    return actor
 
 
 def is_player(actor: str) -> bool:
@@ -1618,8 +1637,12 @@ class CombatCog(commands.Cog):
         if not combat:
             return []
         cur = current.lower()
-        return [app_commands.Choice(name=a[:100], value=a)
-                for a in combat["order"] if cur in a.lower()][:25]
+        out = []
+        for actor in combat["order"]:
+            label = actor_label(actor, interaction.guild)
+            if cur in actor.lower() or cur in label.lower():
+                out.append(app_commands.Choice(name=label[:100], value=actor))
+        return out[:25]
 
     async def _ac_status_id(self, interaction: discord.Interaction, current: str):
         bs = _bs()
