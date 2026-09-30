@@ -93,5 +93,48 @@ class TestStatusKonzole(unittest.TestCase):
                             for line in lines))
 
 
+class TestProcPriDoruceni(unittest.TestCase):
+    def test_jed_tikne_hned_pri_doruceni(self):
+        stat = {"hp": 20, "max_hp": 20, "statuses": []}
+        with mock.patch.object(bs, "roll_dice", return_value=4):
+            applied = combat.deliver_statuses(stat, [("jed", "zbran")], bs, REG)
+        self.assertEqual(stat["hp"], 16)
+        self.assertEqual(stat["statuses"][0]["kol_zbyva"], 2)
+        self.assertEqual(applied, ["🧪 Jed I.: −4 HP (2 kol zbývá)"])
+
+    def test_status_bez_dmg_netika(self):
+        reg = {"mraz": {"name": "Mráz", "emoji": "❄️", "dmg": "",
+                        "duration": 2, "tick": "kazde_kolo"}}
+        stat = {"hp": 20, "max_hp": 20, "statuses": []}
+        applied = combat.deliver_statuses(stat, [("mraz", "runa")], bs, reg)
+        self.assertEqual(stat["hp"], 20)
+        self.assertEqual(stat["statuses"][0]["kol_zbyva"], 2)
+        self.assertEqual(applied, ["❄️ Mráz"])
+
+    def test_jednokolovy_jed_vyprcha_hned(self):
+        reg = {"jed": dict(REG["jed"], duration=1)}
+        stat = {"hp": 20, "max_hp": 20, "statuses": []}
+        with mock.patch.object(bs, "roll_dice", return_value=3):
+            combat.deliver_statuses(stat, [("jed", "zbran")], bs, reg)
+        self.assertEqual(stat["hp"], 17)
+        self.assertEqual(stat["statuses"], [])
+
+
+class TestStatusEdit(unittest.TestCase):
+    def test_upravi_jen_zadana_pole(self):
+        sdef = dict(REG["jed"], proc="", desc="Jed v ráně.")
+        bs.edit_status(sdef, dmg="1d8", duration=None, tick="každé kolo",
+                       desc="-", name=None)
+        self.assertEqual(sdef["dmg"], "1d8")
+        self.assertEqual(sdef["duration"], 3)
+        self.assertEqual(sdef["tick"], "kazde_kolo")
+        self.assertEqual(sdef["desc"], "")
+        self.assertEqual(sdef["name"], "Jed I.")
+
+    def test_zbran_s_naterem_nic_nedoruci(self):
+        entry = {"id": "dyka", "coating": {"status": "jed", "hits_left": 3}}
+        self.assertEqual(bs.weapon_delivered(entry, {}), [])
+
+
 if __name__ == "__main__":
     unittest.main()
