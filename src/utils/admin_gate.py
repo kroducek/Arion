@@ -26,6 +26,7 @@ SHARED_COGS = [
     "src.core.dnd.takedown",
     "src.logic.profile",
     "src.logic.stats",
+    "src.logic.combat",
     "src.logic.inventory",
     "src.logic.onboard",
     "src.logic.memory",

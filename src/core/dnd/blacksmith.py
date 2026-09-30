@@ -2,21 +2,24 @@
 Blacksmith / Status & Rune systém — Aurionis
 
 Tři vrstvy:
-  1) REGISTR STATUSŮ (statuses.json) — co status JE. Sdílený pro runy, nátěry,
-     prostředí i schopnosti. Status nese kind (fyzický/magický), cure (čím se
+  1) REGISTR STATUSŮ (statuses.json) — co status JE. Sdílený pro runy,
+     zbraně NPC, prostředí i schopnosti. Status nese kind (fyzický/magický), cure (čím se
      sundá), dmg (kostky), duration (kola) a tick (kdy dmg padá).
-  2) DORUČENÍ — jak se status na cíl dostane: runa (trvale na zbrani), nátěr
-     (dočasně na zbrani: 3 zásahy NEBO 2 kola), prostředí, schopnost.
+  2) DORUČENÍ — jak se status na cíl dostane: runa (trvale na zbrani), zbraň
+     NPC, prostředí, schopnost. Status s tick='kazde_kolo' tikne hned při
+     doručení (první dmg), další tiky padají na začátku tahu nositele.
   3) AKTIVNÍ STATUS na postavě — zapsaný na "nositeli" (profil hráče nebo
      combat-stat NPC) jako {status, zdroj, kol_zbyva, dmg}.
 
-Combat integrace: combat.py si přes tick_statuses() nechá spočítat dmg na konci
-kola a odečte ho z HP (auto-tick je default). Léčení sundává statusy dle cure.
+Combat integrace: combat.py si přes tick_statuses() nechá spočítat dmg na začátku
+tahu nositele a odečte ho z HP (auto-tick je default). Léčení sundává statusy
+dle cure.
 """
 import os
 import re
 import random
 import logging
+import unicodedata
 from typing import Optional
 
 import discord
@@ -46,6 +49,14 @@ CURES   = ["fyzické", "magické", "obojí"]
 SOURCES = ["zbran", "runa", "prostredi", "schopnost"]
 SOURCE_LABELS = {"zbran": "zbraň", "runa": "runa", "prostredi": "prostředí", "schopnost": "schopnost"}
 TICKS   = ["kazde_kolo", "pri_zasahu"]
+
+
+def norm_tick(value) -> str:
+    """Sjednotí zápis ticku — `každé kolo`, `Každé_kolo` i `` → `kazde_kolo`."""
+    txt = unicodedata.normalize("NFKD", str(value or ""))
+    txt = txt.encode("ascii", "ignore").decode().strip().lower()
+    txt = re.sub(r"[\s-]+", "_", txt)
+    return txt or "kazde_kolo"
 
 # ── Výchozí registr (nasadí se při prvním běhu / po smazání souboru) ──────────
 DEFAULT_STATUSES: dict[str, dict] = {
@@ -152,8 +163,73 @@ def apply_status(carrier: dict, status_id: str, source: str,
     statuses.append(inst)
     return inst
 
+def proc_on_delivery(carrier: dict, inst: dict,
+                     registry: Optional[dict] = None) -> tuple[int, str]:
+    """První tik statusu hned při doručení — dmg + ubrané kolo trvání.
+
+    Vrací (dmg, popis). Statusy bez dmg nebo s tick='pri_zasahu' nechá být.
+    """
+    reg = registry if registry is not None else load_statuses()
+    sdef = reg.get(inst.get("status"), {})
+    dmg_expr = inst.get("dmg") or sdef.get("dmg", "")
+    if (norm_tick(sdef.get("tick")) != "kazde_kolo" or not dmg_expr
+            or inst.get("kol_zbyva", 0) <= 0):
+        return 0, ""
+    dmg = roll_dice(dmg_expr)
+    inst["kol_zbyva"] -= 1
+    if inst["kol_zbyva"] > 0:
+        return dmg, f"−{dmg} HP ({inst['kol_zbyva']} kol zbývá)"
+    carrier["statuses"] = [i for i in _carrier_statuses(carrier) if i is not inst]
+    return dmg, f"−{dmg} HP (vyprchalo)"
+
+def norm_group(value) -> str:
+    """Skupina statusu jako klíč — `Jed` i ` jed ` → `jed`."""
+    return str(value or "").strip().lower().replace(" ", "_")
+
+def status_group(status_id: str, sdef: dict) -> str:
+    """Skupina, podle které status léčí protijed — bez skupiny je to jeho ID."""
+    return norm_group(sdef.get("group")) or norm_group(status_id)
+
+def cure_groups(carrier: dict, groups, registry: Optional[dict] = None) -> list[str]:
+    """Sundá statusy z daných skupin (protijed na `jed` léčí jed, jed2, jed3…).
+
+    Vrací názvy sundaných statusů.
+    """
+    wanted = {norm_group(g) for g in groups if norm_group(g)}
+    reg = registry if registry is not None else load_statuses()
+    removed, survivors = [], []
+    for inst in _carrier_statuses(carrier):
+        sid = inst.get("status")
+        sdef = reg.get(sid, {})
+        if status_group(sid, sdef) in wanted:
+            removed.append(sdef.get("name", sid))
+        else:
+            survivors.append(inst)
+    carrier["statuses"] = survivors
+    return removed
+
+def edit_status(sdef: dict, **fields) -> dict:
+    """Přepíše jen zadaná pole statusu; '-' u textových polí je smaže."""
+    clearable = ("dmg", "proc", "proc_roll", "desc", "group")
+    for key, value in fields.items():
+        if value is None:
+            continue
+        if key == "group" and str(value).strip() != "-":
+            sdef[key] = norm_group(value)
+        elif key == "duration":
+            sdef[key] = max(0, int(value))
+        elif key == "tick":
+            sdef[key] = norm_tick(value)
+        elif key in clearable and str(value).strip() == "-":
+            sdef[key] = ""
+        elif key == "emoji":
+            sdef[key] = str(value).strip() or "•"
+        else:
+            sdef[key] = str(value).strip()
+    return sdef
+
 def tick_statuses(carrier: dict, registry: Optional[dict] = None) -> tuple[int, list[str]]:
-    """Konec kola: statusy s tick='kazde_kolo' udělí dmg a sníží kol_zbyva.
+    """Tah nositele: statusy s tick='kazde_kolo' udělí dmg a sníží kol_zbyva.
 
     Vrací (celkový_dmg, log_řádky). Vypršelé statusy odstraní.
     Statusy s tick='pri_zasahu' (momentální) se NEtikají.
@@ -165,7 +241,7 @@ def tick_statuses(carrier: dict, registry: Optional[dict] = None) -> tuple[int, 
     survivors = []
     for inst in statuses:
         sdef = reg.get(inst.get("status"), {})
-        if sdef.get("tick") != "kazde_kolo":
+        if norm_tick(sdef.get("tick")) != "kazde_kolo":
             survivors.append(inst)
             continue
         dmg = roll_dice(inst.get("dmg") or sdef.get("dmg", ""))
@@ -228,7 +304,7 @@ def describe_statuses(carrier: dict, registry: Optional[dict] = None) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# RUNY & NÁTĚRY na instanci itemu (entry)
+# RUNY na instanci itemu (entry)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_item_runes(entry: dict) -> list[str]:
@@ -254,43 +330,14 @@ def item_rune_slots(item_id: str, items_db: Optional[dict] = None) -> int:
         return 0
 
 def weapon_delivered(entry: dict, runes_reg: Optional[dict] = None) -> list[tuple[str, str]]:
-    """Co zbraň DORUČÍ při zásahu → [(status_id, zdroj)]. Z run i z nátěru."""
+    """Co zbraň DORUČÍ při zásahu → [(status_id, zdroj)] z vyrytých run."""
     runes_reg = runes_reg if runes_reg is not None else load_runes()
     out: list[tuple[str, str]] = []
     for rid in get_item_runes(entry):
         st = runes_reg.get(rid, {}).get("status")
         if st:
             out.append((st, "runa"))
-    coat = entry.get("coating")
-    if isinstance(coat, dict) and coat.get("status"):
-        out.append((coat["status"], "zbran"))
     return out
-
-def consume_coating_hit(entry: dict) -> bool:
-    """Po zásahu zbraní s nátěrem — ubere 1 zásah; odstraní vyprchaný nátěr. True=spotřebováno."""
-    coat = entry.get("coating")
-    if not isinstance(coat, dict):
-        return False
-    coat["hits_left"] = coat.get("hits_left", 0) - 1
-    if coat["hits_left"] <= 0:
-        entry.pop("coating", None)
-    return True
-
-def tick_coatings(profile: dict) -> list[str]:
-    """Konec kola: nátěrům na všech zbraních hráče ubere 1 kolo; vyprchané smaže."""
-    expired = []
-    def _walk(entries):
-        for e in entries:
-            coat = e.get("coating")
-            if isinstance(coat, dict):
-                coat["rounds_left"] = coat.get("rounds_left", 0) - 1
-                if coat["rounds_left"] <= 0:
-                    expired.append(e.get("id", "?"))
-                    e.pop("coating", None)
-    _walk(profile.get("inventory", []))
-    for stor in profile.get("storages", {}).values():
-        _walk(stor)
-    return expired
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -330,7 +377,7 @@ def _find_storage_and_entry(profile: dict, item_id: str):
 
 def _status_registry_embed(reg: dict) -> discord.Embed:
     embed = discord.Embed(title="📖 Registr statusů", color=STATUS_COLOR,
-                          description="Sdílené pro runy, nátěry, prostředí i schopnosti.")
+                          description="Sdílené pro runy, zbraně NPC, prostředí i schopnosti.")
     if not reg:
         embed.description += "\n\n*Žádné statusy.*"
         return embed
@@ -341,6 +388,7 @@ def _status_registry_embed(reg: dict) -> discord.Embed:
         embed.add_field(
             name=f"{s.get('emoji','•')} {s['name']}  ·  `{sid}`",
             value=(f"{s.get('desc','—')}\n-# {s.get('kind','?')} · léčí: {s.get('cure','?')} "
+                   f"· skupina: {status_group(sid, s)} "
                    f"· {dmg} · {dur} · tick: {s.get('tick','?')}{proc}"),
             inline=False)
     embed.set_footer(text="kind = povaha (řídí léčení) · cure = čím se sundá")
@@ -413,7 +461,7 @@ class BlacksmithCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    blacksmith = app_commands.Group(name="blacksmith", description="Kovárna — runy, nátěry a statusy.")
+    blacksmith = app_commands.Group(name="blacksmith", description="Kovárna — runy a statusy.")
 
     # ── runy / statusy: výpis ──────────────────────────────────────────────────
     @blacksmith.command(name="runes", description="Zobraz dostupné runy.")
@@ -433,7 +481,8 @@ class BlacksmithCog(commands.Cog):
         cure="Čím se sundá.", dmg="Dmg kostky (např. 1d5, prázdné=žádné).",
         duration="Kola trvání (0 = okamžitý při zásahu).", tick="Kdy dmg padá.",
         proc="Vedlejší efekt (stun…), prázdné=žádný.", proc_roll="Hod na proc (např. 1d20).",
-        emoji="Emoji.", desc="Popis.")
+        emoji="Emoji.", desc="Popis.",
+        skupina="Skupina pro protijed (např. jed pro jed2, jed3); prázdné = ID statusu.")
     @app_commands.choices(
         kind=[app_commands.Choice(name=k, value=k) for k in KINDS],
         cure=[app_commands.Choice(name=c, value=c) for c in CURES],
@@ -445,7 +494,8 @@ class BlacksmithCog(commands.Cog):
         status_id: str, name: str, kind: str, cure: str,
         dmg: Optional[str] = None, duration: int = 0, tick: str = "kazde_kolo",
         proc: Optional[str] = None, proc_roll: Optional[str] = None,
-        emoji: Optional[str] = None, desc: Optional[str] = None):
+        emoji: Optional[str] = None, desc: Optional[str] = None,
+        skupina: Optional[str] = None):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
             await interaction.followup.send("❌ Jen DM."); return
@@ -455,13 +505,50 @@ class BlacksmithCog(commands.Cog):
         reg[sid] = {
             "name": name.strip(), "emoji": (emoji or "•").strip(),
             "kind": kind, "cure": cure, "dmg": (dmg or "").strip(),
-            "duration": max(0, duration), "tick": tick,
+            "duration": max(0, duration), "tick": norm_tick(tick),
             "proc": (proc or "").strip(), "proc_roll": (proc_roll or "").strip(),
-            "desc": (desc or "").strip(),
+            "desc": (desc or "").strip(), "group": norm_group(skupina),
         }
         save_statuses(reg)
         await interaction.followup.send(
             f"📖 Status **{name}** `{sid}` {'upraven' if existed else 'vytvořen'}.")
+
+    @blacksmith.command(name="status-edit", description="[DM] Uprav existující status (jen zadaná pole).")
+    @app_commands.describe(
+        status="Status k úpravě.", name="Nový název.", kind="Povaha (řídí léčení).",
+        cure="Čím se sundá.", dmg="Dmg kostky ('-' = žádné).",
+        duration="Kola trvání (0 = okamžitý při zásahu).", tick="Kdy dmg padá.",
+        proc="Vedlejší efekt ('-' = žádný).", proc_roll="Hod na proc ('-' = smazat).",
+        emoji="Emoji.", desc="Popis ('-' = smazat).",
+        skupina="Skupina pro protijed ('-' = zpět na ID statusu).")
+    @app_commands.choices(
+        kind=[app_commands.Choice(name=k, value=k) for k in KINDS],
+        cure=[app_commands.Choice(name=c, value=c) for c in CURES],
+        tick=[app_commands.Choice(name="každé kolo", value="kazde_kolo"),
+              app_commands.Choice(name="při zásahu", value="pri_zasahu")])
+    @app_commands.autocomplete(status=_ac_status)
+    @mark_admin
+    async def status_edit(
+        self, interaction: discord.Interaction, status: str,
+        name: Optional[str] = None, kind: Optional[str] = None,
+        cure: Optional[str] = None, dmg: Optional[str] = None,
+        duration: Optional[int] = None, tick: Optional[str] = None,
+        proc: Optional[str] = None, proc_roll: Optional[str] = None,
+        emoji: Optional[str] = None, desc: Optional[str] = None,
+        skupina: Optional[str] = None):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM."); return
+        reg = load_statuses()
+        if status not in reg:
+            await interaction.followup.send(f"❌ Status `{status}` neexistuje."); return
+        sdef = edit_status(reg[status], name=name, kind=kind, cure=cure, dmg=dmg,
+                           duration=duration, tick=tick, proc=proc,
+                           proc_roll=proc_roll, emoji=emoji, desc=desc,
+                           group=skupina)
+        save_statuses(reg)
+        await interaction.followup.send(
+            f"✏️ Status {sdef.get('emoji', '•')} **{sdef['name']}** `{status}` upraven.")
 
     @blacksmith.command(name="status-delete", description="[DM] Smaž status z registru.")
     @app_commands.describe(status="Status ke smazání.")
@@ -613,34 +700,6 @@ class BlacksmithCog(commands.Cog):
             target.pop("runes", None)
         _save_profiles(profiles)
         await interaction.followup.send(f"🧹 Runa `{rune}` odstraněna z **{item}**.")
-
-    # ── coat (nátěr čepele: 3 zásahy NEBO 2 kola) ───────────────────────────────
-    @blacksmith.command(name="coat", description="Potři čepel statusem — vydrží 3 zásahy nebo 2 kola.")
-    @app_commands.describe(item="Tvoje zbraň (ID).", status="Status k nanesení.",
-                           hits="Počet zásahů (výchozí 3).", rounds="Počet kol (výchozí 2).")
-    @app_commands.autocomplete(status=_ac_status)
-    async def coat(self, interaction: discord.Interaction,
-                   item: str, status: str, hits: int = 3, rounds: int = 2):
-        await interaction.response.defer(ephemeral=True)
-        if status not in load_statuses():
-            await interaction.followup.send(f"❌ Status `{status}` neexistuje."); return
-        profiles = _load_profiles(); profile = profiles.get(pkey(interaction.user.id))
-        if not profile:
-            await interaction.followup.send("❌ Nemáš profil."); return
-        store, idx = _find_storage_and_entry(profile, item)
-        if store is None:
-            await interaction.followup.send(f"❌ Nemáš item `{item}`."); return
-        entry = store[idx]
-        if entry.get("qty", 1) > 1:   # odděl 1 kus, ať se nepotře celý stack
-            entry["qty"] -= 1
-            entry = {"type": "registered", "id": item, "qty": 1}
-            store.insert(idx + 1, entry)
-        entry["coating"] = {"status": status, "hits_left": max(1, hits), "rounds_left": max(1, rounds)}
-        _save_profiles(profiles)
-        s = load_statuses()[status]
-        await interaction.followup.send(
-            f"🧪 **{item}** potřeno: {s.get('emoji','•')} **{s['name']}** "
-            f"— vydrží {max(1,hits)} zásahy nebo {max(1,rounds)} kola.")
 
 
 async def setup(bot):
