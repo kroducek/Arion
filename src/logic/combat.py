@@ -18,8 +18,12 @@ from src.database.profiles import (
 from src.logic.dice import DiceError, implicit_die, item_damage_expr, roll_expr
 from src.logic.inventory import (
     TOULEC_ITEM_ID,
+    _ac_consumable_item,
     _add_to_inventory,
+    _find_consumable_entry,
+    _remove_entry,
     _remove_from_inventory,
+    apply_item_effects,
 )
 from src.utils.admin_gate import admin_only, mark_admin
 
@@ -426,7 +430,7 @@ def reset_reactions(combat: dict) -> None:
 
 LOG_LIMIT = 60
 LOG_ICON = {"attack": "⚔️", "sethp": "🩹", "status": "🩸", "perk": "✨", "miss": "🛡️",
-            "effect": "🧪", "cure": "🌿", "stat": "🛡", "remove": "❌"}
+            "effect": "🧪", "cure": "🌿", "stat": "🛡", "remove": "❌", "item": "🧴"}
 
 SNAPSHOT_KEYS = ("hp", "fur", "def", "max_hp")
 
@@ -492,7 +496,7 @@ def undo_last(combat: dict) -> dict | None:
 
 
 def refund_resources(event: dict) -> str:
-    """Vrátí útočníkovi manu a munici z vráceného útoku. Vrací poznámku do konzole."""
+    """Vrátí manu, munici a použitý item z vrácené akce. Vrací poznámku do konzole."""
     res = event.get("resources") or {}
     uid = res.get("uid")
     if not uid:
@@ -514,6 +518,11 @@ def refund_resources(event: dict) -> str:
             store = profile.setdefault("inventory", [])
             _add_to_inventory(store, str(ammo_id), ammo_qty)
             notes.append(f"🎯 +{ammo_qty} {ammo_id}")
+        item_id = res.get("item_id")
+        item_qty = int(res.get("item_qty", 0) or 0)
+        if item_id and item_qty:
+            _add_to_inventory(profile.setdefault("inventory", []), str(item_id), item_qty)
+            notes.append(f"🧴 +{item_qty} {item_id}")
         if notes:
             _save_profiles(profiles)
     except Exception:
@@ -2715,6 +2724,93 @@ class CombatCog(commands.Cog):
         self._save_state()
         await interaction.response.send_message(embed=embed, view=view)
         await self._store_pending(interaction, view)
+
+    # ── /combat use ───────────────────────────────────────────────────────────
+
+    @combat_group.command(
+        name="use",
+        description="Použij lektvar/protijed v boji — stojí bonusovou akci.")
+    @app_commands.describe(
+        item="Item z inventáře (lektvar, protijed…).",
+        force="[GM] Ignoruj pojistku na už použitou bonusovou akci.")
+    @app_commands.autocomplete(item=_ac_consumable_item)
+    async def combat_use(self, interaction: discord.Interaction, item: str,
+                         force: bool = False):
+        combat = self.active_combats.get(interaction.channel_id)
+        if not combat:
+            return await interaction.response.send_message(
+                "❌ *Zde neběží combat.*", ephemeral=True)
+        actor = interaction.user.mention
+        if actor not in combat["stats"]:
+            return await interaction.response.send_message(
+                "❌ *Nejsi v tomhle boji.*", ephemeral=True)
+
+        profiles = _load_profiles()
+        profile = profiles.get(_pk(profiles, interaction.user.id))
+        db_item = _load_items_db().get(item) or {}
+        if not profile:
+            return await interaction.response.send_message("❌ Nemáš profil.", ephemeral=True)
+        if not db_item.get("consumable"):
+            return await interaction.response.send_message(
+                f"❌ **{db_item.get('name', item)}** se nedá použít.", ephemeral=True)
+        entry = _find_consumable_entry(profile.setdefault("inventory", []), item)
+        if not entry:
+            return await interaction.response.send_message(
+                f"❌ **{db_item['name']}** nemáš v inventáři.", ephemeral=True)
+        if entry.get("runes"):
+            return await interaction.response.send_message(
+                f"⛔ Jediný kus **{db_item['name']}** má vyrytou runu — spotřebou "
+                "by o ni přišel.", ephemeral=True)
+        mana_cost = int(db_item.get("mana_cost", 0) or 0)
+        if mana_cost and profile.get("mana_cur", profile.get("mana_max", 20)) < mana_cost:
+            return await interaction.response.send_message(
+                f"❌ Nemáš dost many (potřebuješ **{mana_cost}** 🔷).", ephemeral=True)
+
+        is_gm = interaction.user.guild_permissions.administrator
+        bs = _bs()
+        reg = bs.load_statuses() if bs else {}
+        reusable = bool(db_item.get("reusable"))
+        resources = {"uid": interaction.user.id, "mana": mana_cost,
+                     "item_id": None if reusable else item,
+                     "item_qty": 0 if reusable else 1}
+
+        def change(c: dict):
+            stat = c["stats"].get(actor)
+            if stat is None:
+                return "missing"
+            if is_down(c, actor):
+                return "down"
+            if not use_action(c, actor, "bonus", force=force and is_gm):
+                return "used"
+            before = stat_snapshot(stat)
+            effects = apply_item_effects(profile, db_item, carrier=stat, registry=reg)
+            log_event(c, "item", actor, before, stat_snapshot(stat),
+                      detail=f"použil {db_item['name']}", actor=actor,
+                      resources=resources)
+            return {"effects": effects, "hp": stat.get("hp", 0),
+                    "statuses": copy.deepcopy(stat.get("statuses") or [])}
+
+        result = self.mutate_combat(interaction.channel_id, change)
+        if result == "missing" or result is None:
+            return await interaction.response.send_message(
+                "❌ *Boj se mezitím změnil — zkus to znovu.*", ephemeral=True)
+        if result == "down":
+            return await interaction.response.send_message(
+                "💀 *Na zemi už nic nevypiješ.*", ephemeral=True)
+        if result == "used":
+            return await interaction.response.send_message(
+                "⛔ *Bonusovou akci jsi v tomhle tahu už použil.* "
+                "(GM může přes `force`.)", ephemeral=True)
+
+        if not reusable:
+            _remove_entry(profile["inventory"], entry, 1)
+        profile["hp_cur"] = max(0, min(result["hp"], profile.get("hp_max", 50)))
+        profile["statuses"] = result["statuses"]
+        _save_profiles(profiles)
+
+        lines = [console(f"🧴 {actor} použil **{db_item['name']}**  *(bonusová akce)*")]
+        lines += [console(line) for line in result["effects"]]
+        await interaction.response.send_message("\n".join(lines))
 
     # ── /combat attack_npc ────────────────────────────────────────────────────
 
