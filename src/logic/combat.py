@@ -38,6 +38,26 @@ def _bs():
             "blacksmith modul nedostupný — statusy v boji vypnuty")
         return None
 
+def deliver_statuses(stat: dict, statuses: list, bs, reg: dict) -> list[str]:
+    """Doručí statusy ze zásahu a hned jim dá první tik (jed −dmg HP).
+
+    Mutuje `stat` (statuses, hp). Vrací popisky do konzole.
+    """
+    applied: list[str] = []
+    if not bs:
+        return applied
+    for status_id, source in statuses:
+        inst = bs.apply_status(stat, status_id, source, reg)
+        if not inst:
+            continue
+        sdef = reg.get(status_id, {})
+        label = f"{sdef.get('emoji', '•')} {sdef.get('name', status_id)}"
+        dmg, note = bs.proc_on_delivery(stat, inst, reg)
+        if dmg:
+            stat["hp"] = max(0, int(stat.get("hp", 0) or 0) - dmg)
+        applied.append(f"{label}: {note}" if note else label)
+    return applied
+
 def _actor_uid(actor: str):
     """Z '<@123>' / '<@!123>' vytáhne int id, jinak None (NPC)."""
     if actor.startswith("<@"):
@@ -45,13 +65,8 @@ def _actor_uid(actor: str):
         return int(digits) if digits else None
     return None
 
-def _writeback_player_state(uid: int, carrier: dict, bs,
-                            tick_coatings: bool = True) -> None:
-    """Hráči zapíše hp_cur + statusy zpět do profilu a ubere kolo jeho nátěrům.
-
-    `tick_coatings=False` je zápis, který změnu jen vrací (undo) — tam by bylo
-    ubírání kol nátěrům navíc.
-    """
+def _writeback_player_state(uid: int, carrier: dict, bs=None) -> None:
+    """Hráči zapíše hp_cur + statusy zpět do profilu."""
     try:
         profiles = _load_profiles()
         p = profiles.get(_pk(profiles, uid))
@@ -59,8 +74,6 @@ def _writeback_player_state(uid: int, carrier: dict, bs,
             return
         p["hp_cur"]   = max(0, min(carrier.get("hp", 0), p.get("hp_max", 50)))
         p["statuses"] = carrier.get("statuses", [])
-        if bs and tick_coatings:
-            bs.tick_coatings(p)
         _save_profiles(profiles)
     except Exception:
         logging.exception("[combat] writeback hp/statusů selhal")
@@ -949,7 +962,7 @@ class InitiativeView(ui.View):
             ch = interaction.channel
             await ch.send(f"🎲 {self.actor} hodil iniciativu: **{roll}**")
         except Exception:
-            logger.exception("[combat] oznámení iniciativy selhalo")
+            logging.exception("[combat] oznámení iniciativy selhalo")
 
 
 # ── Zbraně hráče ──────────────────────────────────────────────────────────────
@@ -966,12 +979,12 @@ def _iter_entries(profile: dict):
 
 
 def _weapon_entry(profile: dict, item_id: str) -> dict | None:
-    """Instance zbraně v inventáři — přednost má kus s runou/nátěrem."""
+    """Instance zbraně v inventáři — přednost má kus s runou."""
     fallback = None
     for entry in _iter_entries(profile):
         if entry.get("type") != "registered" or entry.get("id") != item_id:
             continue
-        if entry.get("runes") or entry.get("coating"):
+        if entry.get("runes"):
             return entry
         fallback = fallback or entry
     return fallback
@@ -993,9 +1006,6 @@ def _rune_names(entry: dict, runes_reg: dict) -> str:
     for rid in (entry.get("runes") or []):
         rune = runes_reg.get(rid, {})
         names.append(f"{rune.get('emoji', '🔹')} {rune.get('name', rid)}")
-    coat = entry.get("coating")
-    if isinstance(coat, dict) and coat.get("status"):
-        names.append(f"🧪 {coat['status']}")
     return " · ".join(names)
 
 
@@ -1224,10 +1234,8 @@ class AttackView(ui.View):
                 return None
             before = stat_snapshot(stat)
             out = apply_hit(stat, damage)
-            for status_id, source in statuses:
-                if bs and bs.apply_status(stat, status_id, source, reg):
-                    sdef = reg.get(status_id, {})
-                    applied.append(f"{sdef.get('emoji', '•')} {sdef.get('name', status_id)}")
+            applied[:] = deliver_statuses(stat, statuses, bs, reg)
+            out["new_hp"] = stat["hp"]
             log_event(state, "attack", self.target, before, stat_snapshot(stat),
                       detail=out["change_str"], actor=self.attacker,
                       resources=self.resources)
@@ -1569,7 +1577,7 @@ class CombatCog(commands.Cog):
     def _tick_actor(self, combat: dict, actor: str) -> list[str]:
         """Začátek tahu: statusy aktéra udělí dmg a uberou kolo trvání.
 
-        Hráči zapíše hp + statusy zpět do profilu a ubere kolo jeho nátěrům.
+        Hráči zapíše hp + statusy zpět do profilu.
         Vrací řádky konzole (prázdný seznam, když se nic nestalo).
         """
         bs = _bs()
@@ -1578,9 +1586,6 @@ class CombatCog(commands.Cog):
             return []
         uid = _actor_uid(actor)
         if not stat.get("statuses"):
-            # Nátěrům na zbraních ubere kolo i tah beze statusů.
-            if uid is not None:
-                _writeback_player_state(uid, stat, bs)
             return []
         reg = bs.load_statuses()
         before = stat_snapshot(stat)
@@ -2382,10 +2387,10 @@ class CombatCog(commands.Cog):
     def _consume_weapon(self, uid: int | None, weapon_id: str | None,
                         mana_cost: int = 0, runes_active: bool = True,
                         deliver_statuses: bool = True) -> dict:
-        """Spotřeba zbraně: doručené statusy, úbytek nátěru a many.
+        """Spotřeba zbraně: doručené statusy a mana.
 
         `deliver_statuses=False` je minutý útok — mana se strhává (runa procla),
-        ale nátěr zůstává a nic se nedoručí.
+        ale nic se nedoručí.
         """
         out = {"statuses": [], "mana_note": ""}
         if uid is None or not weapon_id:
@@ -2401,7 +2406,6 @@ class CombatCog(commands.Cog):
                 delivered = bs.weapon_delivered(entry)
                 out["statuses"] = [(sid, src) for sid, src in delivered
                                    if runes_active or src != "runa"]
-                bs.consume_coating_hit(entry)
             if mana_cost:
                 cur = profile.get("mana_cur", profile.get("mana_max", 20))
                 new = max(0, cur - mana_cost)
@@ -2656,13 +2660,9 @@ class CombatCog(commands.Cog):
             if delivered.get("mana_note"):
                 notes.append(delivered["mana_note"])
             if bs and delivered["statuses"]:
-                reg = bs.load_statuses()
-                applied = []
-                for status_id, source in delivered["statuses"]:
-                    inst = bs.apply_status(stat, status_id, source, reg)
-                    if inst:
-                        sdef = reg.get(status_id, {})
-                        applied.append(f"{sdef.get('emoji', '•')} {sdef.get('name', status_id)}")
+                applied = deliver_statuses(stat, delivered["statuses"], bs,
+                                           bs.load_statuses())
+                result["new_hp"] = stat["hp"]
                 if applied:
                     notes.append("Doručeno: " + " · ".join(applied))
             # Log až po doručení statusů, jinak by je `after` neobsahoval.
@@ -2823,12 +2823,8 @@ class CombatCog(commands.Cog):
             bs = _bs()
             applied = []
             if bs and statuses:
-                reg = bs.load_statuses()
-                for status_id, source in statuses:
-                    if bs.apply_status(stat, status_id, source, reg):
-                        sdef = reg.get(status_id, {})
-                        applied.append(
-                            f"{sdef.get('emoji', '•')} {sdef.get('name', status_id)}")
+                applied = deliver_statuses(stat, statuses, bs, bs.load_statuses())
+                result["new_hp"] = stat["hp"]
             log_event(combat, "attack", cil, before, stat_snapshot(stat),
                       detail=result["change_str"], actor=utocnik)
             uid = _actor_uid(cil)
@@ -2902,7 +2898,7 @@ class CombatCog(commands.Cog):
         if uid is not None:
             # Statusy i HP musí zpátky do profilu, jinak se stav rozejde.
             if bs:
-                _writeback_player_state(uid, stat, bs, tick_coatings=False)
+                _writeback_player_state(uid, stat, bs)
             else:
                 _writeback_hp_to_profile(uid, stat["hp"])
         refund = refund_resources(event)
