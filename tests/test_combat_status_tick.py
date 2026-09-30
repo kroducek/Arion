@@ -57,6 +57,19 @@ class TestTickActor(unittest.TestCase):
         self.assertTrue(any("Jed I." in line for line in lines))
         self.assertEqual(state["log"][-1]["kind"], "status")
 
+    def test_tik_ignoruje_def_a_bere_furioku(self):
+        state = _combat()
+        stat = state["stats"]["Goblin"]
+        stat.update({"def": 10, "fur": 10})
+        bs.apply_status(stat, "jed", "zbran", REG)
+        with mock.patch.object(bs, "load_statuses", return_value=REG), \
+                mock.patch.object(bs, "roll_dice", return_value=4):
+            lines = _cog()._tick_actor(state, "Goblin")
+        self.assertEqual((stat["hp"], stat["fur"]), (30, 6))
+        self.assertTrue(any("furioka `10` → `6`" in line for line in lines))
+        combat.undo_last(state)
+        self.assertEqual(stat["fur"], 10)
+
     def test_jed_vyprchá_po_trvani(self):
         state = _combat()
         stat = state["stats"]["Goblin"]
@@ -101,6 +114,14 @@ class TestProcPriDoruceni(unittest.TestCase):
         self.assertEqual(stat["hp"], 16)
         self.assertEqual(stat["statuses"][0]["kol_zbyva"], 2)
         self.assertEqual(applied, ["🧪 Jed I.: −4 HP (2 kol zbývá)"])
+
+    def test_furioka_pohlti_dmg_ze_statusu(self):
+        stat = {"hp": 20, "max_hp": 20, "def": 10, "fur": 3, "statuses": []}
+        with mock.patch.object(bs, "roll_dice", return_value=4):
+            applied = combat.deliver_statuses(stat, [("jed", "zbran")], bs, REG)
+        self.assertEqual(stat["fur"], 0)
+        self.assertEqual(stat["hp"], 19)
+        self.assertIn("furioka pohltila 3", applied[0])
 
     def test_status_bez_dmg_netika(self):
         reg = {"mraz": {"name": "Mráz", "emoji": "❄️", "dmg": "",

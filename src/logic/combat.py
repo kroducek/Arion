@@ -43,6 +43,18 @@ def _bs():
             "blacksmith modul nedostupný — statusy v boji vypnuty")
         return None
 
+def apply_status_dmg(stat: dict, dmg: int) -> int:
+    """Dmg ze statusu: DEF ignoruje, napřed ubere furioku, zbytek jde do HP.
+
+    Mutuje `stat` (fur, hp). Vrací, kolik pohltila furioka.
+    """
+    dmg = max(0, int(dmg))
+    fur = int(stat.get("fur", 0) or 0)
+    absorbed = min(fur, dmg)
+    stat["fur"] = fur - absorbed
+    stat["hp"] = max(0, int(stat.get("hp", 0) or 0) - (dmg - absorbed))
+    return absorbed
+
 def deliver_statuses(stat: dict, statuses: list, bs, reg: dict) -> list[str]:
     """Doručí statusy ze zásahu a hned jim dá první tik (jed −dmg HP).
 
@@ -59,7 +71,9 @@ def deliver_statuses(stat: dict, statuses: list, bs, reg: dict) -> list[str]:
         label = f"{sdef.get('emoji', '•')} {sdef.get('name', status_id)}"
         dmg, note = bs.proc_on_delivery(stat, inst, reg)
         if dmg:
-            stat["hp"] = max(0, int(stat.get("hp", 0) or 0) - dmg)
+            absorbed = apply_status_dmg(stat, dmg)
+            if absorbed:
+                note += f" · 🔥 furioka pohltila {absorbed}"
         applied.append(f"{label}: {note}" if note else label)
     return applied
 
@@ -1618,8 +1632,9 @@ class CombatCog(commands.Cog):
         reg = bs.load_statuses()
         before = stat_snapshot(stat)
         dmg, log = bs.tick_statuses(stat, reg)
+        absorbed = 0
         if dmg:
-            stat["hp"] = max(0, stat.get("hp", 0) - dmg)
+            absorbed = apply_status_dmg(stat, dmg)
             log_event(combat, "status", actor, before, stat_snapshot(stat),
                       detail=f"statusy −{dmg}")
         if uid is not None:
@@ -1631,8 +1646,10 @@ class CombatCog(commands.Cog):
             hp, max_hp = stat.get("hp", 0), stat.get("max_hp", 0)
             bar = _make_bar(hp, max_hp, 8)
             dead = "  💀" if hp == 0 else ""
+            fur_note = (f"  ·  🔥 furioka `{before.get('fur', 0)}` → `{stat.get('fur', 0)}`"
+                        if absorbed else "")
             lines.append(console(
-                f"❤️ `{before.get('hp', hp)}` → `{hp}/{max_hp}` {bar}{dead}"))
+                f"❤️ `{before.get('hp', hp)}` → `{hp}/{max_hp}` {bar}{dead}{fur_note}"))
         return lines
 
     combat_group = app_commands.Group(
