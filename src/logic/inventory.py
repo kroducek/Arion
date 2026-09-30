@@ -12,8 +12,11 @@ from src.database.profiles import (
     save_items as _save_items,
     save_profiles as _save_profiles,
 )
+from src.core.dnd import blacksmith as _blacksmith
 from src.logic.dice import DiceError, roll_expr
 from src.utils.admin_gate import mark_admin
+from src.utils.json_utils import load_json
+from src.utils.paths import COMBAT_STATE
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +112,7 @@ _KNOWN_ITEM_FIELDS = {
     "roll_tags", "id", "offhand",
     "rune_slots", "default_runes",
     "dmg", "reusable",
-    "image_url",
+    "image_url", "cures",
 }
 
 # Sloty které zabírá full_set item
@@ -586,6 +589,74 @@ def _find_consumable_entry(inventory: list, item_key: str) -> dict | None:
             continue
         return entry
     return fallback
+
+
+def item_cures(db_item: dict) -> list[str]:
+    """Skupiny statusů, které item léčí (`["jed", "krvaceni"]`)."""
+    cures = db_item.get("cures") or []
+    if isinstance(cures, str):
+        cures = cures.split(",")
+    return [c for c in (_blacksmith.norm_group(c) for c in cures) if c]
+
+
+def apply_item_effects(profile: dict, db_item: dict, carrier: dict | None = None,
+                       registry: dict | None = None) -> list[str]:
+    """Efekty použitého itemu: mana, hlad, HP a léčení statusů. Vrací řádky efektů.
+
+    `carrier` je aktér v boji — HP a statusy pak jdou do něj (boj si drží
+    vlastní kopii), mana a hlad vždy do profilu.
+    """
+    effects = []
+    target = carrier if carrier is not None else profile
+    hp_key = "hp" if carrier is not None else "hp_cur"
+
+    mana_cost = db_item.get("mana_cost", 0)
+    if mana_cost:
+        cur = profile.get("mana_cur", profile.get("mana_max", 20))
+        new = max(0, cur - mana_cost)
+        profile["mana_cur"] = new
+        effects.append(f"🔷 Mana `{cur}` → `{new}` (-{mana_cost})")
+
+    hunger_restore = db_item.get("hunger_restore", 0)
+    if hunger_restore:
+        cur = profile.get("hunger_cur", 0)
+        new = min(cur + hunger_restore, profile.get("hunger_max", 10))
+        profile["hunger_cur"] = new
+        effects.append(f"🍖 Hlad `{cur}` → `{new}` (+{new - cur})")
+
+    hp_restore = db_item.get("hp_restore", 0)
+    if hp_restore:
+        cur = int(target.get(hp_key, 0) or 0)
+        hp_max = (carrier.get("max_hp") if carrier is not None else None) \
+            or profile.get("hp_max", 50)
+        new = min(cur + hp_restore, hp_max)
+        target[hp_key] = new
+        effects.append(f"❤️ HP `{cur}` → `{new}` (+{new - cur})")
+
+    mana_restore = db_item.get("mana_restore", 0)
+    if mana_restore:
+        cur = profile.get("mana_cur", profile.get("mana_max", 20))
+        new = min(cur + mana_restore, profile.get("mana_max", 20))
+        profile["mana_cur"] = new
+        effects.append(f"🔷 Mana `{cur}` → `{new}` (+{new - cur})")
+
+    groups = item_cures(db_item)
+    if groups:
+        removed = _blacksmith.cure_groups(target, groups, registry)
+        effects.append("🌿 Sundáno: " + (", ".join(removed) if removed else "*nic*"))
+    return effects
+
+
+def in_active_combat(user_id: int) -> bool:
+    """Hráč je aktérem některého rozběhnutého boje."""
+    try:
+        combats = load_json(COMBAT_STATE, default={}) or {}
+    except Exception:
+        logging.exception("[inventory] stav boje nejde načíst")
+        return False
+    mentions = {f"<@{user_id}>", f"<@!{user_id}>"}
+    return any(mentions & set((c or {}).get("stats", {}))
+               for c in combats.values() if isinstance(c, dict))
 
 
 def _remove_entry(inventory: list, entry: dict, qty: int = 1) -> bool:
@@ -1282,6 +1353,7 @@ def _build_inspect_embed(item_id: str, items_db: dict,
     # ── Vlastnosti ────────────────────────────────────────────────────────────
     props = []
     if item.get("consumable"): props.append("🔥 spotřebuje se")
+    if item_cures(item): props.append("🌿 léčí: " + ", ".join(item_cures(item)))
     if item.get("stackable"):  props.append("📚 stackuje se")
     _storage = item.get("storage")
     _cap     = item.get("storage_capacity", 0)
@@ -2219,6 +2291,12 @@ class Inventory(commands.Cog):
             await interaction.followup.send(
                 f"❌ **{db_item['name']}** nemáš v inventáři.", ephemeral=True)
             return
+        if ((db_item.get("hp_restore") or item_cures(db_item))
+                and in_active_combat(interaction.user.id)):
+            await interaction.followup.send(
+                f"⚔️ Jsi v boji — **{db_item['name']}** použij přes `/combat use` "
+                "(stojí bonusovou akci).", ephemeral=True)
+            return
 
         # ── Zkontroluj mana_cost před použitím ───────────────────────────────
         mana_cost = db_item.get("mana_cost", 0)
@@ -2243,39 +2321,7 @@ class Inventory(commands.Cog):
                 return
             _remove_entry(profile["inventory"], entry, 1)
 
-        # ── Aplikuj efekty ────────────────────────────────────────────────────
-        effects = []
-
-        if mana_cost:
-            cur = profile.get("mana_cur", profile.get("mana_max", 20))
-            new = max(0, cur - mana_cost)
-            profile["mana_cur"] = new
-            effects.append(f"🔷 Mana `{cur}` → `{new}` (-{mana_cost})")
-
-        hunger_restore = db_item.get("hunger_restore", 0)
-        if hunger_restore:
-            cur = profile.get("hunger_cur", 0)
-            máx = profile.get("hunger_max", 10)
-            new = min(cur + hunger_restore, máx)
-            profile["hunger_cur"] = new
-            effects.append(f"🍖 Hlad `{cur}` → `{new}` (+{new - cur})")
-
-        hp_restore = db_item.get("hp_restore", 0)
-        if hp_restore:
-            cur = profile.get("hp_cur", 0)
-            máx = profile.get("hp_max", 50)
-            new = min(cur + hp_restore, máx)
-            profile["hp_cur"] = new
-            effects.append(f"❤️ HP `{cur}` → `{new}` (+{new - cur})")
-
-        mana_restore = db_item.get("mana_restore", 0)
-        if mana_restore:
-            cur = profile.get("mana_cur", profile.get("mana_max", 20))
-            máx = profile.get("mana_max", 20)
-            new = min(cur + mana_restore, máx)
-            profile["mana_cur"] = new
-            effects.append(f"🔷 Mana `{cur}` → `{new}` (+{new - cur})")
-
+        effects = apply_item_effects(profile, db_item)
         _save_profiles(profiles)
 
         effect_str = "\n".join(effects) if effects else ""
@@ -2775,6 +2821,40 @@ class Inventory(commands.Cog):
         await interaction.followup.send(
             f"✅ **{item['name']}** — dmg: `{item.get('dmg', '—')}`, "
             f"reusable: `{bool(item.get('reusable'))}`.")
+
+    @inv_db.command(name="set-cure",
+                    description="[DM] Nastaví, které skupiny statusů item léčí (protijed).")
+    @mark_admin
+    @app_commands.describe(
+        item_id="ID itemu.",
+        skupina="Skupiny statusů oddělené čárkou (např. jed,krvaceni · 'clear' = nic).",
+    )
+    @app_commands.autocomplete(item_id=_ac_database_item)
+    async def inv_db_set_cure(self, interaction: discord.Interaction,
+                              item_id: str, skupina: str):
+        await interaction.response.defer(ephemeral=True)
+        if not _is_dm(interaction):
+            await interaction.followup.send("❌ Jen DM může spravovat databázi.")
+            return
+        items_db = _load_items()
+        item = items_db.get(item_id)
+        if not item:
+            await interaction.followup.send(f"❌ Item `{item_id}` neexistuje.")
+            return
+        if skupina.strip().lower() in ("", "clear", "-", "none"):
+            item.pop("cures", None)
+        else:
+            item["cures"] = item_cures({"cures": skupina})
+        _save_items(items_db)
+        groups = item.get("cures") or []
+        known = {_blacksmith.status_group(sid, sdef)
+                 for sid, sdef in _blacksmith.load_statuses().items()}
+        unknown = [g for g in groups if g not in known]
+        note = (f"\n⚠️ Zatím žádný status ve skupině: {', '.join(unknown)}."
+                if unknown else "")
+        await interaction.followup.send(
+            f"🌿 **{item['name']}** léčí: "
+            f"{', '.join(groups) if groups else '*nic*'}.{note}")
 
     @inv_db.command(name="remove", description="[DM] Odebere item z databáze.")
     @mark_admin

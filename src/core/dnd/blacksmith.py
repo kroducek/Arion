@@ -182,13 +182,41 @@ def proc_on_delivery(carrier: dict, inst: dict,
     carrier["statuses"] = [i for i in _carrier_statuses(carrier) if i is not inst]
     return dmg, f"−{dmg} HP (vyprchalo)"
 
+def norm_group(value) -> str:
+    """Skupina statusu jako klíč — `Jed` i ` jed ` → `jed`."""
+    return str(value or "").strip().lower().replace(" ", "_")
+
+def status_group(status_id: str, sdef: dict) -> str:
+    """Skupina, podle které status léčí protijed — bez skupiny je to jeho ID."""
+    return norm_group(sdef.get("group")) or norm_group(status_id)
+
+def cure_groups(carrier: dict, groups, registry: Optional[dict] = None) -> list[str]:
+    """Sundá statusy z daných skupin (protijed na `jed` léčí jed, jed2, jed3…).
+
+    Vrací názvy sundaných statusů.
+    """
+    wanted = {norm_group(g) for g in groups if norm_group(g)}
+    reg = registry if registry is not None else load_statuses()
+    removed, survivors = [], []
+    for inst in _carrier_statuses(carrier):
+        sid = inst.get("status")
+        sdef = reg.get(sid, {})
+        if status_group(sid, sdef) in wanted:
+            removed.append(sdef.get("name", sid))
+        else:
+            survivors.append(inst)
+    carrier["statuses"] = survivors
+    return removed
+
 def edit_status(sdef: dict, **fields) -> dict:
     """Přepíše jen zadaná pole statusu; '-' u textových polí je smaže."""
-    clearable = ("dmg", "proc", "proc_roll", "desc")
+    clearable = ("dmg", "proc", "proc_roll", "desc", "group")
     for key, value in fields.items():
         if value is None:
             continue
-        if key == "duration":
+        if key == "group" and str(value).strip() != "-":
+            sdef[key] = norm_group(value)
+        elif key == "duration":
             sdef[key] = max(0, int(value))
         elif key == "tick":
             sdef[key] = norm_tick(value)
@@ -360,6 +388,7 @@ def _status_registry_embed(reg: dict) -> discord.Embed:
         embed.add_field(
             name=f"{s.get('emoji','•')} {s['name']}  ·  `{sid}`",
             value=(f"{s.get('desc','—')}\n-# {s.get('kind','?')} · léčí: {s.get('cure','?')} "
+                   f"· skupina: {status_group(sid, s)} "
                    f"· {dmg} · {dur} · tick: {s.get('tick','?')}{proc}"),
             inline=False)
     embed.set_footer(text="kind = povaha (řídí léčení) · cure = čím se sundá")
@@ -452,7 +481,8 @@ class BlacksmithCog(commands.Cog):
         cure="Čím se sundá.", dmg="Dmg kostky (např. 1d5, prázdné=žádné).",
         duration="Kola trvání (0 = okamžitý při zásahu).", tick="Kdy dmg padá.",
         proc="Vedlejší efekt (stun…), prázdné=žádný.", proc_roll="Hod na proc (např. 1d20).",
-        emoji="Emoji.", desc="Popis.")
+        emoji="Emoji.", desc="Popis.",
+        skupina="Skupina pro protijed (např. jed pro jed2, jed3); prázdné = ID statusu.")
     @app_commands.choices(
         kind=[app_commands.Choice(name=k, value=k) for k in KINDS],
         cure=[app_commands.Choice(name=c, value=c) for c in CURES],
@@ -464,7 +494,8 @@ class BlacksmithCog(commands.Cog):
         status_id: str, name: str, kind: str, cure: str,
         dmg: Optional[str] = None, duration: int = 0, tick: str = "kazde_kolo",
         proc: Optional[str] = None, proc_roll: Optional[str] = None,
-        emoji: Optional[str] = None, desc: Optional[str] = None):
+        emoji: Optional[str] = None, desc: Optional[str] = None,
+        skupina: Optional[str] = None):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
             await interaction.followup.send("❌ Jen DM."); return
@@ -476,7 +507,7 @@ class BlacksmithCog(commands.Cog):
             "kind": kind, "cure": cure, "dmg": (dmg or "").strip(),
             "duration": max(0, duration), "tick": norm_tick(tick),
             "proc": (proc or "").strip(), "proc_roll": (proc_roll or "").strip(),
-            "desc": (desc or "").strip(),
+            "desc": (desc or "").strip(), "group": norm_group(skupina),
         }
         save_statuses(reg)
         await interaction.followup.send(
@@ -488,7 +519,8 @@ class BlacksmithCog(commands.Cog):
         cure="Čím se sundá.", dmg="Dmg kostky ('-' = žádné).",
         duration="Kola trvání (0 = okamžitý při zásahu).", tick="Kdy dmg padá.",
         proc="Vedlejší efekt ('-' = žádný).", proc_roll="Hod na proc ('-' = smazat).",
-        emoji="Emoji.", desc="Popis ('-' = smazat).")
+        emoji="Emoji.", desc="Popis ('-' = smazat).",
+        skupina="Skupina pro protijed ('-' = zpět na ID statusu).")
     @app_commands.choices(
         kind=[app_commands.Choice(name=k, value=k) for k in KINDS],
         cure=[app_commands.Choice(name=c, value=c) for c in CURES],
@@ -502,7 +534,8 @@ class BlacksmithCog(commands.Cog):
         cure: Optional[str] = None, dmg: Optional[str] = None,
         duration: Optional[int] = None, tick: Optional[str] = None,
         proc: Optional[str] = None, proc_roll: Optional[str] = None,
-        emoji: Optional[str] = None, desc: Optional[str] = None):
+        emoji: Optional[str] = None, desc: Optional[str] = None,
+        skupina: Optional[str] = None):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
             await interaction.followup.send("❌ Jen DM."); return
@@ -511,7 +544,8 @@ class BlacksmithCog(commands.Cog):
             await interaction.followup.send(f"❌ Status `{status}` neexistuje."); return
         sdef = edit_status(reg[status], name=name, kind=kind, cure=cure, dmg=dmg,
                            duration=duration, tick=tick, proc=proc,
-                           proc_roll=proc_roll, emoji=emoji, desc=desc)
+                           proc_roll=proc_roll, emoji=emoji, desc=desc,
+                           group=skupina)
         save_statuses(reg)
         await interaction.followup.send(
             f"✏️ Status {sdef.get('emoji', '•')} **{sdef['name']}** `{status}` upraven.")
