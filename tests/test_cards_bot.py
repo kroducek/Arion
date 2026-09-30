@@ -17,6 +17,8 @@ class CardsBotTests(unittest.TestCase):
         bot = build_entrypoint("main_bot.py")
 
         self.assertIn("cards print", admin)
+        self.assertIn("cards restore", admin)
+        self.assertIn("cards check", player)
         self.assertIn("summon give", admin)
         self.assertIn("cards trade", player)
         self.assertIn("summon open", player)

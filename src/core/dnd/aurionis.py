@@ -301,6 +301,7 @@ KRONIKA = {
                     "`/cards info` — Přehled systému karet\n"
                     "`/cards inventory` — Tvoje karty, filtry a řazení\n"
                     "`/cards tag` — Přidej/odeber osobní tag kartám\n"
+                    "`/cards check` — Ověř stav a historii printu\n"
                     "`/cards show` — Detail konkrétní karty\n"
                     "`/cards gallery` — Alba kolekcí (sady a karty)\n"
                     "`/cards upgrade` — Nasaď rámeček; frame:remove ho vrátí do inventáře\n"
@@ -379,6 +380,7 @@ KRONIKA_ADMIN = [
     ("🔒 ArionDM — news & karty", (
         "`/news add/delete` — Správa nástěnky zpráv\n"
         "`/cards print` — Vytiskni novou kartu\n"
+        "`/cards restore` — Obnov zničený print nebo rekonstruuj starší mezeru\n"
         "`/cards db_add` — Přidej vzor karty do databáze\n"
         "`/cards give_frame` — Dej rámeček hráči\n"
         "`/cards remove_card` — Smaž kartu z inventáře\n"

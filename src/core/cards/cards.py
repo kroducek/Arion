@@ -1,6 +1,7 @@
 """Sběratelský systém karet pro ArionBot."""
 
 import discord
+from src.core.cards import print_ledger
 import os
 import uuid
 import random
@@ -89,67 +90,20 @@ def burn_card_by_id(uid: str, unique_id: str) -> dict:
     {"name", "rarity", "quality", "dust"}. Vyhazuje CardNotFoundError,
     NotCardOwnerError nebo CardLockedError podle situace.
     """
-    inv = load_inventory()
-    if unique_id not in inv:
-        raise CardNotFoundError(unique_id)
-
-    card = inv[unique_id]
-    if card.get("owner_id") != uid:
-        raise NotCardOwnerError(unique_id)
-
-    if card.get("locked", False):
-        raise CardLockedError(unique_id)
-
-    rarity = card.get("rarity", "uncommon")
-    quality = card.get("quality", "normal")
-    total_dust = calculate_dust(rarity, quality)
-    card_name = card.get("name", unique_id)
-
-    add_balance(uid, total_dust, "stardust")
-
-    del inv[unique_id]
-    save_json(CARDS_INVENTORY, inv)
-
-    return {"name": card_name, "rarity": rarity, "quality": quality, "dust": total_dust}
+    try:
+        result, selected = print_ledger.destroy(unique_id, owner=uid, burn=True)
+    except ValueError as exc:
+        errors = {"missing": CardNotFoundError, "owner": NotCardOwnerError, "locked": CardLockedError}
+        if str(exc) in errors:
+            raise errors[str(exc)](unique_id) from exc
+        raise
+    card = selected[unique_id]
+    return dict(name=card.get("name", unique_id), rarity=card.get("rarity", "uncommon"),
+                quality=card.get("quality", "normal"), dust=result["dust"])
 
 
 def burn_all_cards(uid: str) -> dict:
-    """Remove unlocked owned cards and credit dust in one database transaction."""
-    import json
-    from src.database import db
-    from src.utils.paths import STARDUST, PROFILES
-
-    with db.transaction() as conn:
-        def read(path):
-            row = conn.execute("SELECT data FROM docs WHERE name = ?", (os.path.basename(path),)).fetchone()
-            return json.loads(row["data"]) if row else {}
-
-        def write(path, value):
-            conn.execute(
-                "INSERT INTO docs (name, data) VALUES (?, ?) "
-                "ON CONFLICT(name) DO UPDATE SET data=excluded.data, updated_at=datetime('now')",
-                (os.path.basename(path), json.dumps(value, ensure_ascii=False)),
-            )
-
-        inventory = read(CARDS_INVENTORY)
-        selected = {key: card for key, card in inventory.items()
-                    if card.get("owner_id") == uid and not card.get("locked", False)}
-        protected = sum(1 for card in inventory.values()
-                        if card.get("owner_id") == uid and card.get("locked", False))
-        dust = sum(calculate_dust(card.get("rarity", "uncommon"), card.get("quality", "normal"))
-                   for card in selected.values())
-        if selected:
-            for key in selected:
-                del inventory[key]
-            wallet = read(STARDUST)
-            wallet[uid] = int(wallet.get(uid, 0)) + dust
-            profiles = read(PROFILES)
-            if profiles.get(uid, {}).get("active_card_id") in selected:
-                profiles[uid]["active_card_id"] = None
-                write(PROFILES, profiles)
-            write(CARDS_INVENTORY, inventory)
-            write(STARDUST, wallet)
-        return {"count": len(selected), "protected": protected, "dust": dust}
+    return print_ledger.destroy(None, owner=uid, burn=True, all_cards=True)[0]
 
 
 class KeepBurnView(discord.ui.View):
@@ -889,14 +843,32 @@ def grant_random_card(
     Přidělí hráči náhodnou kartu a uloží ji do databáze.
     """
 
-    inventory = load_inventory()
-    result = draw_random_card(uid, load_json(CARDS_DATA, default=[]), inventory,
-                              tickets=tickets)
-    if result:
-        unique_id, card = result
-        inventory[unique_id] = card
-        save_json(CARDS_INVENTORY, inventory)
-    return result
+    from src.database import db
+    with db.transaction() as conn:
+        inventory = print_ledger.read(conn, CARDS_INVENTORY)
+        result = draw_random_card(uid, print_ledger.read(conn, CARDS_DATA, []), inventory, tickets=tickets)
+        if result:
+            result = print_ledger.allocate(conn, inventory, *result)
+            print_ledger.write(conn, CARDS_INVENTORY, inventory)
+        return result
+
+
+def mint_cards(card_id, rarity, owner, count, actor):
+    from src.database import db
+    with db.transaction() as conn:
+        template = next((c for c in print_ledger.read(conn, CARDS_DATA, []) if c.get("id") == card_id), None)
+        if template is None:
+            raise ValueError("Vzor karty neexistuje.")
+        inventory = print_ledger.read(conn, CARDS_INVENTORY)
+        created = []
+        for _ in range(count):
+            card = {k: template.get(k) for k in ("name", "description", "image", "collection")}
+            card.update(card_id=card_id, rarity=rarity, quality=roll_quality(), owner_id=owner,
+                        frame=None, created_at=datetime.now().isoformat())
+            unique_id, card = print_ledger.allocate(conn, inventory, generate_unique_id(), card, actor=actor)
+            created.append(unique_id)
+        print_ledger.write(conn, CARDS_INVENTORY, inventory)
+        return created, inventory
 
 
 def draw_random_card(uid, all_cards, inventory, *, tickets):
@@ -916,10 +888,6 @@ def draw_random_card(uid, all_cards, inventory, *, tickets):
     # -----------------------------------------------------------------
     # 4. Sestavení a uložení instance karty — stejný formát jako /cards print
     # -----------------------------------------------------------------
-    max_print = max(
-        (c.get("print_number", 0) for c in inventory.values() if c.get("card_id") == card_template.get("id")),
-        default=0,
-    )
     card_instance = {
         "card_id":              card_template.get("id"),
         "name":                 card_template.get("name"),
@@ -928,7 +896,7 @@ def draw_random_card(uid, all_cards, inventory, *, tickets):
         "collection":           card_template.get("collection"),
         "rarity":               rarity,
         "quality":              quality,
-        "print_number":         max_print + 1,
+        "print_number":         None,
         "owner_id":             uid,
         "frame":                None,
         "created_at":           datetime.now().isoformat(),
@@ -955,6 +923,40 @@ class Cards(commands.Cog):
     # -----------------------------------------------------------------------
     # Admin příkazy
     # -----------------------------------------------------------------------
+
+    @cards_group.command(name="check", description="Ověřit existenci a historii konkrétního printu")
+    @app_commands.describe(card_id="ID vzoru karty", print="Číslo printu tohoto vzoru")
+    async def check_print(self, interaction: discord.Interaction, card_id: int, print: app_commands.Range[int, 1]):
+        result = print_ledger.check(card_id, print)
+        status = result["status"]
+        labels = {"active": "✅ Existuje", "destroyed": "🔥 Zničena", "unknown": "❔ Historie neznámá",
+                  "never": "➖ Nikdy nevytisknuta podle známého počítadla", "conflict": "⚠️ Duplicitní print — kontaktuj admina"}
+        embed = discord.Embed(title=f"Vzor #{card_id} · Print #{print}", description=labels[status], color=BRAND_PURPLE)
+        if result.get("card"):
+            card = result["card"]
+            embed.add_field(name=card.get("name") or "Karta", value=f"{card.get('rarity', '?')} / {card.get('quality', '?')} · ID `{result['uid']}`", inline=False)
+            owner = card.get("owner_id")
+            embed.add_field(name="Vlastník" if status == "active" else "Poslední vlastník", value=f"<@{owner}>" if owner else "Bez vlastníka")
+            events = result.get("events", [])
+            if events:
+                names = {"printed":"Vytištěna", "legacy_import":"Import starší karty", "burned":"Spálena", "admin_removed":"Odstraněna adminem", "restored":"Obnovena", "reconstructed":"Ruční rekonstrukce"}
+                embed.add_field(name="Poslední události", value="\n".join(f"{names.get(e['kind'], e['kind'])} · {e['at']}" for e in events[-4:]), inline=False)
+        if status in ("unknown", "never"):
+            embed.set_footer(text="Historii karet zničených před zavedením evidence nelze zpětně ověřit.")
+        await interaction.response.send_message(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+
+    @cards_group.command(name="restore", description="[ADMIN] Obnovit zničený print nebo rekonstruovat starší mezeru")
+    @admin_only()
+    @app_commands.describe(card_id="ID vzoru", print="Původní print", owner="Nový vlastník", rarity="Jen pro staré mezery bez historie", quality="Jen pro staré mezery bez historie")
+    @app_commands.choices(rarity=[app_commands.Choice(name=k, value=k) for k in RARITIES], quality=[app_commands.Choice(name=k, value=k) for k in QUALITIES])
+    async def restore_print(self, interaction: discord.Interaction, card_id: int, print: app_commands.Range[int, 1], owner: discord.Member, rarity: str = None, quality: str = None):
+        try:
+            uid, card, kind = print_ledger.restore(card_id, print, str(owner.id), str(interaction.user.id), rarity=rarity, quality=quality)
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        label = "Ručně rekonstruována" if kind == "reconstructed" else "Obnovena"
+        await interaction.response.send_message(f"✅ {label}: **{card.get('name')} #{print}** · ID `{uid}` · vlastník {owner.mention}. 🔒 Zamčeno proti spálení. Počítadlo ani prach se nemění.", ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
     @cards_group.command(name="print", description="[ADMIN] Vytisknout novou kartu")
     @admin_only()
@@ -991,38 +993,7 @@ class Cards(commands.Cog):
             return
 
         owner_id = str(owner.id) if owner else None
-        inventory = load_inventory()
-
-        max_print = max(
-            (c.get("print_number", 0) for c in inventory.values() if c.get("card_id") == card_id),
-            default=0,
-        )
-
-        created = []
-        for _ in range(count):
-            unique_id = generate_unique_id()
-            while unique_id in inventory:
-                unique_id = generate_unique_id()
-
-            quality = roll_quality()
-
-            max_print += 1
-            inventory[unique_id] = {
-                "card_id":      card_id,
-                "name":         card_template.get("name"),
-                "description":  card_template.get("description"),
-                "image":        card_template.get("image"),
-                "collection":   card_template.get("collection"),
-                "rarity":       rarity,
-                "quality":      quality,
-                "print_number": max_print,
-                "owner_id":     owner_id,
-                "frame":        None,
-                "created_at":   datetime.now().isoformat(),
-            }
-            created.append(unique_id)
-
-        save_json(CARDS_INVENTORY, inventory)
+        created, inventory = mint_cards(card_id, rarity, owner_id, count, str(interaction.user.id))
 
         owner_mention = f"<@{owner_id}>" if owner_id else "—"
         embed = discord.Embed(
@@ -1413,15 +1384,7 @@ class Cards(commands.Cog):
         card_name = inventory[unique_id].get("name", unique_id)
         owner_id = inventory[unique_id].get("owner_id")
 
-        del inventory[unique_id]
-        save_json(CARDS_INVENTORY, inventory)
-
-        # Vyčisti profilovou referenci pokud existuje
-        if owner_id:
-            profiles = profile_load()
-            if profiles.get(owner_id, {}).get("active_card_id") == unique_id:
-                profiles[owner_id]["active_card_id"] = None
-                profile_save(profiles)
+        print_ledger.destroy(unique_id, actor=str(interaction.user.id))
 
         embed = discord.Embed(
             title="🗑️ Karta smazána",
@@ -1631,7 +1594,7 @@ class Cards(commands.Cog):
             color=BRAND_PURPLE,
         )
 
-        embed.add_field(name="🖨️ Celkem vytisknuto", value=f"**{len(inv)}** karet",      inline=True)
+        embed.add_field(name="🎴 V oběhu", value=f"**{len(inv)}** karet",      inline=True)
         embed.add_field(name="🎴 Unikátních vzorů",   value=f"**{len(cards)}** karet",    inline=True)
         embed.add_field(name="\u200b",                value="\u200b",                      inline=True)
 
@@ -1678,6 +1641,7 @@ class Cards(commands.Cog):
         embed.add_field(name="\u200b", value="\u200b", inline=True)
 
         commands_text = (
+            "`/cards check` — stav konkrétního printu\n"
             "`/cards inventory` — tvé karty, filtry a řazení\n"
             "`/cards tag` — přidat/odebrat tag kartám\n"
             "`/cards show <id>` — detail karty\n"
@@ -1706,6 +1670,7 @@ class Cards(commands.Cog):
         """Přehled kolekcí nebo detail jedné sady."""
         cards_db = load_json(CARDS_DATA, default=[])
         inv = load_inventory()
+        print_counts = print_ledger.counters()
 
         if collection:
             collection = collection.lower()
@@ -1730,8 +1695,10 @@ class Cards(commands.Cog):
                 color=coll_data["color"],
             )
             embed.add_field(name="🎴 Vzorů v sadě",       value=f"**{len(templates)}**",   inline=True)
-            embed.add_field(name="🖨️ Celkem vytisknuto",  value=f"**{len(instances)}**",   inline=True)
+            embed.add_field(name="🎴 V oběhu",  value=f"**{len(instances)}**",   inline=True)
             embed.add_field(name="\u200b",                  value="\u200b",                  inline=True)
+
+            embed.add_field(name="🖨️ Celkem vytištěno (evidováno)", value=str(sum(print_counts.get(str(t["id"]), 0) for t in templates)), inline=True)
 
             if rarity_counts:
                 rarity_lines = [
@@ -1764,12 +1731,13 @@ class Cards(commands.Cog):
             )
             for cid, cdata in COLLECTIONS.items():
                 templates_count = sum(1 for c in cards_db if c.get("collection") == cid)
-                printed_count   = sum(1 for c in inv.values() if c.get("collection") == cid)
+                printed_count = sum(print_counts.get(str(t["id"]), 0) for t in cards_db if t.get("collection") == cid)
+                circulating = sum(1 for c in inv.values() if c.get("collection") == cid)
                 embed.add_field(
                     name=f"{cdata['emoji']}  {cdata.get('name', cid.capitalize())}",
                     value=(
                         f"*{cdata['description']}*\n"
-                        f"🎴 Vzorů: **{templates_count}**  ·  🖨️ Vytisknuto: **{printed_count}**\n"
+                        f"🎴 Vzorů: **{templates_count}**  ·  🖨️ Vytištěno (evidováno): **{printed_count}** · V oběhu: **{circulating}**\n"
                         f"`/cards gallery {cid}`"
                     ),
                     inline=False,
@@ -2130,37 +2098,12 @@ class Cards(commands.Cog):
             return
 
         rarity = roll_rarity()
-        quality = roll_quality()
-
-        # Random karta z DB
         card_template = random.choice(cards_db)
-        card_id = card_template.get("id")
-
-        # Přidej do inventáře
-        inventory = load_inventory()
-        unique_id = generate_unique_id()
-        while unique_id in inventory:
-            unique_id = generate_unique_id()
-
-        max_print = max(
-            (c.get("print_number", 0) for c in inventory.values() if c.get("card_id") == card_id),
-            default=0,
-        ) + 1
-
-        inventory[unique_id] = {
-            "card_id":      card_id,
-            "name":         card_template.get("name"),
-            "description":  card_template.get("description"),
-            "image":        card_template.get("image"),
-            "collection":   card_template.get("collection"),
-            "rarity":       rarity,
-            "quality":      quality,
-            "print_number": max_print,
-            "owner_id":     uid,
-            "frame":        None,
-            "created_at":   datetime.now().isoformat(),
-        }
-        save_json(CARDS_INVENTORY, inventory)
+        card_id = card_template["id"]
+        created, inventory = mint_cards(card_id, rarity, uid, 1, str(interaction.user.id))
+        unique_id = created[0]
+        quality = inventory[unique_id]["quality"]
+        max_print = inventory[unique_id]["print_number"]
 
         # Veřejný embed
         rarity_data = RARITIES.get(rarity, RARITIES["uncommon"])
@@ -2193,6 +2136,10 @@ async def setup(bot):
     """Registruje cog do bota."""
     migrate_qualities()
     ensure_cards_data()
+    conflicts = print_ledger.migrate()
+    if conflicts:
+        import logging
+        logging.getLogger(__name__).warning("Duplicitní historické printy (bez přečíslování): %s", conflicts)
     retire_chosen_by_fire_frame()
     ensure_frames_data()
     _ensure_nocard_png()

@@ -19,18 +19,25 @@ class CardLockTests(unittest.TestCase):
                 cards.toggle_card_lock('1', 'missing')
 
     def test_locked_burn_has_no_side_effects_then_unlock_allows_burn(self):
+        import os
+        import tempfile
+        from src.database import db
         self.inventory['abc']['locked'] = True
-        with patch.object(cards, 'load_inventory', return_value=self.inventory), patch.object(cards, 'add_balance') as reward, patch.object(cards, 'save_json') as save:
-            with self.assertRaises(cards.CardLockedError):
+        old = db.db_path()
+        with tempfile.TemporaryDirectory() as temp:
+            try:
+                db.reset_for_tests(os.path.join(temp, 'test.db'))
+                db.save_doc('cards_inventory.json', self.inventory)
+                with self.assertRaises(cards.CardLockedError):
+                    cards.burn_card_by_id('1', 'abc')
+                self.assertEqual(db.load_doc('cards_inventory.json'), self.inventory)
+                self.assertFalse(db.load_doc('stardust.json'))
+                cards.toggle_card_lock('1', 'abc')
                 cards.burn_card_by_id('1', 'abc')
-            reward.assert_not_called()
-            save.assert_not_called()
-            self.assertIn('abc', self.inventory)
-            self.inventory['abc']['locked'] = False
-            cards.burn_card_by_id('1', 'abc')
-            reward.assert_called_once()
-            save.assert_called_once()
-            self.assertNotIn('abc', self.inventory)
+                self.assertNotIn('abc', db.load_doc('cards_inventory.json'))
+                self.assertGreater(db.load_doc('stardust.json')['1'], 0)
+            finally:
+                db.reset_for_tests(old)
 
     def test_inventory_lock_marker(self):
         target = SimpleNamespace(display_name='Tester')

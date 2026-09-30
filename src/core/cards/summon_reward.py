@@ -6,6 +6,7 @@ from src.core.cards.frame_service import eligible_frames, frame_drop_chance
 from dataclasses import dataclass
 
 from src.database import db
+from src.core.cards import print_ledger
 from src.core.cards.cards import draw_random_card
 from src.utils.paths import CARDS_CRATES, CARDS_DATA, CARDS_INVENTORY, CARDS_FRAMES
 
@@ -61,6 +62,7 @@ def settle_opening(uid, crate, tickets, *, preview=False):
                 raise NoEligibleFrames()
             if pool:
                 card["frame"] = random.choice(pool)["id"]
+        unique_id, card = print_ledger.allocate(conn, inventory, unique_id, card, preview=preview)
         if not preview:
             inventory[unique_id] = card
             owned[crate] -= 1
