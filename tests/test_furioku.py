@@ -103,6 +103,25 @@ class Rules(unittest.TestCase):
         e.allocate(p, PERKS, 0, e.pool(p, PERKS))
         self.assertEqual(e.bonuses(p, PERKS), (0, 110))
 
+    def test_rank_notice_reports_maximum_before_and_after_multiple_ranks(self):
+        p = player()
+        result = e.grant_xp(p, 1000)
+        notice = e.rank_up_text(result)
+        self.assertIn(f"40 → {p['spirits'][0]['fury_max']}", notice)
+        self.assertIn(f"1 → {p['spirits'][0]['rank']}", notice)
+        self.assertEqual(e.rank_up_text(e.grant_xp(p, 1)), '')
+
+    def test_breeding_preview_matches_both_actual_outcomes(self):
+        for roll, outcome in [(0, 'success'), (.999, 'failure')]:
+            p = player()
+            p['spirits'][0]['fury_cur'] = 3
+            preview = spirits.breeding_preview(p, 0, 1)
+            embed = spirits.breeding_preview_embed(preview)
+            self.assertIn('při úspěchu i neúspěchu', embed.description)
+            with patch.object(spirits.random, 'random', return_value=roll):
+                result = spirits.breed_spirits(p, 0, 1)['survivor']
+            self.assertEqual((result['rank'], result['fury_cur'], result['fury_max']), preview[outcome])
+
     def test_unlock_is_permanent_and_not_granted_by_empty_profile(self):
         p = {}
         e.normalize(p)
@@ -333,6 +352,31 @@ class Commands(unittest.IsolatedAsyncioTestCase):
             with patch.object(spirits, 'pkey', return_value='1:2'):
                 await modal.on_submit(interaction)
             save.assert_called_once()
+
+    async def test_stale_breeding_preview_does_not_consume_spirits(self):
+        p = player()
+        interaction = SimpleNamespace(user=SimpleNamespace(id=1), response=SimpleNamespace(edit_message=AsyncMock(), send_message=AsyncMock()), followup=SimpleNamespace(send=AsyncMock()))
+        view = spirits.BreedConfirmView('1:1', 0, 1, 'A', 'B', .95, expected=p['spirits'])
+        p['spirits'][0]['fury_cur'] -= 1
+        with patch.object(spirits, 'pkey', return_value='1:1'), patch.object(spirits, '_load', return_value={'1:1': p}), patch.object(spirits, '_save') as save:
+            await view.confirm.callback(interaction)
+            save.assert_not_called()
+        self.assertEqual(len(p['spirits']), 2)
+        self.assertIn('nový náhled', interaction.followup.send.call_args.args[0])
+
+    async def test_admin_announces_spirit_only_or_combined_levelup(self):
+        member = SimpleNamespace(id=1, mention='<@1>')
+        for player_levelup in [False, True]:
+            result = dict(leveled_up=player_levelup, cap=1000, xp=10, new_level=2, levels_gained=1, ap_gained=1, sp_gained=1,
+                          spirits=[dict(ranked_up=True, spirit_name='A', old_rank=1, new_rank=2, old_fury_max=100, new_fury_max=125)])
+            interaction = SimpleNamespace(response=SimpleNamespace(send_message=AsyncMock()))
+            with patch.object(stats, 'resolve_postava', return_value=('1', None)), patch.object(stats, 'char_note', return_value=''), patch.object(stats, 'add_xp', return_value=result):
+                await stats.Stats.admin_xp.callback(None, interaction, member, 100)
+            kwargs = interaction.response.send_message.call_args.kwargs
+            self.assertFalse(kwargs.get('ephemeral', False))
+            embed = kwargs['embed']
+            self.assertIn('100 → 125', str(embed.to_dict()))
+            self.assertEqual(len(embed.fields), 1 if player_levelup else 0)
 
     async def test_locked_command_only_displays_question_marks(self):
         interaction = SimpleNamespace(user=SimpleNamespace(id=1), response=SimpleNamespace(send_message=AsyncMock()))

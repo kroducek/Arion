@@ -1224,6 +1224,8 @@ class Stats(commands.Cog):
             if amount > 0:
                 with use_slot(member.id, slot):
                     result = add_xp(member.id, amount, reason=reason)
+                from src.logic.furioku import rank_up_text
+                spirit_levelup = rank_up_text(result.get("spirits", []))
                 spirit_note = "\n".join(f"👻 {r['spirit_name']}: +{amount} XP · rank {r['new_rank']}" for r in result.get('spirits', []))
                 if spirit_note:
                     note += "\n" + spirit_note[:1200]
@@ -1243,9 +1245,15 @@ class Stats(commands.Cog):
                         ),
                         color=0xf1c40f,
                     )
+                    if spirit_levelup:
+                        embed.add_field(name="⬆️ Hlavní duch postoupil!", value=spirit_levelup[:1024], inline=False)
                     await interaction.response.send_message(
                         content=member.mention, embed=embed
                     )
+                elif spirit_levelup:
+                    embed = discord.Embed(title="⬆️ Hlavní duch postoupil!", color=0xf1c40f,
+                        description=f"{member.mention} získal/a **+{amount:,} XP**.\n\n{spirit_levelup}" + note)
+                    await interaction.response.send_message(content=member.mention, embed=embed)
                 else:
                     cap_str = f"/ {result['cap']:,}" if result["cap"] else "(MAX)"
                     await interaction.response.send_message(

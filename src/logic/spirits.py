@@ -1,3 +1,4 @@
+import copy
 import discord
 from src.logic import furioku as energy
 from discord.ext import commands
@@ -104,6 +105,32 @@ def get_equipped_spirit(profile: dict) -> dict | None:
     return spirits[0] if spirits else None
 
 
+def breeding_preview(profile, idx_a, idx_b):
+    energy.normalize(profile)
+    a, b = profile['spirits'][idx_a], profile['spirits'][idx_b]
+    survivor, consumed = (a, b) if a['rank'] >= b['rank'] else (b, a)
+    chance = BREED_CHANCE.get(abs(a['rank'] - b['rank']), 0.0)
+    chance = min(1.0, chance + BREED_ELEMENT_BONUS) if a['element'] == b['element'] else max(0.0, chance - BREED_ELEMENT_PENALTY)
+    gain = int(survivor['fury_max'] * .05)
+    return dict(survivor=survivor, consumed=consumed, chance=chance,
+                success=(survivor['rank'] + 1, survivor['fury_cur'] + consumed['fury_cur'], survivor['fury_max'] + consumed['fury_max']),
+                failure=(survivor['rank'], survivor['fury_cur'] + gain, survivor['fury_max'] + gain))
+
+
+def breeding_preview_embed(preview):
+    survivor, consumed = preview['survivor'], preview['consumed']
+    embed = discord.Embed(title="⚗️ Potvrdit šlechtění?", color=0xf39c12,
+        description=f"**Přežije:** {survivor['name']}\n**Bude pohlcen:** {consumed['name']}\n"
+                    "⚠️ Pohlcený duch zanikne při úspěchu i neúspěchu. Akce je nevratná.")
+    for label, chance, key in [('Úspěch', preview['chance'], 'success'), ('Neúspěch', 1 - preview['chance'], 'failure')]:
+        rank, current, maximum = preview[key]
+        embed.add_field(name=f"{label} · {chance:.0%}", inline=False,
+            value=f"Rank **{survivor['rank']} → {rank}**\nMaximum furioku **{survivor['fury_max']} → {maximum}**\n"
+                  f"Aktuální energie **{survivor['fury_cur']} → {current}** (výsledek {current}/{maximum})")
+    embed.set_footer(text="Přeživšímu zůstane jméno, popis, element, XP i nasazení. Při shodném ranku přežije první vybraný duch.")
+    return embed
+
+
 def breed_spirits(profile: dict, idx_a: int, idx_b: int) -> dict:
     spirits = profile.get("spirits", [])
     if not (0 <= idx_a < len(spirits) and 0 <= idx_b < len(spirits)):
@@ -111,32 +138,12 @@ def breed_spirits(profile: dict, idx_a: int, idx_b: int) -> dict:
     if idx_a == idx_b:
         raise ValueError("Nelze kombinovat ducha se sebou samým.")
 
-    a, b       = spirits[idx_a], spirits[idx_b]
-    rank_a, rank_b = a["rank"], b["rank"]
-    diff       = abs(rank_a - rank_b)
-    chance     = BREED_CHANCE.get(diff, 0.0) if diff <= 3 else 0.0
-
-    elem_a, elem_b = a.get("element", ""), b.get("element", "")
-    if elem_a == elem_b:
-        chance = min(1.0, chance + BREED_ELEMENT_BONUS)
-    else:
-        chance = max(0.0, chance - BREED_ELEMENT_PENALTY)
-
-    stronger_idx = idx_a if rank_a >= rank_b else idx_b
-    weaker_idx   = idx_b if rank_a >= rank_b else idx_a
-    stronger, weaker = spirits[stronger_idx], spirits[weaker_idx]
-
+    preview = breeding_preview(profile, idx_a, idx_b)
+    stronger, weaker = preview['survivor'], preview['consumed']
+    chance = preview['chance']
     success = random.random() < chance
-
-    energy.normalize(profile)
     consumed = weaker['id']
-    if success:
-        stronger['rank'] += 1
-        gain = weaker['fury_max']
-    else:
-        gain = int(stronger['fury_max'] * .05)
-    stronger['fury_max'] += gain
-    stronger['fury_cur'] += weaker['fury_cur'] if success else gain
+    stronger['rank'], stronger['fury_cur'], stronger['fury_max'] = preview['success' if success else 'failure']
     stronger['fury'] = stronger['fury_max']
     stronger['xp_threshold'] = rank_xp_threshold(stronger['rank'])
     spirits[:] = [s for s in spirits if s['id'] != consumed]
@@ -185,13 +192,14 @@ def _spirit_embed(s: dict, title: str = None) -> discord.Embed:
 
 class BreedConfirmView(discord.ui.View):
     def __init__(self, uid: str, idx_a: int, idx_b: int,
-                 a_name: str, b_name: str, chance: float):
+                 a_name: str, b_name: str, chance: float, expected=None):
         super().__init__(timeout=30)
         self.uid     = uid
         self.idx_a   = idx_a
         self.idx_b   = idx_b
         self.a_name  = a_name
         self.b_name  = b_name
+        self.expected = copy.deepcopy(expected)
         self.chance  = chance
         self.done    = False
 
@@ -207,6 +215,8 @@ class BreedConfirmView(discord.ui.View):
             await interaction.response.send_message("❌ Toto není tvoje šlechtění.", ephemeral=True)
             return
 
+        if self.done:
+            return await interaction.response.send_message("Toto šlechtění už bylo vyhodnoceno.", ephemeral=True)
         self.done = True
         self.stop()
         for item in self.children:
@@ -229,6 +239,9 @@ class BreedConfirmView(discord.ui.View):
                 "❌ Duchové se změnili od potvrzení. Zkus znovu.", ephemeral=True
             )
             return
+
+        if self.expected is not None and self.expected != [spirits[self.idx_a], spirits[self.idx_b]]:
+            return await interaction.followup.send("❌ Hodnoty duchů se změnily. Otevři nový náhled šlechtění.", ephemeral=True)
 
         try:
             result = breed_spirits(profile, self.idx_a, self.idx_b)
@@ -648,6 +661,54 @@ class Spirits(commands.Cog):
     # ne jako 9. Subpříkazy (až 25) se do limitu nezapočítávají.
     duch = app_commands.Group(name="duch", description="Strážní duchové — správa, šlechtění a info.")
 
+    bond = app_commands.Group(name="bond", description="[DM] RP sblížení hráče s duchem.", parent=duch)
+
+    async def _bond_action(self, interaction, action, **kwargs):
+        if not _is_dm(interaction):
+            return await interaction.response.send_message("❌ Jen DM.", ephemeral=True)
+        from src.logic.spirit_bond import change_bond
+        try:
+            result = change_bond(interaction.channel_id, action, interaction_id=interaction.id, **kwargs)
+        except ValueError as exc:
+            return await interaction.response.send_message(f"❌ {exc}", ephemeral=True)
+        name = discord.utils.escape_markdown(discord.utils.escape_mentions(result['spirit_name'])).replace('\n', ' ').replace('\r', ' ')
+        if action == 'start':
+            message = f"-# <@{result['user_id']}> se sbližuje s duchem {name}."
+        elif action == 'fail':
+            message = f"-# Bonding s duchem {name} selhal."
+        elif result['successes'] == 3:
+            message = f"-# Success · 3/3 — {name} evolvoval. Furioku {result['old_maximum']} → {result['new_maximum']}."
+        else:
+            message = f"-# Success · {result['successes']}/3 — {name}."
+        await interaction.response.send_message(message, allowed_mentions=discord.AllowedMentions(
+            users=[discord.Object(id=result['user_id'])] if action == 'start' else False, roles=False, everyone=False))
+
+    @bond.command(name="start", description="[DM] Zahájí RP bonding s konkrétním duchem hráče.")
+    @app_commands.describe(member="Hráč (aktivní postava)", duch="Jméno vlastněného ducha")
+    @mark_admin
+    async def bond_start(self, interaction: discord.Interaction, member: discord.Member, duch: str):
+        await self._bond_action(interaction, 'start', profile_key=pkey(member.id), user_id=member.id, spirit_name=duch)
+
+    @bond_start.autocomplete('duch')
+    async def bond_spirit_names(self, interaction: discord.Interaction, current: str):
+        member = getattr(interaction.namespace, 'member', None)
+        if member is None:
+            return []
+        p = _load().get(pkey(member.id), {})
+        return [app_commands.Choice(name=s['name'][:100], value=s['name']) for s in p.get('spirits', [])
+                if current.casefold() in s['name'].casefold()][:25]
+
+    @bond.command(name="success", description="[DM] Úspěch bondingu; třetí úspěch vyvolá evoluci.")
+    @app_commands.describe(nove_maximum="Pouze třetí úspěch: nové maximum furioku (výchozí ×2)")
+    @mark_admin
+    async def bond_success(self, interaction: discord.Interaction, nove_maximum: app_commands.Range[int, 0] | None = None):
+        await self._bond_action(interaction, 'success', new_maximum=nove_maximum)
+
+    @bond.command(name="fail", description="[DM] Zruší bonding v tomto kanálu a jeho postup.")
+    @mark_admin
+    async def bond_fail(self, interaction: discord.Interaction):
+        await self._bond_action(interaction, 'fail')
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
@@ -748,7 +809,11 @@ class Spirits(commands.Cog):
             return await interaction.followup.send("❌ Hráč nemá vybraného hlavního ducha.")
         _save(data)
         lines = [f"👻 **{r['spirit_name']}**: +{amount} XP · rank {r['old_rank']} → {r['new_rank']}" for r in results]
-        await interaction.followup.send("\n".join(lines)[:1900])
+        levelup = energy.rank_up_text(results)
+        if levelup:
+            await interaction.followup.send(embed=discord.Embed(title="⬆️ Hlavní duch postoupil!", description=levelup[:4000], color=0xf1c40f), ephemeral=False)
+        else:
+            await interaction.followup.send("\n".join(lines)[:1900])
 
     @duch.command(name="slechtit", description="Pokus o šlechtění dvou duchů — silnější může pohltit slabšího!")
     @app_commands.describe(jmeno_a="První duch; při shodném ranku přežije tento", jmeno_b="Jméno druhého ducha")
@@ -783,43 +848,10 @@ class Spirits(commands.Cog):
             await interaction.followup.send("❌ Nelze kombinovat ducha se sebou samým.")
             return
 
-        a, b      = spirits[idx_a], spirits[idx_b]
-        rank_diff = abs(a["rank"] - b["rank"])
-
-        elem_a = a.get("element", "")
-        elem_b = b.get("element", "")
-        base_chance = BREED_CHANCE.get(rank_diff, 0.0) if rank_diff <= 3 else 0.0
-        if elem_a == elem_b:
-            warn_chance = min(1.0, base_chance + BREED_ELEMENT_BONUS)
-        else:
-            warn_chance = max(0.0, base_chance - BREED_ELEMENT_PENALTY)
-
-        if rank_diff >= 4:
-            warn_embed = discord.Embed(
-                title="⚠️ Nebezpečné šlechtění",
-                description=(
-                    f"Rozdíl ranku je **{rank_diff}** — šance na úspěch je jen **{int(warn_chance * 100)}%**.\n"
-                    f"Při neúspěchu silnější duch pohltí slabšího.\n\n"
-                    f"**{a['name']}** (R{a['rank']}) × **{b['name']}** (R{b['rank']})"
-                ),
-                color=0xe74c3c,
-            )
-            await interaction.followup.send(embed=warn_embed)
-
-        elem_emoji_a = _elem_emoji(elem_a)
-        elem_emoji_b = _elem_emoji(elem_b)
-        confirm_embed = discord.Embed(
-            title="⚗️ Potvrdit šlechtění?",
-            description=(
-                f"{elem_emoji_a} **{a['name']}** {rank_label(a['rank'])}  ×  "
-                f"{elem_emoji_b} **{b['name']}** {rank_label(b['rank'])}\n\n"
-                f"Šance úspěchu: **{int(warn_chance * 100)}%**\n"
-                f"Při neúspěchu slabší duch zanikne — tato akce je nevratná!"
-            ),
-            color=0xf39c12,
-        )
-        # BreedConfirmView dostane jen uid + indexy + jména (ne live objekty)
-        view = BreedConfirmView(uid, idx_a, idx_b, a["name"], b["name"], warn_chance)
+        a, b = spirits[idx_a], spirits[idx_b]
+        preview = breeding_preview(profile, idx_a, idx_b)
+        confirm_embed = breeding_preview_embed(preview)
+        view = BreedConfirmView(uid, idx_a, idx_b, a['name'], b['name'], preview['chance'], expected=[a, b])
         await interaction.followup.send(embed=confirm_embed, view=view)
 
     # ── /duch equip ───────────────────────────────────────────────────────────

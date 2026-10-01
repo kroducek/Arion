@@ -73,3 +73,31 @@ zásobou (útok má přednost). Názvy sestav jsou rozlišované přesně.
 Potvrzené útoky, obranná absorpce a poškození statusy vypisují spotřebu podle zdrojů.
 Duch je označen hláškou 💤 pouze při spotřebě jeho posledního bodu, nikoli při každém
 dalším zásahu. Undo může obnovit energii; další skutečné vyčerpání se oznámí znovu.
+
+## Oznámení postupu a náhled šlechtění
+
+Postup hlavního ducha při `/admin-xp` se oznámí veřejně spolu s level-upem hráče,
+nebo samostatně, pokud postoupil pouze duch. Ukazuje původní a nový rank i maximum
+furioku. Questová odměna stejný údaj připojí do existujícího oznámení odměny.
+Přímé `/duch xp` rovněž zobrazí postup ducha.
+
+Potvrzení šlechtění ukazuje přeživšího a pohlceného ducha, šance a přesnou změnu
+ranku, maxima i aktuální energie pro oba výsledky. Výslovně upozorňuje, že pohlcený
+duch zanikne vždy. Pokud se duchové před potvrzením změní, akce vyžaduje nový náhled.
+
+## RP bonding (ArionDM)
+
+- `/duch bond start member:hráč duch:jméno` zahájí bonding pro aktivní postavu
+  hráče a konkrétního vlastněného ducha. Odešle jediný řádek `-# @hráč se sbližuje
+  s duchem Jméno.` Duch nemusí být hlavní ani sjednocený.
+- `/duch bond success` přidá úspěch. Po třetím duch evolvuje a bonding skončí.
+  Výchozí odměna je dvojnásobek jeho maxima v okamžiku dokončení.
+- Při třetím úspěchu lze použít `nove_maximum` pro vlastní absolutní maximum
+  (nejméně současné maximum). Aktuální energie vzroste o rozdíl maxim;
+  například 40/100 přejde na 140/200. XP, rank, jméno a nasazení zůstávají.
+- `/duch bond fail` smaže celý rozpracovaný postup bez odměny.
+
+V kanálu je jeden bonding; stejný duch nemůže současně bondovat v jiném kanálu.
+Stav je uložený v profilu, přežije restart a váže se na ID ducha a původní postavu.
+Přejmenování ducha ho nepřeruší. Po odstranění ducha lze bonding zrušit přes fail.
+Příkazy jsou dostupné pouze v ArionDM a vyžadují administrátora nebo roli DM.

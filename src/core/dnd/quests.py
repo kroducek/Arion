@@ -1027,6 +1027,11 @@ class QuestsCog(commands.Cog):
                             inline=False,
                         )
 
+                    from src.logic.furioku import rank_up_text
+                    spirit_levelup = rank_up_text(xp_result.get('spirits', []))
+                    if spirit_levelup:
+                        dm_embed.add_field(name="⬆️ Hlavní duch postoupil!", value=spirit_levelup[:1024], inline=False)
+
                 # ── Rank body ────────────────────────────────────────────────
                 # award_quest_rank si sám ohlásí rank up (kanál + DM) a nikdy
                 # nevyhodí výjimku — uzavření questu nesmí spadnout kvůli ranku.

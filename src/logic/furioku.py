@@ -145,7 +145,7 @@ def grant_xp(p, amount):
             s['fury_cur'] += gain
         s['fury'] = s['fury_max']
         s['xp_threshold'] = threshold(s['rank'])
-        results.append(dict(ranked_up=s['rank'] > old, old_rank=old, new_rank=s['rank'], spirit_name=s['name'], fury_gained=s['fury_max'] - original_max))
+        results.append(dict(ranked_up=s['rank'] > old, old_rank=old, new_rank=s['rank'], spirit_name=s['name'], fury_gained=s['fury_max'] - original_max, old_fury_max=original_max, new_fury_max=s['fury_max']))
     return results
 
 
@@ -219,3 +219,11 @@ def load_preset(p, name, perks):
     attack_amount, defense_amount = bonuses(p, perks)
     f.update(atk_amount=attack_amount, def_amount=defense_amount)
     return 'Sestava načtena. Přidělení je omezené aktuální energií a vlastněnými perky.'
+
+
+def rank_up_text(results):
+    return '\n'.join(
+        f"👻 **{r['spirit_name']}** dosáhl ranku **{r['new_rank']}** "
+        f"({r['old_rank']} → {r['new_rank']}) · maximum furioku "
+        f"**{r['old_fury_max']} → {r['new_fury_max']}**"
+        for r in results if r['ranked_up'])
