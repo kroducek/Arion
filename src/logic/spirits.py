@@ -357,10 +357,15 @@ def _furioka_embed(profile: dict, user_id: int, page: int = 0) -> discord.Embed:
 
     lines = [f"{'🔗' if s['id'] in f['spirit_ids'] and has_jednota else '👻'} **{s['name']}** · {s['fury_cur']}/{s['fury_max']} {'💤' if s['fury_cur'] == 0 else ''} {'⭐ hlavní' if s['id'] == profile.get('main_spirit_id') else ''}" for s in spirits]
     embed.add_field(name="Duchové", value=("\n".join(lines)[:1000] or "Nasadit ducha: `/duch equip`."), inline=False)
-    embed.add_field(name="Jednota", value="Hlavní duch dostává XP a ukazuje se v profilu. Jednotu vyber nezávisle v nabídce dole; sama XP nedává. Spotřeba: vlastní energie, pak duchové v pořadí zapojení.", inline=False)
+    embed.add_field(name="Jednota", value="Hlavní duch dostává XP a ukazuje se v profilu. Jednotu vyber nezávisle v nabídce dole; sama XP nedává. Pořadí čerpání i sestavy nastavíš tlačítkem Sestavy a čerpání.", inline=False)
 
     if profile.get('main_spirit_choice_pending'):
         embed.add_field(name="Vyber hlavního ducha", value="Dříve jsi měl více nasazených duchů. Vyber jednoho v panelu; do té doby duchové XP nezískávají. Jednota zůstává zachovaná.", inline=False)
+    names = {s['id']: s['name'] for s in profile['spirits']}
+    names['self'] = 'vlastní'
+    active = {s['id'] for s in energy.linked(profile, perks)} | {'self'}
+    order = list(dict.fromkeys(f.get('source_order', []) + ['self'] + f['spirit_ids']))
+    embed.add_field(name="Čerpání", value=' → '.join(names[i] for i in order if i in active)[:1000], inline=False)
     fu_perks = [p for p in perks if p.startswith("furioku_")]
     if fu_perks:
         try:
@@ -374,6 +379,63 @@ def _furioka_embed(profile: dict, user_id: int, page: int = 0) -> discord.Embed:
 
     embed.set_footer(text="⭐ Aurionis")
     return embed
+
+
+class EnergyModal(discord.ui.Modal):
+    def __init__(self, panel, action):
+        super().__init__(title={'amount': 'Přesné přidělení energie', 'order': 'Pořadí čerpání', 'save': 'Uložit sestavu', 'load': 'Načíst sestavu', 'delete': 'Smazat sestavu'}[action])
+        self.panel, self.action = panel, action
+        _, p = panel._get()
+        if action == 'amount':
+            self.first = discord.ui.TextInput(label='Útok', default=str(p['furioka']['atk_amount']), max_length=12)
+            self.second = discord.ui.TextInput(label='Obrana', default=str(p['furioka']['def_amount']), max_length=12)
+            self.add_item(self.first)
+            self.add_item(self.second)
+        else:
+            names = {s['id']: s['name'] for s in p['spirits']}
+            names['self'] = 'já'
+            order = list(dict.fromkeys(p['furioka'].get('source_order', []) + ['self'] + p['furioka']['spirit_ids']))
+            self.first = discord.ui.TextInput(label='Jeden zdroj na řádek; vlastní energie = já' if action == 'order' else 'Název sestavy',
+                style=discord.TextStyle.paragraph if action == 'order' else discord.TextStyle.short,
+                default='\n'.join(names[i] for i in order if i in names)[:4000] if action == 'order' else None,
+                max_length=4000 if action == 'order' else 60)
+            self.add_item(self.first)
+
+    async def on_submit(self, interaction):
+        if not await self.panel._guard(interaction):
+            return
+        data, p = self.panel._get()
+        perks = _owned_perks(self.panel.user_id)
+        note = 'Nastavení uloženo.'
+        try:
+            if self.action == 'amount':
+                energy.allocate(p, perks, int(self.first.value), int(self.second.value))
+            elif self.action == 'order':
+                energy.set_source_order(p, self.first.value.splitlines())
+            elif self.action == 'save':
+                energy.save_preset(p, self.first.value)
+            elif self.action == 'load':
+                note = energy.load_preset(p, self.first.value, perks)
+            else:
+                if p.get('furioku_presets', {}).pop(self.first.value.strip(), None) is None:
+                    raise ValueError('Tato sestava neexistuje.')
+        except ValueError as exc:
+            return await interaction.response.send_message(f'❌ {exc}', ephemeral=True)
+        _save(data)
+        self.panel._build_selects()
+        await interaction.response.edit_message(content=note, embed=_furioka_embed(p, self.panel.user_id, self.panel.page), view=self.panel)
+
+
+class EnergySettings(discord.ui.View):
+    def __init__(self, panel):
+        super().__init__(timeout=300)
+        for label, action in [('Pořadí čerpání', 'order'), ('Uložit sestavu', 'save'), ('Načíst sestavu', 'load'), ('Smazat sestavu', 'delete')]:
+            button = discord.ui.Button(label=label)
+            async def callback(interaction, action=action):
+                if await panel._guard(interaction):
+                    await interaction.response.send_modal(EnergyModal(panel, action))
+            button.callback = callback
+            self.add_item(button)
 
 
 class FurioukaView(discord.ui.View):
@@ -467,6 +529,39 @@ class FurioukaView(discord.ui.View):
             return "Nemáš tolik furioku v zásobě."
         f[key] = new
         return None
+
+    @discord.ui.button(label="Přesně", row=0)
+    async def exact_amount(self, interaction, button):
+        if await self._guard(interaction):
+            await interaction.response.send_modal(EnergyModal(self, 'amount'))
+
+    async def _all(self, interaction, attack):
+        if not await self._guard(interaction):
+            return
+        data, p = self._get()
+        perks = _owned_perks(self.user_id)
+        amount = energy.pool(p, perks)
+        try:
+            energy.allocate(p, perks, amount if attack else 0, 0 if attack else amount)
+        except ValueError as exc:
+            return await interaction.response.send_message(f'❌ {exc}', ephemeral=True)
+        await self._refresh(interaction, data, p)
+
+    @discord.ui.button(label="Vše do útoku", row=0)
+    async def all_attack(self, interaction, button):
+        await self._all(interaction, True)
+
+    @discord.ui.button(label="Vše do obrany", row=1)
+    async def all_defense(self, interaction, button):
+        await self._all(interaction, False)
+
+    @discord.ui.button(label="Sestavy a čerpání", row=2)
+    async def settings(self, interaction, button):
+        if not await self._guard(interaction):
+            return
+        _, p = self._get()
+        names = ', '.join(p.get('furioku_presets', {})) or 'zatím žádné'
+        await interaction.response.send_message('Uložené sestavy: ' + names[:1700] + '\nUložení stejného názvu přepíše sestavu. V pořadí uveď zdroje po řádcích (vlastní = já). Neuvedené zdroje se doplní na konec.', view=EnergySettings(self), ephemeral=True)
 
     # ── útok ──
     @discord.ui.button(label="＋5", emoji="⚔️", style=discord.ButtonStyle.danger, row=0)

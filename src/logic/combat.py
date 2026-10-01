@@ -85,8 +85,10 @@ def _refresh_energy(combat):
 def _absorb_energy(stat, damage):
     if 'energy' in stat:
         rest, absorbed = energy.absorb(stat['energy'], damage, stat.get('energy_perks', []))
+        stat['_energy_note'] = energy.consumption_note(stat['energy'])
         stat['fur'] = energy.pool(stat['energy'], stat.get('energy_perks', []))
         return rest, absorbed
+    stat['_energy_note'] = ''
     # NPCs retain their explicitly configured shield.
     absorbed = min(max(0, stat.get('fur', 0)), damage)
     stat['fur'] = max(0, stat.get('fur', 0) - absorbed)
@@ -99,6 +101,7 @@ def _attack_energy(combat, actor, resources):
         return 0
     before = copy.deepcopy(stat['energy'])
     amount = energy.attack(stat['energy'], stat.get('energy_perks', []))
+    resources['energy_note'] = energy.consumption_note(stat['energy'])
     stat['fur'] = energy.pool(stat['energy'], stat.get('energy_perks', []))
     if amount:
         resources['energy_before'] = before
@@ -145,6 +148,8 @@ def deliver_statuses(stat: dict, statuses: list, bs, reg: dict) -> list[str]:
             absorbed = apply_status_dmg(stat, dmg)
             if absorbed:
                 note += f" · 🔥 furioka pohltila {absorbed}"
+                if stat.get("_energy_note"):
+                    note += " · " + stat["_energy_note"]
         applied.append(f"{label}: {note}" if note else label)
     return applied
 
@@ -231,6 +236,8 @@ def apply_hit(stat: dict, raw_hit: int) -> dict:
     if absorbed:
         parts.append(f"−{absorbed} 🔥furioku")
     parts.append(f"= {final} do HP")
+    if stat.get("_energy_note"):
+        parts.append(stat["_energy_note"])
 
     return {
         "old_hp": old_hp,
@@ -1341,6 +1348,8 @@ class AttackView(ui.View):
             before = stat_snapshot(stat)
             fury_bonus = _attack_energy(state, self.attacker, self.resources)
             out = apply_hit(stat, damage + fury_bonus)
+            if self.resources.get("energy_note"):
+                out["change_str"] += " · Útok: " + self.resources["energy_note"]
             applied[:] = deliver_statuses(stat, statuses, bs, reg)
             out["new_hp"] = stat["hp"]
             log_event(state, "attack", self.target, before, stat_snapshot(stat),
@@ -1715,6 +1724,8 @@ class CombatCog(commands.Cog):
                         if absorbed else "")
             lines.append(console(
                 f"❤️ `{before.get('hp', hp)}` → `{hp}/{max_hp}` {bar}{dead}{fur_note}"))
+        if dmg and stat.get("_energy_note"):
+            lines.append(console(stat["_energy_note"]))
         return lines
 
     combat_group = app_commands.Group(
@@ -2773,6 +2784,8 @@ class CombatCog(commands.Cog):
             before = stat_snapshot(stat)
             fury_bonus = _attack_energy(combat, actor, resources)
             result = apply_hit(stat, damage + fury_bonus)
+            if resources.get("energy_note"):
+                result["change_str"] += " · Útok: " + resources["energy_note"]
             delivered = self._consume_weapon(interaction.user.id, weapon_id,
                                              mana_cost, runes_active)
             notes = []

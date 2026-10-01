@@ -83,13 +83,21 @@ def bonuses(p, perks):
 def spend(p, amount, perks):
     amount = min(max(0, amount), pool(p, perks))
     remaining = amount
-    own = min(max(0, p.get('fury_cur', 0)), remaining)
-    p['fury_cur'] = max(0, p.get('fury_cur', 0)) - own
-    remaining -= own
-    for s in linked(p, perks):
-        take = min(s['fury_cur'], remaining)
-        s['fury_cur'] -= take
+    sources = {s['id']: s for s in linked(p, perks)}
+    order = list(dict.fromkeys(p['furioka'].get('source_order', []) + ['self'] + list(sources)))
+    report = []
+    for key in order:
+        source = p if key == 'self' else sources.get(key)
+        if source is None:
+            continue
+        before = source['fury_cur']
+        take = min(before, remaining)
+        source['fury_cur'] -= take
         remaining -= take
+        if take:
+            report.append(dict(name='vlastní' if key == 'self' else source['name'], amount=take,
+                               exhausted=key != 'self' and before > 0 and source['fury_cur'] == 0))
+    p['_furioku_spent'] = report
     return amount
 
 
@@ -148,5 +156,66 @@ def rest(p, pct):
         old = s['fury_cur']
         s['fury_cur'] = min(s['fury_max'], old + int(s['fury_max'] * pct))
         if old != s['fury_cur']:
-            lines.append(f"đź‘» {s['name']}: {old} â†’ **{s['fury_cur']}** / {s['fury_max']}")
+            lines.append(f"👻 {s['name']}: {old} → **{s['fury_cur']}** / {s['fury_max']}")
     return lines
+
+
+def consumption_note(p):
+    report = p.pop('_furioku_spent', [])
+    if not report:
+        return ''
+    detail = ' · '.join(f"{r['name']} {r['amount']}" for r in report)
+    exhausted = ' '.join(f"💤 {r['name']} vyčerpal svou furioku." for r in report if r['exhausted'])
+    return f"🔥 Spotřeba: {detail}. {exhausted}".strip()
+
+
+def allocate(p, perks, attack_amount, defense_amount):
+    normalize(p)
+    if attack_amount < 0 or defense_amount < 0:
+        raise ValueError('Částky nesmí být záporné.')
+    if attack_amount and UTOK not in perks or defense_amount and OBRANA not in perks:
+        raise ValueError('Chybí perk Útok nebo Obrana.')
+    if attack_amount + defense_amount > pool(p, perks):
+        raise ValueError('Nemáš tolik dostupné energie.')
+    p['furioka'].update(atk_amount=attack_amount, def_amount=defense_amount)
+
+
+def set_source_order(p, names):
+    normalize(p)
+    by_name = {s['name'].casefold(): s['id'] for s in p['spirits']}
+    order = []
+    for name in names:
+        key = 'self' if name.strip().casefold() == 'já' else by_name.get(name.strip().casefold())
+        if key is None:
+            raise ValueError(f'Neznámý duch: {name}')
+        if key in order:
+            raise ValueError('Každý zdroj uveď jen jednou.')
+        order.append(key)
+    p['furioka']['source_order'] = order
+
+
+def save_preset(p, name):
+    from copy import deepcopy
+    normalize(p)
+    name = name.strip()
+    if not name or len(name) > 60:
+        raise ValueError('Název sestavy musí mít 1–60 znaků.')
+    p.setdefault('furioku_presets', {})[name] = deepcopy({
+        key: p['furioka'].get(key, [] if key in ('spirit_ids', 'source_order') else 0)
+        for key in ('spirit_ids', 'source_order', 'atk_amount', 'def_amount')})
+
+
+def load_preset(p, name, perks):
+    from copy import deepcopy
+    normalize(p)
+    preset = p.get('furioku_presets', {}).get(name.strip())
+    if preset is None:
+        raise ValueError('Tato sestava neexistuje.')
+    f = deepcopy(preset)
+    valid = {s['id'] for s in p['spirits']}
+    f['spirit_ids'] = [i for i in f['spirit_ids'] if i in valid] if JEDNOTA in perks else []
+    f['source_order'] = [i for i in f['source_order'] if i == 'self' or i in valid]
+    p['furioka'] = f
+    attack_amount, defense_amount = bonuses(p, perks)
+    f.update(atk_amount=attack_amount, def_amount=defense_amount)
+    return 'Sestava načtena. Přidělení je omezené aktuální energií a vlastněnými perky.'

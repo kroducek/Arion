@@ -55,3 +55,21 @@ Maximum vyčerpaného sjednoceného ducha zůstává započtené do společného
 Jediný dříve nasazený duch se stane hlavním automaticky. Pokud jich bylo více,
 hráč si musí hlavního vybrat; panel ho upozorní. Do výběru duchové nezískávají XP.
 Žádný duch ani XP se nesmažou a původní výběr Jednoty se zachová.
+
+## Pohodlné ovládání a spotřeba
+
+V `/furioku` lze zadat přesné částky, případně přesunout celou dostupnou zásobu
+do útoku nebo obrany (druhá rezervace se vynuluje). Volba vyžaduje příslušný perk.
+Tlačítko „Sestavy a čerpání“ otevře uložení, načtení a smazání pojmenované sestavy
+a nastavení pořadí zdrojů. Do pořadí se zadávají jména po řádcích, vlastní energie
+je `já`. Nezapojené zdroje se přeskočí; neuvedené se přidají nakonec (vlastní,
+pak ostatní duchové v pořadí zapojení). Stejný zdroj nesmí být uveden dvakrát.
+
+Sestava ukládá Jednotu, útočnou/obrannou rezervaci a pořadí čerpání, nikoli hlavního
+ducha ani aktuální energii. Stejný název přepíše existující sestavu. Načtení nepřidává
+energii, odstraní neexistující duchy, respektuje perky a omezí rezervace dostupnou
+zásobou (útok má přednost). Názvy sestav jsou rozlišované přesně.
+
+Potvrzené útoky, obranná absorpce a poškození statusy vypisují spotřebu podle zdrojů.
+Duch je označen hláškou 💤 pouze při spotřebě jeho posledního bodu, nikoli při každém
+dalším zásahu. Undo může obnovit energii; další skutečné vyčerpání se oznámí znovu.

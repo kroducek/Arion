@@ -62,6 +62,47 @@ class Rules(unittest.TestCase):
         self.assertEqual(len(e.equipped(p)), 1)
         self.assertEqual(e.totals(p, PERKS), (10, 80))
 
+    def test_priority_spending_and_exhaustion_only_on_transition(self):
+        p = player()
+        e.set_source_order(p, ['B', 'já', 'A'])
+        e.spend(p, 65, PERKS)
+        self.assertEqual(p['fury_cur'], 5)
+        self.assertEqual(p['spirits'][0]['fury_cur'], 40)
+        note = e.consumption_note(p)
+        self.assertIn('B 60', note)
+        self.assertIn('vlastní 5', note)
+        self.assertIn('💤 B', note)
+        e.spend(p, 1, PERKS)
+        self.assertNotIn('💤', e.consumption_note(p))
+        self.assertEqual(e.consumption_note(p), '')
+
+    def test_presets_do_not_refill_or_change_main_and_clamp_missing_perks(self):
+        p = player()
+        e.set_source_order(p, ['B', 'já'])
+        e.save_preset(p, 'Souboj')
+        original_main = p['main_spirit_id']
+        e.spend(p, 100, PERKS)
+        before = e.totals(p, PERKS)
+        e.load_preset(p, 'Souboj', PERKS)
+        self.assertEqual(e.totals(p, PERKS), before)
+        self.assertEqual(sum(e.bonuses(p, PERKS)), 10)
+        self.assertEqual(p['main_spirit_id'], original_main)
+        p['spirits'].pop()
+        e.load_preset(p, 'Souboj', [])
+        self.assertEqual(e.bonuses(p, []), (0, 0))
+        self.assertEqual(p['furioka']['spirit_ids'], [])
+
+    def test_exact_allocation_validates_before_mutating(self):
+        p = player()
+        e.normalize(p)
+        old = copy.deepcopy(p['furioka'])
+        for atk, defense, perks in [(-1, 0, PERKS), (1000, 0, PERKS), (1, 0, [])]:
+            with self.assertRaises(ValueError):
+                e.allocate(p, perks, atk, defense)
+            self.assertEqual(p['furioka'], old)
+        e.allocate(p, PERKS, 0, e.pool(p, PERKS))
+        self.assertEqual(e.bonuses(p, PERKS), (0, 110))
+
     def test_unlock_is_permanent_and_not_granted_by_empty_profile(self):
         p = {}
         e.normalize(p)
@@ -276,6 +317,22 @@ class Commands(unittest.IsolatedAsyncioTestCase):
         self.assertIn('60/100', embed.description)
         self.assertIn('A · Rank 1 💤', embed.description)
         self.assertNotIn('0/0', embed.description)
+
+    async def test_exact_modal_rechecks_character_and_saves_valid_amounts(self):
+        p = player()
+        data = {'1:1': p}
+        response = SimpleNamespace(edit_message=AsyncMock(), send_message=AsyncMock())
+        interaction = SimpleNamespace(user=SimpleNamespace(id=1), response=response)
+        with patch.object(spirits, '_load', return_value=data), patch.object(spirits, '_save') as save, patch.object(spirits, 'pkey', return_value='1:1'), patch.object(spirits, '_owned_perks', return_value=PERKS):
+            panel = spirits.FurioukaView(1)
+            modal = spirits.EnergyModal(panel, 'amount')
+            modal.first._value, modal.second._value = '40', '50'
+            await modal.on_submit(interaction)
+            self.assertEqual(e.bonuses(p, PERKS), (40, 50))
+            save.assert_called_once()
+            with patch.object(spirits, 'pkey', return_value='1:2'):
+                await modal.on_submit(interaction)
+            save.assert_called_once()
 
     async def test_locked_command_only_displays_question_marks(self):
         interaction = SimpleNamespace(user=SimpleNamespace(id=1), response=SimpleNamespace(send_message=AsyncMock()))

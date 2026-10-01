@@ -1261,6 +1261,10 @@ class Profile(commands.Cog):
                 if absorbed_by_fur:
                     parts.append(f"−{absorbed_by_fur} 🔥furioku")
                 parts.append(f"= {final_dmg} do HP")
+                from src.logic.furioku import consumption_note
+                note = consumption_note(profile)
+                if note:
+                    parts.append(note)
                 mitig_str = "  ".join(parts)
             else:
                 # mana/furioku damage = přímý odečet (mitigace nedává smysl)
