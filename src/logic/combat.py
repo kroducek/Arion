@@ -59,7 +59,7 @@ def _merge_energy(profile, state):
 
 def _energy_state(profile):
     energy.normalize(profile)
-    return copy.deepcopy({k: profile.get(k) for k in ('fury_cur', 'fury_max', 'spirits', 'equipped_spirit_ids', 'furioka')})
+    return copy.deepcopy({k: profile.get(k) for k in ('fury_cur', 'fury_max', 'spirits', 'main_spirit_id', 'equipped_spirit_ids', 'furioka')})
 
 
 def _refresh_energy(combat):
@@ -79,7 +79,7 @@ def _refresh_energy(combat):
         with use_slot(uid, key.split(':')[-1]):
             stat['energy_perks'] = _owned_perks(uid)
         stat['fur'] = energy.pool(stat['energy'], stat['energy_perks'])
-        stat['fur_max'] = profile.get('fury_max', 0)
+        stat['fur_max'] = energy.totals(stat['energy'], stat['energy_perks'])[1]
 
 
 def _absorb_energy(stat, damage):

@@ -104,14 +104,6 @@ def get_equipped_spirit(profile: dict) -> dict | None:
     return spirits[0] if spirits else None
 
 
-def spirit_fury_bonus(profile: dict) -> int:
-    return sum(s['fury_cur'] for s in energy.equipped(profile))
-
-
-def fury_display(profile: dict) -> tuple[int, int, int]:
-    return profile.get('fury_cur', 0), profile.get('fury_max', 0), spirit_fury_bonus(profile)
-
-
 def breed_spirits(profile: dict, idx_a: int, idx_b: int) -> dict:
     spirits = profile.get("spirits", [])
     if not (0 <= idx_a < len(spirits) and 0 <= idx_b < len(spirits)):
@@ -161,11 +153,11 @@ def _elem_emoji(element: str) -> str:
 
 def _spirit_line(s: dict, equipped: bool = False) -> str:
     emoji  = _elem_emoji(s.get("element", ""))
-    eq     = "  ◀ *equipnutý*" if equipped else ""
+    eq     = "  ⭐ *hlavní duch*" if equipped else ""
     thresh = s.get("xp_threshold", rank_xp_threshold(s["rank"]))
     return (
         f"{SPIRIT_EMO} **{s['name']}** {emoji}  ·  {rank_label(s['rank'])}  ·  "
-        f"{s.get('fury_cur', s['fury'])}/{s.get('fury_max', s['fury'])} {FU_EMO}  ·  XP: {s.get('xp', 0)}/{thresh}{eq}"
+        f"{s.get('fury_cur', s['fury'])}/{s.get('fury_max', s['fury'])} {FU_EMO} {'💤' if s.get('fury_cur', s['fury']) == 0 else ''}  ·  XP: {s.get('xp', 0)}/{thresh}{eq}"
     )
 
 def _spirit_embed(s: dict, title: str = None) -> discord.Embed:
@@ -175,7 +167,7 @@ def _spirit_embed(s: dict, title: str = None) -> discord.Embed:
     embed  = discord.Embed(title=title or f"{SPIRIT_EMO} {s['name']}", color=color)
     embed.add_field(name="Rank",    value=rank_label(s["rank"]),       inline=True)
     embed.add_field(name="Element", value=f"{emoji} {elem}",           inline=True)
-    embed.add_field(name="Furioka", value=f"{s.get('fury_cur', s['fury'])}/{s.get('fury_max', s['fury'])} {FU_EMO}",     inline=True)
+    embed.add_field(name="Furioka", value=f"{s.get('fury_cur', s['fury'])}/{s.get('fury_max', s['fury'])} {FU_EMO} {'💤' if s.get('fury_cur', s['fury']) == 0 else ''}",     inline=True)
     thresh = s.get("xp_threshold", rank_xp_threshold(s["rank"]))
     embed.add_field(
         name="Progres",
@@ -326,10 +318,10 @@ def furioka_absorb(profile: dict, user_id: int, incoming_dmg: int) -> tuple[int,
     return energy.absorb(profile, incoming_dmg, _owned_perks(user_id))
 
 
-def _furioka_embed(profile: dict, user_id: int) -> discord.Embed:
+def _furioka_embed(profile: dict, user_id: int, page: int = 0) -> discord.Embed:
     f      = _furioka(profile)
     perks  = _owned_perks(user_id)
-    spirits = energy.equipped(profile)
+    spirits = profile['spirits'][page * 24:(page + 1) * 24]
     pool   = furioku_pool(profile, user_id)
     fury_cur = profile.get("fury_cur", 0)
 
@@ -340,7 +332,8 @@ def _furioka_embed(profile: dict, user_id: int) -> discord.Embed:
     atk, dfn = furioka_bonuses(profile, user_id)
     volne    = max(0, pool - atk - dfn)
 
-    src = f"Vlastní: **{fury_cur}/{profile.get('fury_max', 0)}** · Dostupné: **{pool}**"
+    current, maximum = energy.totals(profile, perks)
+    src = f"Furioku: **{current}/{maximum}** · Vlastní: **{fury_cur}/{profile.get('fury_max', 0)}** · Dostupné: **{pool}**"
 
     embed = discord.Embed(
         title=f"{FU_EMO}  Správa furioku",
@@ -362,10 +355,12 @@ def _furioka_embed(profile: dict, user_id: int) -> discord.Embed:
         inline=True,
     )
 
-    lines = [f"{'🔗' if s['id'] in f['spirit_ids'] and has_jednota else '👻'} **{s['name']}** · {s['fury_cur']}/{s['fury_max']}" for s in spirits]
+    lines = [f"{'🔗' if s['id'] in f['spirit_ids'] and has_jednota else '👻'} **{s['name']}** · {s['fury_cur']}/{s['fury_max']} {'💤' if s['fury_cur'] == 0 else ''} {'⭐ hlavní' if s['id'] == profile.get('main_spirit_id') else ''}" for s in spirits]
     embed.add_field(name="Duchové", value=("\n".join(lines)[:1000] or "Nasadit ducha: `/duch equip`."), inline=False)
-    embed.add_field(name="Jednota", value="`/furioku duch:jméno` přepne zapojení ducha. Pořadí zapojení určuje spotřebu; nejdřív vlastní energie.", inline=False)
+    embed.add_field(name="Jednota", value="Hlavní duch dostává XP a ukazuje se v profilu. Jednotu vyber nezávisle v nabídce dole; sama XP nedává. Spotřeba: vlastní energie, pak duchové v pořadí zapojení.", inline=False)
 
+    if profile.get('main_spirit_choice_pending'):
+        embed.add_field(name="Vyber hlavního ducha", value="Dříve jsi měl více nasazených duchů. Vyber jednoho v panelu; do té doby duchové XP nezískávají. Jednota zůstává zachovaná.", inline=False)
     fu_perks = [p for p in perks if p.startswith("furioku_")]
     if fu_perks:
         try:
@@ -390,6 +385,56 @@ class FurioukaView(discord.ui.View):
         super().__init__(timeout=300)
         self.user_id = user_id
         self.profile_key = pkey(user_id)
+        self.page = 0
+        self._build_selects()
+
+    def _build_selects(self):
+        for child in list(self.children):
+            if isinstance(child, discord.ui.Select):
+                self.remove_item(child)
+        _, profile = self._get()
+        spirits = profile.get('spirits', []) if profile else []
+        pages = max(1, (len(spirits) + 23) // 24)
+        self.page %= pages
+        group = spirits[self.page * 24:(self.page + 1) * 24]
+        for mode, row, title in [('main', 3, 'Hlavní duch · XP a profil'), ('unity', 4, 'Jednota · zapojit / odpojit ducha')]:
+            options = [discord.SelectOption(label='Bez hlavního ducha' if mode == 'main' else 'Odpojit všechny', value='none')]
+            for spirit in group:
+                chosen = spirit['id'] == profile.get('main_spirit_id') if mode == 'main' else spirit['id'] in profile['furioka']['spirit_ids']
+                label = f"{'✓ ' if chosen else ''}{spirit['name']}"
+                options.append(discord.SelectOption(label=label[:100], value=spirit['id'],
+                    description=f"{spirit['fury_cur']}/{spirit['fury_max']}" + (' · 💤' if spirit['fury_cur'] == 0 else '')))
+            select = discord.ui.Select(placeholder=f"{title} ({self.page + 1}/{pages})", options=options, row=row)
+            async def callback(interaction, select=select, mode=mode):
+                if not await self._guard(interaction):
+                    return
+                data, profile = self._get()
+                value = select.values[0]
+                if value != 'none' and value not in {s['id'] for s in profile['spirits']}:
+                    return await interaction.response.send_message('Duch už není ve tvé sbírce. Otevři panel znovu.', ephemeral=True)
+                if mode == 'main':
+                    energy.choose_main(profile, None if value == 'none' else value)
+                else:
+                    if PERK_JEDNOTA not in _owned_perks(self.user_id):
+                        return await interaction.response.send_message('❌ Chybí perk Furioku: Jednota.', ephemeral=True)
+                    ids = profile['furioka']['spirit_ids']
+                    if value == 'none':
+                        ids.clear()
+                    elif value in ids:
+                        ids.remove(value)
+                    else:
+                        ids.append(value)
+                await self._refresh(interaction, data, profile)
+            select.callback = callback
+            self.add_item(select)
+
+    @discord.ui.button(label="Další duchové", emoji="➡️", row=2)
+    async def next_spirits(self, interaction, button):
+        if not await self._guard(interaction):
+            return
+        self.page += 1
+        data, profile = self._get()
+        await self._refresh(interaction, data, profile)
 
     def _get(self):
         data = _load()
@@ -403,8 +448,9 @@ class FurioukaView(discord.ui.View):
 
     async def _refresh(self, interaction, data, profile):
         _save(data)
+        self._build_selects()
         await interaction.response.edit_message(
-            embed=_furioka_embed(profile, self.user_id), view=self)
+            embed=_furioka_embed(profile, self.user_id, self.page), view=self)
 
     def _adjust(self, profile: dict, role: str, delta: int) -> str | None:
         perks = _owned_perks(self.user_id)
@@ -463,11 +509,11 @@ class FurioukaView(discord.ui.View):
         if PERK_JEDNOTA not in perks:
             return await interaction.response.send_message(
                 "❌ Sloučit ducha vyžaduje perk **Furioku: Jednota**.", ephemeral=True)
-        if not get_equipped_spirit(profile):
+        if not profile['spirits']:
             return await interaction.response.send_message(
-                "❌ Nemáš equipnutého ducha.", ephemeral=True)
+                "❌ Nemáš žádného ducha.", ephemeral=True)
         f = _furioka(profile)
-        ids = [s["id"] for s in energy.equipped(profile)]
+        ids = [s["id"] for s in profile["spirits"]]
         f["spirit_ids"] = [] if f["spirit_ids"] == ids else ids
         f["use_spirit"] = bool(f["spirit_ids"])
         await self._refresh(interaction, data, profile)
@@ -511,7 +557,7 @@ class Spirits(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="furioku", description="Správa vlastní energie, duchů a Jednoty.")
-    @app_commands.describe(duch="Volitelně přepni Jednotu konkrétního nasazeného ducha.")
+    @app_commands.describe(duch="Volitelně přepni Jednotu konkrétního vlastněného ducha.")
     async def furioku(self, interaction: discord.Interaction, duch: str | None = None):
         data = _load()
         profile = data.get(pkey(interaction.user.id), {})
@@ -521,9 +567,9 @@ class Spirits(commands.Cog):
         if duch:
             if PERK_JEDNOTA not in _owned_perks(interaction.user.id):
                 return await interaction.response.send_message("❌ Chybí perk Furioku: Jednota.", ephemeral=True)
-            spirit = next((s for s in energy.equipped(profile) if s['name'].lower() == duch.lower()), None)
+            spirit = next((s for s in profile['spirits'] if s['name'].lower() == duch.lower()), None)
             if spirit is None:
-                return await interaction.response.send_message("❌ Nejprve ducha nasaď přes /duch equip.", ephemeral=True)
+                return await interaction.response.send_message("❌ Tento duch není ve tvé sbírce.", ephemeral=True)
             ids = profile['furioka']['spirit_ids']
             if spirit['id'] in ids:
                 ids.remove(spirit['id'])
@@ -575,7 +621,7 @@ class Spirits(commands.Cog):
         _save(data)
 
         embed = _spirit_embed(spirit, title=f"✅ Duch přidán — {name}")
-        embed.description = f"Přidán hráči **{member.display_name}**. Použij `/duch equip` k equipnutí."
+        embed.description = f"Přidán hráči **{member.display_name}**. Hlavního ducha a Jednotu vybereš přes `/furioku`."
         await interaction.followup.send(embed=embed)
 
     # ── /duch xp ──────────────────────────────────────────────────────────────
@@ -604,7 +650,7 @@ class Spirits(commands.Cog):
 
         results = energy.grant_xp(profile, amount)
         if not results:
-            return await interaction.followup.send("❌ Hráč nemá nasazené duchy.")
+            return await interaction.followup.send("❌ Hráč nemá vybraného hlavního ducha.")
         _save(data)
         lines = [f"👻 **{r['spirit_name']}**: +{amount} XP · rank {r['old_rank']} → {r['new_rank']}" for r in results]
         await interaction.followup.send("\n".join(lines)[:1900])
@@ -708,9 +754,9 @@ class Spirits(commands.Cog):
     async def furioku_duch_autocomplete(self, interaction: discord.Interaction, current: str):
         profile = _load().get(pkey(interaction.user.id), {})
         return [app_commands.Choice(name=s['name'][:100], value=s['name'])
-                for s in energy.equipped(profile) if current.lower() in s['name'].lower()][:25]
+                for s in profile.get('spirits', []) if current.lower() in s['name'].lower()][:25]
 
-    @duch.command(name="equip", description="Nasaď si strážného ducha (DM může i jiným).")
+    @duch.command(name="equip", description="Vyber jednoho hlavního ducha pro XP a profil (DM může i jiným).")
     @app_commands.describe(name="Jméno ducha", member="[DM] Hráč (prázdné = ty)")
     @app_commands.autocomplete(name=_ac_spirit_name)
     async def duch_equip(
@@ -742,8 +788,7 @@ class Spirits(commands.Cog):
 
         energy.normalize(profile)
         spirit = spirits[idx]
-        if spirit['id'] not in profile['equipped_spirit_ids']:
-            profile['equipped_spirit_ids'].append(spirit['id'])
+        energy.choose_main(profile, spirit['id'])
         _save(data)
         old_str = ""
         who = "Sis" if target.id == interaction.user.id else f"**{target.display_name}**"
@@ -777,8 +822,8 @@ class Spirits(commands.Cog):
 
         spirit = next((s for s in energy.equipped(profile) if s['name'].lower() == name.lower()), None)
         if spirit is None:
-            return await interaction.followup.send("❌ Tento duch není nasazený.")
-        profile['equipped_spirit_ids'].remove(spirit['id'])
+            return await interaction.followup.send("❌ Tento duch není hlavní.")
+        energy.choose_main(profile, None)
         energy.normalize(profile)
         _save(data)
         await interaction.followup.send(f"✅ Duch **{spirit['name']}** sundán. Zůstává v kolekci.")
@@ -957,7 +1002,7 @@ class Spirits(commands.Cog):
 
         spirit   = spirits[idx]
         equipped = (spirit["id"] in equipped_ids)
-        title    = f"{SPIRIT_EMO} {spirit['name']}" + (" ◀ equipnutý" if equipped else "")
+        title    = f"{SPIRIT_EMO} {spirit['name']}" + (" ⭐ hlavní duch" if equipped else "")
         embed    = _spirit_embed(spirit, title=title)
         await interaction.followup.send(embed=embed)
 

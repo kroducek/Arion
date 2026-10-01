@@ -17,8 +17,8 @@ def player():
              spirits=[dict(name='A', rank=1, fury=40, element='ohen', description='original', xp=50, total_xp=50),
                       dict(name='B', rank=1, fury=60, element='ohen')], equipped_spirit_idx=0)
     e.normalize(p)
-    p['equipped_spirit_ids'] = [s['id'] for s in p['spirits']]
-    p['furioka'].update(spirit_ids=list(p['equipped_spirit_ids']), atk_amount=15, def_amount=30)
+    e.choose_main(p, p['spirits'][0]['id'])
+    p['furioka'].update(spirit_ids=[s['id'] for s in p['spirits']], atk_amount=15, def_amount=30)
     return p
 
 
@@ -32,6 +32,35 @@ class Rules(unittest.TestCase):
         self.assertEqual(p, before)
         self.assertEqual(e.pool(p, PERKS), 80)
         self.assertEqual(p['spirits'][0]['fury_cur'], 80)
+
+    def test_multi_equip_migration_requires_choice_but_preserves_unity(self):
+        p = player()
+        p.pop('main_spirit_id')
+        ids = [s['id'] for s in p['spirits']]
+        p['equipped_spirit_ids'] = ids
+        e.normalize(p)
+        self.assertTrue(p['main_spirit_choice_pending'])
+        self.assertEqual(e.equipped(p), [])
+        self.assertEqual(p['furioka']['spirit_ids'], ids)
+        self.assertEqual(e.grant_xp(p, 100), [])
+        e.choose_main(p, ids[1])
+        self.assertFalse(p['main_spirit_choice_pending'])
+        self.assertEqual(e.equipped(p)[0]['name'], 'B')
+        self.assertEqual(p['furioka']['spirit_ids'], ids)
+
+    def test_main_and_unity_are_independent_and_exhausted_capacity_stays(self):
+        p = player()
+        p['spirits'][1]['fury_cur'] = 0
+        p['furioka']['spirit_ids'] = [p['spirits'][1]['id']]
+        self.assertEqual(e.totals(p, PERKS), (10, 80))
+        self.assertEqual(e.totals(p, []), (10, 20))
+        p['spirits'][0]['fury_cur'] = 0
+        e.grant_xp(p, 10)
+        self.assertEqual(p['spirits'][0]['xp'], 60)
+        self.assertEqual(p['spirits'][1].get('xp', 0), 0)
+        e.choose_main(p, p['spirits'][1]['id'])
+        self.assertEqual(len(e.equipped(p)), 1)
+        self.assertEqual(e.totals(p, PERKS), (10, 80))
 
     def test_unlock_is_permanent_and_not_granted_by_empty_profile(self):
         p = {}
@@ -56,29 +85,30 @@ class Rules(unittest.TestCase):
     def test_disconnect_does_not_refill_and_cannot_double_allocate(self):
         p = player()
         e.attack(p, PERKS)
-        p['equipped_spirit_ids'] = []
+        e.choose_main(p, None)
+        p['furioka']['spirit_ids'] = []
         e.normalize(p)
         self.assertEqual(e.pool(p, PERKS), 0)
         self.assertEqual(e.bonuses(p, PERKS), (0, 0))
         p['equipped_spirit_ids'] = [s['id'] for s in p['spirits']]
-        p['furioka']['spirit_ids'] = list(p['equipped_spirit_ids'])
+        p['furioka']['spirit_ids'] = [s['id'] for s in p['spirits']]
         self.assertEqual(e.pool(p, PERKS), 95)
 
     def test_rest_recovers_unequipped_spirits_too(self):
         p = player()
         p['spirits'][0]['fury_cur'] = 0
         p['spirits'][1]['fury_cur'] = 10
-        p['equipped_spirit_ids'] = []
+        e.choose_main(p, None)
         profile._rest_heal(p, .5)
         self.assertEqual(p['fury_cur'], 20)
         self.assertEqual([s['fury_cur'] for s in p['spirits']], [20, 40])
 
-    def test_xp_goes_to_each_equipped_spirit_and_can_gain_multiple_ranks(self):
+    def test_xp_goes_only_to_main_spirit_and_can_gain_multiple_ranks(self):
         p = player()
         result = e.grant_xp(p, 1000)
         self.assertTrue(all(r['new_rank'] >= 3 for r in result))
-        self.assertEqual([s['total_xp'] for s in p['spirits']], [1050, 1000])
-        p['equipped_spirit_ids'] = []
+        self.assertEqual([s.get('total_xp', 0) for s in p['spirits']], [1050, 0])
+        e.choose_main(p, None)
         self.assertEqual(e.grant_xp(p, 100), [])
 
     def test_breeding_preserves_identity_xp_element_and_equipment(self):
@@ -159,11 +189,11 @@ class Integration(unittest.TestCase):
         self.assertEqual(self.c['stats']['<@1>']['hp'], 80)
         self.assertEqual(self.c['stats']['<@1>']['energy']['fury_cur'], 10)
 
-    def test_admin_xp_path_rewards_all_equipped_spirits(self):
+    def test_admin_xp_path_rewards_only_main_spirit(self):
         result = stats.add_xp(1, 100)
         p = load_profiles()['1:1']
-        self.assertEqual([s['total_xp'] for s in p['spirits']], [150, 100])
-        self.assertEqual(len(result['spirits']), 2)
+        self.assertEqual([s.get('total_xp', 0) for s in p['spirits']], [150, 0])
+        self.assertEqual(len(result['spirits']), 1)
 
     def test_bound_character_not_current_slot_receives_writeback(self):
         p = load_profiles()
@@ -209,6 +239,43 @@ class Commands(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(p['furioka']['atk_amount'], 0 if hit else 15)
                     self.assertEqual(cog.active_combats[123]['stats']['NPC']['hp'], 75 if hit else 100)
                 db.reset_for_tests(directory + '/closed.db')
+
+    async def test_panel_selects_main_and_unity_independently_across_pages(self):
+        import discord
+        p = player()
+        for n in range(25):
+            p['spirits'].append(dict(name=f'Extra {n}', rank=1, fury=10))
+        e.normalize(p)
+        data = {'1:1': p}
+        interaction = SimpleNamespace(user=SimpleNamespace(id=1), response=SimpleNamespace(edit_message=AsyncMock(), send_message=AsyncMock()))
+        with patch.object(spirits, '_load', return_value=data), patch.object(spirits, '_save'), patch.object(spirits, 'pkey', return_value='1:1'), patch.object(spirits, '_owned_perks', return_value=PERKS):
+            view = spirits.FurioukaView(1)
+            self.assertTrue(view.to_components())
+            await view.next_spirits.callback(interaction)
+            selects = [c for c in view.children if isinstance(c, discord.ui.Select)]
+            chosen = p['spirits'][26]['id']
+            self.assertIn(chosen, [o.value for o in selects[0].options])
+            selects[0]._values = [chosen]
+            await selects[0].callback(interaction)
+            self.assertEqual(p['main_spirit_id'], chosen)
+            self.assertNotIn(chosen, p['furioka']['spirit_ids'])
+            selects = [c for c in view.children if isinstance(c, discord.ui.Select)]
+            selects[1]._values = [chosen]
+            await selects[1].callback(interaction)
+            self.assertIn(chosen, p['furioka']['spirit_ids'])
+            self.assertEqual(p['main_spirit_id'], chosen)
+
+    async def test_profile_shows_combined_pool_and_exhausted_main(self):
+        p = player()
+        p['fury_cur'] = p['fury_max'] = 0
+        p['spirits'][0]['fury_cur'] = 0
+        p['spirits'][1]['fury_cur'] = 60
+        target = SimpleNamespace(id=1, display_name='Player', display_avatar=SimpleNamespace(url='https://example.com/avatar.png'))
+        with patch('src.logic.spirits._owned_perks', return_value=PERKS):
+            embed = profile._build_stats_embed(target, p)
+        self.assertIn('60/100', embed.description)
+        self.assertIn('A · Rank 1 💤', embed.description)
+        self.assertNotIn('0/0', embed.description)
 
     async def test_locked_command_only_displays_question_marks(self):
         interaction = SimpleNamespace(user=SimpleNamespace(id=1), response=SimpleNamespace(send_message=AsyncMock()))

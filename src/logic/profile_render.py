@@ -262,7 +262,7 @@ def render_prukaz_card(profile, char_name, gold, silver, stardust, rank="F3",
                    ((155, 120, 230), "Stardust", stardust)])
     y += 40
     if spirit_name:
-        d.text((rx, y), f"Strážný duch: {spirit_name}", font=_font(19, serif=True), fill=GREY); y += 34
+        d.text((rx, y), f"Hlavní duch: {spirit_name}", font=_font(19, serif=True), fill=GREY); y += 34
     if reputation:
         d.text((rx, y), "◆ Reputace", font=_font(19, serif=True), fill=(212, 175, 55)); y += 26
         for ln in _wrap(d, reputation, _font(20, serif=True), maxw, max_lines=2):
@@ -329,9 +329,9 @@ def render_stats_card(profile, char_name, portrait_bytes=None, extras=None):
     hp_max = profile.get("hp_max", 50);  hp = profile.get("hp_cur", hp_max)
     mn_max = profile.get("mana_max", 5); mn = profile.get("mana_cur", 0)
     hu_max = profile.get("hunger_max", 10); hu = profile.get("hunger_cur", hu_max)
-    fu_max = profile.get("fury_max", 0); fu = profile.get("fury_cur", 0)
+    fu, fu_max = _ex.get("fury_total", (profile.get("fury_cur", 0), profile.get("fury_max", 0)))
     _hpval = f"{hp} / {hp_max}" + (f"  ·  {_ex['def']} DEF" if _ex.get("def") else "")
-    _fuval = (f"{fu} / {fu_max}" if fu_max else f"{fu}") + (f"  +{_ex['fury_spirit']}" if _ex.get("fury_spirit") else "")
+    _fuval = f"{fu} / {fu_max}"
     rows = [("Zdraví", _hpval, hp/hp_max if hp_max else 0, (192, 57, 43), (231, 76, 60)),
             ("Mana", f"{mn} / {mn_max}", mn/mn_max if mn_max else 0, (37, 99, 235), (59, 130, 246)),
             ("Hlad", f"{hu} / {hu_max}", hu/hu_max if hu_max else 0, (214, 137, 16), (241, 196, 15)),
@@ -350,7 +350,7 @@ def render_stats_card(profile, char_name, portrait_bytes=None, extras=None):
     d.text((48, y + 4), "Vliv", font=_font(19, serif=True), fill=GREY)
     _viv = f"Světlo {v_s}     Temnota {v_t}     Rovnováha {v_r}"
     if _ex.get("fury_spirit_name"):
-        _viv += f"       ·  Duch: {_ex['fury_spirit_name']}"
+        _viv += f"       ·  Hlavní duch: {_ex['fury_spirit_name']}"
     d.text((150, y + 2), _viv, font=_font(22), fill=(222, 222, 232))
     y += 44
 

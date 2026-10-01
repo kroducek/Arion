@@ -27,7 +27,14 @@ def normalize(p):
     if 'spirit_ids' not in f:
         enabled = f.get('use_spirit') or f.get('atk_spirit') or f.get('def_spirit')
         f['spirit_ids'] = list(p['equipped_spirit_ids']) if enabled else []
-    f['spirit_ids'] = list(dict.fromkeys(i for i in f['spirit_ids'] if i in p['equipped_spirit_ids']))
+    if 'main_spirit_id' not in p:
+        previous = p['equipped_spirit_ids']
+        p['main_spirit_id'] = previous[0] if len(previous) == 1 else None
+        p['main_spirit_choice_pending'] = len(previous) > 1
+    if p['main_spirit_id'] not in valid:
+        p['main_spirit_id'] = None
+    p['equipped_spirit_ids'] = [p['main_spirit_id']] if p['main_spirit_id'] else []
+    f['spirit_ids'] = list(dict.fromkeys(i for i in f['spirit_ids'] if i in valid))
     f['use_spirit'] = bool(f['spirit_ids'])
     if spirits or sum(p.get(k, 0) for k in ('vliv_svetlo', 'vliv_temnota', 'vliv_rovnovaha')) > 0:
         p['furioku_unlocked'] = True
@@ -48,6 +55,21 @@ def linked(p, perks):
 
 def pool(p, perks):
     return max(0, p.get('fury_cur', 0)) + sum(s['fury_cur'] for s in linked(p, perks))
+
+
+def totals(p, perks):
+    spirits = linked(p, perks)
+    return (p['fury_cur'] + sum(s['fury_cur'] for s in spirits),
+            p['fury_max'] + sum(s['fury_max'] for s in spirits))
+
+
+def choose_main(p, spirit_id):
+    normalize(p)
+    if spirit_id is not None and spirit_id not in {s['id'] for s in p['spirits']}:
+        raise ValueError('Duch už není ve tvé sbírce.')
+    p['main_spirit_id'] = spirit_id
+    p['main_spirit_choice_pending'] = False
+    normalize(p)
 
 
 def bonuses(p, perks):
@@ -126,5 +148,5 @@ def rest(p, pct):
         old = s['fury_cur']
         s['fury_cur'] = min(s['fury_max'], old + int(s['fury_max'] * pct))
         if old != s['fury_cur']:
-            lines.append(f"👻 {s['name']}: {old} → **{s['fury_cur']}** / {s['fury_max']}")
+            lines.append(f"đź‘» {s['name']}: {old} â†’ **{s['fury_cur']}** / {s['fury_max']}")
     return lines

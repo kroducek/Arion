@@ -357,7 +357,7 @@ def _apply_vliv_fury(profile: dict) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 # STRÁŽNÝ DUCH — importováno z spirits.py
 # ══════════════════════════════════════════════════════════════════════════════
-from src.logic.spirits import get_equipped_spirit, fury_display
+from src.logic.spirits import get_equipped_spirit
 
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -390,7 +390,7 @@ def _build_prukaz_embed(target, profile) -> discord.Embed:
     lines.append(f"-# {COIN} **{balance}**  \u00b7  {COIN_SILVER} **{silver_bal}**  \u00b7  {COIN_STARDUST} **{stardust_bal}**")
     from src.logic.furioku import equipped
     for spirit in equipped(profile):
-        lines.append(f"-# {SPIRIT_EMO} *{spirit['name']}: {spirit['fury_cur']}/{spirit['fury_max']} {FU_EMO}*")
+        lines.append(f"-# {SPIRIT_EMO} *Hlavní duch: {spirit['name']}: {spirit['fury_cur']}/{spirit['fury_max']} {FU_EMO} {'💤' if spirit['fury_cur'] == 0 else ''}*")
 
     bio = profile.get("bio", "")
     if bio:
@@ -454,7 +454,11 @@ def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
     hp_cur = profile.get("hp_cur", 50); hp_max = profile.get("hp_max", 50)
     hunger_cur = profile.get("hunger_cur", 10); hunger_max = profile.get("hunger_max", 10)
     mana_cur = profile.get("mana_cur", 0); mana_max = profile.get("mana_max", 5)
-    fury_cur, fury_max, spirit_bonus = fury_display(profile)
+    from src.logic import furioku as energy
+    from src.logic.spirits import _owned_perks
+    perks = _owned_perks(target.id)
+    fury_cur, fury_max = energy.totals(profile, perks)
+    united = energy.linked(profile, perks)
     equipped_spirit = get_equipped_spirit(profile)
     v_svetlo = profile.get("vliv_svetlo", 0)
     v_temnota = profile.get("vliv_temnota", 0)
@@ -469,18 +473,12 @@ def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
     hp_bar = _heart_bar(hp_cur, hp_max)
     hunger_bar = _hunger_bar(hunger_cur, hunger_max)
     mana_bar = _mana_bar(mana_cur, mana_max)
-    fury_total = fury_cur + spirit_bonus
-    from src.logic.furioku import equipped
-    total_max = fury_max + sum(s["fury_max"] for s in equipped(profile))
-    fury_bar = _bar(fury_total, total_max or 1)
+    fury_bar = _bar(fury_cur, fury_max) if fury_max else '░' * 10
     xp_bar = _bar(xp, cap if cap else 1)
     def_str = f"  \u00b7  \U0001f6e1\ufe0f **{total_def}** DEF" if total_def else ""
     xp_str = f"{xp} (MAX)" if not cap else f"{xp}/{cap}"
     # Furioka popisek
-    if spirit_bonus > 0 and equipped_spirit:
-        fury_display_str = f"{fury_cur}/{fury_max}  *(duchové: {spirit_bonus} aktuální energie)*"
-    else:
-        fury_display_str = f"{fury_cur}/{fury_max}"
+    fury_display_str = f"{fury_cur}/{fury_max}" + (" · Jednota" if united else "")
 
     # Statusy (ikony)
     status_icons = ""
@@ -504,7 +502,9 @@ def _build_stats_embed(target, profile, guild_id=None) -> discord.Embed:
         f"{HP_ON} **Zdraví**   {hp_bar}   `{hp_cur}/{hp_max}`{def_str}",
         f"{MN_ON} **Mana**   {mana_bar}   `{mana_cur}/{mana_max}`",
         f"{HN_ON} **Hlad**   {hunger_bar}   `{hunger_cur}/{hunger_max}`",
-        f"{FU_EMO} **Furioka**   {fury_bar}   {fury_display_str}",
+        f"{FU_EMO} **Furioku**   {fury_bar}   {fury_display_str}",
+        "👻 **Hlavní duch:** " + (f"{equipped_spirit['name']} · Rank {equipped_spirit['rank']}" + (' 💤' if equipped_spirit['fury_cur'] == 0 else '') if equipped_spirit else 'nevybraný — /furioku'),
+        "🔗 **Jednota:** " + (', '.join(s['name'] + (' 💤' if s['fury_cur'] == 0 else '') for s in united)[:1800] or 'neaktivní'),
     ]
     if status_icons:
         vit.append(f"\U0001fa78 **Statusy**   {status_icons}   *(detail v /quicksheet)*")
@@ -694,11 +694,10 @@ async def _test_stats_payload(target, profile):
     except Exception:
         total_def = 0
     try:
-        _fc, _fm, spirit_bonus = fury_display(profile)
         from src.logic.furioku import equipped
-        spirit_name = ", ".join(s["name"] for s in equipped(profile)) or None
+        spirit_name = ", ".join(s["name"] + (' 💤' if s['fury_cur'] == 0 else '') for s in equipped(profile)) or None
     except Exception:
-        spirit_bonus, spirit_name = 0, None
+        spirit_name = None
     status_names = []
     try:
         from src.core.dnd.blacksmith import load_statuses
@@ -727,10 +726,12 @@ async def _test_stats_payload(target, profile):
     except Exception:
         logger.exception("[profile] perk bonusy pro kartu selhaly")
         _card_pb = {}
+    from src.logic.furioku import totals
+    from src.logic.spirits import _owned_perks
     extras = {
         "def":              total_def,
         "perk_bonus":       _card_pb,
-        "fury_spirit":      spirit_bonus,
+        "fury_total":       totals(profile, _owned_perks(target.id)),
         "fury_spirit_name": spirit_name,
         "statuses":         status_names,
         "perks":            perk_cnt,
@@ -753,7 +754,7 @@ async def _test_prukaz_payload(target, profile, guild_id=None):
     silver    = get_balance(target.id, "silver")
     stardust  = get_balance(target.id, "stardust")
     from src.logic.furioku import equipped
-    spirit_names = ", ".join(s["name"] for s in equipped(profile))
+    spirit_names = ", ".join(s["name"] + (' 💤' if s['fury_cur'] == 0 else '') for s in equipped(profile))
     pbytes    = await _fetch_portrait_bytes(target, profile)
     rep_line  = None
     if guild_id is not None:
