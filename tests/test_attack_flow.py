@@ -312,5 +312,69 @@ class Routing(unittest.IsolatedAsyncioTestCase):
         resolve.assert_not_called()
 
 
+class DmPanel(unittest.IsolatedAsyncioTestCase):
+    def data(self):
+        return dict(id='a', flow_version=1, message_id='77', attacker='<@1>', target='<@2>',
+                    damage=4, requests=[], reaction='', weapon_label='Meč')
+
+    def interaction(self, dm=True):
+        return SimpleNamespace(channel_id=123, message=SimpleNamespace(id=888),
+            user=SimpleNamespace(id=9, roles=[SimpleNamespace(name='DM')] if dm else []),
+            response=SimpleNamespace(is_done=lambda: False, send_message=AsyncMock(),
+                                     edit_message=AsyncMock(), send_modal=AsyncMock()))
+
+    async def test_lock_opens_ephemeral_admin_controls(self):
+        public = ui.AttackView(object(), 123, data=self.data())
+        self.assertEqual([b.label for b in public.children], ['Reakce', 'Hodit', 'DM'])
+        i = self.interaction()
+        with patch.object(public, 'fresh', new_callable=AsyncMock, return_value=public):
+            await public.dm_panel.callback(i)
+        sent = i.response.send_message.call_args.kwargs
+        self.assertTrue(sent['ephemeral'])
+        panel = sent['view']
+        self.assertIsInstance(panel, ui.DmAttackView)
+        self.assertEqual({b.label for b in panel.children},
+                         {'Vyžádat hod', 'Náklady obrany', 'Přehodit', 'Zásah', 'Minutí', 'Upravit zásah', 'Zrušit'})
+        self.assertTrue(panel.to_components())
+
+    async def test_player_cannot_open_or_use_panel(self):
+        public = ui.AttackView(object(), 123, data=self.data())
+        i = self.interaction(dm=False)
+        with patch.object(public, 'fresh', new_callable=AsyncMock) as fresh:
+            await public.dm_panel.callback(i)
+        fresh.assert_not_called()
+        self.assertNotIn('view', i.response.send_message.call_args.kwargs)
+        panel = ui.DmAttackView(object(), 123, data=self.data())
+        self.assertFalse(await panel.interaction_check(i))
+        with patch.object(f, 'resolve') as resolve:
+            await panel.decide(i, 'hit', bypass=True)
+        resolve.assert_not_called()
+
+    async def test_private_modal_refresh_keeps_private_buttons_and_public_id(self):
+        panel = ui.DmAttackView(object(), 123, data=self.data())
+        i = self.interaction()
+        with patch.object(db, 'load_doc', return_value={'123': {f.PENDING: {'a': self.data()}}}):
+            fresh = await panel.fresh(i)
+        self.assertIsInstance(fresh, ui.DmAttackView)
+        self.assertEqual(fresh.message_id, '77')  # never bind to ephemeral message 888
+        data = self.data()
+        data['reaction'] = 'Bariéra'
+        await fresh.refresh(i, data)
+        edited = i.response.edit_message.call_args.kwargs
+        self.assertIsInstance(edited['view'], ui.DmAttackView)
+        self.assertIn('DM', edited['embed'].title)
+        self.assertNotIn('DM', [b.label for b in edited['view'].children])
+        self.assertEqual([b.label for b in ui.AttackView(object(), 123, data=data).children],
+                         ['Reakce', 'Hodit', 'DM'])
+
+    async def test_closed_attack_does_not_open_stale_panel(self):
+        panel = ui.DmAttackView(object(), 123, data=self.data())
+        i = self.interaction()
+        with patch.object(db, 'load_doc', return_value={'123': {f.PENDING: {}}}):
+            await panel.request.callback(i)
+        i.response.send_modal.assert_not_called()
+        i.response.send_message.assert_awaited_once()
+
+
 if __name__ == '__main__':
     unittest.main()

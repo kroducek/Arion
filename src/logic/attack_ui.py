@@ -94,13 +94,16 @@ class AttackView(ui.View):
                 if not a.get('flow_version'):
                     a = flow.migrate_legacy(i.channel_id, aid)
                     flow.attach_message(i.channel_id, aid, int(mid), i.client.user.id)
-                return AttackView(self.cog, i.channel_id, data=a)
+                return type(self)(self.cog, i.channel_id, data=a)
         await notice(i, 'Tento útok už je vyhodnocený nebo zrušený.')
         return None
 
+    def embed(self, a):
+        return attack_embed(a)
+
     async def refresh(self, i, a):
         self.hydrate(a)
-        await i.response.edit_message(embed=attack_embed(a), view=self,
+        await i.response.edit_message(embed=self.embed(a), view=self,
                                       allowed_mentions=discord.AllowedMentions.none())
 
     async def _replace_with_console(self, i, lines):
@@ -116,9 +119,10 @@ class AttackView(ui.View):
             try:
                 await message.delete()
             except discord.HTTPException:
-                for child in self.children:
+                public_view = AttackView(self.cog, self.channel_id, data=self.data)
+                for child in public_view.children:
                     child.disabled = True
-                await message.edit(view=self)
+                await message.edit(view=public_view)
 
     async def decide(self, i, outcome, damage=None, bypass=False, refund=False):
         if not is_dm(i):
@@ -136,7 +140,11 @@ class AttackView(ui.View):
                 return await i.response.send_message(str(e), view=view, ephemeral=True)
             return await notice(i, str(e))
         from src.logic.combat import console
-        await i.response.defer()
+        if isinstance(self, DmAttackView) and i.message:
+            labels = {'hit': 'Zásah potvrzen.', 'miss': 'Minutí potvrzeno.', 'cancel': 'Útok zrušen.'}
+            await i.response.edit_message(content=labels[outcome], embed=None, view=None)
+        else:
+            await i.response.defer()
         self.message = None
         try:
             if self.message_id:
@@ -174,7 +182,38 @@ class AttackView(ui.View):
             choices = [x for x in flow.available_rolls(i.channel_id, i.user.id, is_dm(i)) if x[0] == view.aid]
             await choose_roll(i, choices)
 
-    @ui.button(label='Vyžádat hod', custom_id='arion:combat:attack:request', row=0)
+    @ui.button(label='DM', emoji='🔒', custom_id='arion:combat:attack:dm', row=0)
+    async def dm_panel(self, i, button):
+        if not is_dm(i):
+            return await notice(i, 'Tento panel je pouze pro DM.')
+        view = await self.fresh(i)
+        if view:
+            panel = DmAttackView(self.cog, i.channel_id, data=view.data)
+            await i.response.send_message(embed=panel.embed(view.data), view=panel,
+                ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+
+class DmAttackView(AttackView):
+    """Ephemeral controls; public cards never render these buttons."""
+    def __init__(self, cog, channel_id=None, *, data):
+        super().__init__(cog, channel_id, data=data)
+        self.timeout = 600
+        for child in (self.reaction, self.roll, self.dm_panel):
+            self.remove_item(child)
+
+    async def interaction_check(self, i):
+        if not is_dm(i):
+            await notice(i, 'Tento panel je pouze pro DM.')
+            return False
+        return True
+
+    def embed(self, a):
+        embed = attack_embed(a)
+        embed.title = '🔒 DM · vyhodnocení útoku'
+        embed.set_footer(text='Soukromý panel · Vidíš jej pouze ty. Aktuální stav znovu načteš přes 🔒 na kartě útoku.')
+        return embed
+
+    @ui.button(label='Vyžádat hod', custom_id='arion:combat:attack:request', row=1)
     async def request(self, i, button):
         if not is_dm(i):
             return await notice(i, 'Hod vyžaduje DM.')
@@ -182,7 +221,7 @@ class AttackView(ui.View):
         if view:
             await i.response.send_modal(RequestModal(view))
 
-    @ui.button(label='Náklady obrany', custom_id='arion:combat:attack:cost', row=0)
+    @ui.button(label='Náklady obrany', custom_id='arion:combat:attack:cost', row=1)
     async def cost(self, i, button):
         if not is_dm(i):
             return await notice(i, 'Náklady potvrzuje DM.')
@@ -190,7 +229,7 @@ class AttackView(ui.View):
         if view:
             await i.response.send_modal(CostModal(view))
 
-    @ui.button(label='Přehodit', custom_id='arion:combat:attack:reroll', row=0)
+    @ui.button(label='Přehodit', custom_id='arion:combat:attack:reroll', row=1)
     async def reroll(self, i, button):
         if not is_dm(i):
             return await notice(i, 'Nový pokus povoluje DM.')
@@ -202,19 +241,19 @@ class AttackView(ui.View):
             await i.response.send_message('Vyber hod, který má hráč zopakovat.', ephemeral=True,
                 view=RollChoice(choices, i.user.id, reroll=True))
 
-    @ui.button(label='Zásah', style=discord.ButtonStyle.success, custom_id='arion:combat:attack:hit', row=1)
+    @ui.button(label='Zásah', style=discord.ButtonStyle.success, custom_id='arion:combat:attack:hit', row=2)
     async def hit(self, i, button):
         view = await self.fresh(i)
         if view:
             await view.decide(i, 'hit')
 
-    @ui.button(label='Minutí', custom_id='arion:combat:attack:miss', row=1)
+    @ui.button(label='Minutí', custom_id='arion:combat:attack:miss', row=2)
     async def miss(self, i, button):
         view = await self.fresh(i)
         if view:
             await view.decide(i, 'miss')
 
-    @ui.button(label='Upravit zásah', custom_id='arion:combat:attack:edit', row=1)
+    @ui.button(label='Upravit zásah', custom_id='arion:combat:attack:edit', row=2)
     async def edit(self, i, button):
         if not is_dm(i):
             return await notice(i, 'Poškození upravuje DM.')
@@ -222,7 +261,7 @@ class AttackView(ui.View):
         if view:
             await i.response.send_modal(DamageModal(view))
 
-    @ui.button(label='Zrušit', style=discord.ButtonStyle.danger, custom_id='arion:combat:attack:cancel', row=1)
+    @ui.button(label='Zrušit', style=discord.ButtonStyle.danger, custom_id='arion:combat:attack:cancel', row=2)
     async def cancel(self, i, button):
         if not is_dm(i):
             return await notice(i, 'Útok ruší DM.')

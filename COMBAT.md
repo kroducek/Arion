@@ -6,12 +6,14 @@ Combat je tracker. DM určuje, co situace dovoluje, jaké hody jsou potřeba a z
 
 1. Hráč použije `/attack` ve vlastním tahu. Zobrazí se dočasná karta útoku. Akce a zvolená munice se rezervují. DM ovládá NPC přes `/combat attack_npc`; `force` dovoluje výjimku z tahu a počtu akcí.
 2. Cíl stiskne **Reakce** a popíše záměr (úhyb, blok, bariéra…). Za NPC může popis zadat DM. Samotný popis žádný zdroj neodečítá.
-3. DM stiskne **Vyžádat hod**: vybere `cíl`, `útok` nebo konkrétního účastníka, kostky, volitelně až dva atributy a poznámku. Může zadat různé požadavky pro obě strany.
+3. DM otevře tlačítkem **🔒 DM** soukromý panel (ephemeral), který vidí pouze on, a stiskne **Vyžádat hod**: vybere `cíl`, `útok` nebo konkrétního účastníka, kostky, volitelně až dva atributy a poznámku. Může zadat různé požadavky pro obě strany.
 4. Hráč stiskne **Hodit** nebo použije odpovídající `/roll`, např. `/roll hod:1d20 check:DEX`. Pokud odpovídá více požadavků, nejprve vybere jeden; až potom se hází. `/roll samostatne:true` je běžný hod mimo čekající útoky.
-5. DM rozhodne **Zásah**, **Minutí** nebo **Upravit zásah**. Úprava je celkové poškození včetně útočné furioku, před DEF a obranným pohlcením. Furioku se k ručnímu číslu nepřičítá podruhé, ale její přidělení se při zásahu spotřebuje.
+5. V soukromém panelu DM rozhodne **Zásah**, **Minutí** nebo **Upravit zásah**. Úprava je celkové poškození včetně útočné furioku, před DEF a obranným pohlcením. Furioku se k ručnímu číslu nepřičítá podruhé, ale její přidělení se při zásahu spotřebuje.
 6. Výsledek se uloží a vypíše do konzole. Po dokončení výpisu se dočasná karta smaže. RP zprávy zůstávají v chatu.
 
 Hod kostkou a atribut jsou nadále oddělené hodnoty. Dva atributy mají průměr zaokrouhlený nahoru, stejně jako původní `/roll check`. Perkové bonusy se počítají ke statu, nikoli automaticky k hodu. Na další pokus slouží DM tlačítko **Přehodit**; původní výsledek zůstává v historii.
+
+Na veřejné kartě jsou pouze **Reakce**, **Hodit** a **🔒 DM**. Vyžádání/přehození hodů, náklady obrany, zásah, minutí, úprava a zrušení jsou v soukromém DM panelu. Panel po 10 minutách vyprší; lze jej znovu otevřít zámečkem. Každá akce ověřuje oprávnění a aktuální stav útoku. Za NPC DM nadále reaguje a hází veřejnými tlačítky.
 
 ## Náklady a návraty
 
