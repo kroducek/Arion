@@ -269,36 +269,30 @@ class Integration(unittest.TestCase):
 
 class Commands(unittest.IsolatedAsyncioTestCase):
     async def test_confirmed_hit_and_miss_through_real_combat_mutation(self):
+        from src.logic import attack_flow as flow
+        original_db = db.db_path()
         for hit in [False, True]:
             with tempfile.TemporaryDirectory() as directory:
                 db.reset_for_tests(directory + '/test.db')
-                save_profiles({'1:1': player()})
-                with patch('src.logic.spirits._owned_perks', return_value=PERKS):
-                    cog = combat.CombatCog(None)
-                    cog.active_combats[123] = dict(stats={
-                        '<@1>': dict(hp=100, max_hp=100, fur=10),
-                        'NPC': dict(hp=100, max_hp=100, fur=0)}, order=['<@1>', 'NPC'])
-                    cog._save_state()
-                    cog._consume_weapon = lambda *args, **kwargs: {}
-                    cog.check_wipeout = AsyncMock()
-                    view = combat.AttackView(cog, 123, '<@1>', 1, 'NPC', 10, None,
-                                             resources={'uid': 1})
-                    view._replace_with_console = AsyncMock()
-                    interaction = SimpleNamespace(channel=None,
-                        response=SimpleNamespace(send_message=AsyncMock()))
-                    if hit:
-                        await view.resolve_hit(interaction, 10)
-                        await view.resolve_hit(interaction, 10)  # duplicate confirmation
-                    else:
-                        view._ensure_state = AsyncMock(return_value=True)
-                        view._may_resolve = lambda _: True
-                        await view.miss.callback(interaction)
-                    cog.reload_state()
-                    p = load_profiles()['1:1']
-                    self.assertEqual(p['fury_cur'], 0 if hit else 10)
-                    self.assertEqual(p['furioka']['atk_amount'], 0 if hit else 15)
-                    self.assertEqual(cog.active_combats[123]['stats']['NPC']['hp'], 75 if hit else 100)
-                db.reset_for_tests(directory + '/closed.db')
+                try:
+                    p = player()
+                    p['equipment'] = {'hand_r': 'sword'}
+                    save_profiles({'1:1': p})
+                    with patch('src.logic.spirits._owned_perks', return_value=PERKS), patch.object(combat, '_load_items_db', return_value={'sword': {'dmg': '10'}}):
+                        cog = combat.CombatCog(None)
+                        cog.active_combats[123] = dict(stats={
+                            '<@1>': dict(hp=100, max_hp=100, fur=10),
+                            'NPC': dict(hp=100, max_hp=100, fur=0)},
+                            order=['<@1>', 'NPC'], locked=True, current_index=0)
+                        cog._save_state()
+                        attack = flow.prepare(123, '<@1>', 'NPC')
+                        flow.update_reaction(123, attack['id'], 99, True, 'NPC se brání')
+                        flow.resolve(123, attack['id'], True, 'hit' if hit else 'miss')
+                        with self.assertRaises(ValueError):
+                            flow.resolve(123, attack['id'], True, 'hit')
+                        self.assertEqual(e.pool(load_profiles()['1:1'], PERKS), 95 if hit else 110)
+                finally:
+                    db.reset_for_tests(original_db)
 
     async def test_panel_selects_main_and_unity_independently_across_pages(self):
         import discord

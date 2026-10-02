@@ -163,3 +163,19 @@ def list_docs() -> list[str]:
     conn = connect()
     with _lock:
         return [r["name"] for r in conn.execute("SELECT name FROM docs ORDER BY name")]
+
+
+def update_documents(names, mutate):
+    """Atomically update related documents; callback returns an application result."""
+    with transaction() as conn:
+        docs = {}
+        for name in names:
+            row = conn.execute('SELECT data FROM docs WHERE name = ?', (name,)).fetchone()
+            docs[name] = json.loads(row['data']) if row else {}
+        result = mutate(docs)
+        for name, data in docs.items():
+            conn.execute(
+                "INSERT INTO docs (name, data, updated_at) VALUES (?, ?, datetime('now')) "
+                "ON CONFLICT(name) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at",
+                (name, json.dumps(data, ensure_ascii=False)))
+        return result

@@ -115,6 +115,19 @@ def _get_roll_perks(user_id: int, stats: list[str]) -> list[dict]:
 # COG
 # ══════════════════════════════════════════════════════════════════════════════
 
+def evaluate_roll(expr, profile, uid=None, attrs=()):
+    """The die and attribute values remain separate, exactly as in /roll check."""
+    result = roll_expr(expr)
+    values = {attr: _get_stat_val(profile, attr, uid) for attr in attrs}
+    note = ' · '.join(f'{a}: {v}' for a, v in values.items())
+    if len(values) > 1:
+        note += f' · ∅ {math.ceil(sum(values.values()) / len(values))}'
+    perks = _get_roll_perks(uid, list(attrs)) if uid is not None and attrs else []
+    return dict(total=result.total, detail=result.detail, nat20=result.nat20,
+                nat1=result.nat1, is_d20=result.is_d20, dice_max=result.dice_max,
+                stats=values, stat_note=note, perks=[dict(name=p.get('name', ''), bonus=p.get('bonus', 0), desc=p.get('desc', '')[:75]) for p in perks])
+
+
 class Dice(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -124,6 +137,7 @@ class Dice(commands.Cog):
         hod="Zadej kombinaci, např. 1d20+2d4+5 nebo 2d10-2",
         check="Volitelný atribut check — porovná hod s tvou hodnotou statu",
         check2="Druhý atribut pro kombinovaný check (průměr obou statů)",
+        samostatne="Hod mimo čekající útoky; nebude přiřazen k požadavku DM.",
     )
     @app_commands.choices(check=[
         app_commands.Choice(name=a, value=a) for a in CHECK_ATTRS
@@ -137,7 +151,13 @@ class Dice(commands.Cog):
         hod:    str,
         check:  app_commands.Choice[str] = None,
         check2: app_commands.Choice[str] = None,
+        samostatne: bool = False,
     ):
+        if not samostatne:
+            from src.logic.attack_ui import route_roll
+            attrs = list(dict.fromkeys(x.value for x in (check, check2) if x))
+            if await route_roll(interaction, hod, attrs):
+                return
         # ── Parsování kostek ──────────────────────────────────────────────────
         raw_input = hod.lower().replace(" ", "")
         if not raw_input:
