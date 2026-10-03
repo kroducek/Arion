@@ -2021,6 +2021,39 @@ class CombatCog(commands.Cog):
             asyncio.create_task(self._update_boss_bar(combat, flashing=(hp < 0)))
         asyncio.create_task(self.check_wipeout(interaction.channel, combat))
 
+    async def _ac_npc_stats(self, interaction: discord.Interaction, current: str):
+        self.reload_state()
+        state = self.active_combats.get(interaction.channel_id, {})
+        return [app_commands.Choice(name=name[:100], value=name)
+                for name in state.get('stats', {})
+                if _actor_uid(name) is None and current.casefold() in name.casefold()][:25]
+
+    @combat_group.command(name="npc_stats", description="[GM] Nastaví nebo zobrazí atributy NPC pro hody v tomto boji.")
+    @admin_only()
+    @app_commands.autocomplete(name=_ac_npc_stats)
+    @app_commands.rename(strength="str", intelligence="int")
+    @app_commands.describe(name="NPC nebo boss v tomto boji", strength="Síla", dex="Obratnost",
+        ins="Instinkty", intelligence="Inteligence", cha="Charisma", wis="Moudrost")
+    async def combat_npc_stats(self, interaction: discord.Interaction, name: str,
+            strength: Optional[app_commands.Range[int, 0]] = None,
+            dex: Optional[app_commands.Range[int, 0]] = None,
+            ins: Optional[app_commands.Range[int, 0]] = None,
+            intelligence: Optional[app_commands.Range[int, 0]] = None,
+            cha: Optional[app_commands.Range[int, 0]] = None,
+            wis: Optional[app_commands.Range[int, 0]] = None):
+        values = {k: v for k, v in zip(('STR', 'DEX', 'INS', 'INT', 'CHA', 'WIS'),
+                    (strength, dex, ins, intelligence, cha, wis)) if v is not None}
+        try:
+            attrs = attack_flow.set_npc_stats(interaction.channel_id, name, is_dm(interaction), values)
+        except ValueError as e:
+            return await interaction.response.send_message(str(e), ephemeral=True)
+        self.reload_state()
+        embed = discord.Embed(title=f'Atributy · {name}'[:256],
+            description=' · '.join(f'**{k}** {v}' for k, v in attrs.items()), color=discord.Color.gold())
+        embed.set_footer(text='Platí pro nové hody v tomto boji. Již provedené hody se nemění.')
+        await interaction.response.send_message(embed=embed, ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none())
+
     # ── /combat setdef ────────────────────────────────────────────────────────
 
     @combat_group.command(name="setdef", description="Admin: nastaví DEF NPC/hráči")

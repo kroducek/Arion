@@ -494,3 +494,28 @@ def _active_character(key, uid):
     from src.database.characters import pkey
     active = pkey(uid)
     return key == active or (key == str(uid) and active == f'{uid}:1')
+
+
+def set_npc_stats(channel, actor, dm, values):
+    """Set check attributes for an NPC in this combat, or return their current values."""
+    from src.logic import combat as c
+    from src.logic.stats import STAT_LABELS
+    if not dm:
+        raise ValueError('Atributy NPC nastavuje pouze DM.')
+    if any(k not in STAT_LABELS or type(v) is not int or v < 0 for k, v in values.items()):
+        raise ValueError('Atribut musí být nezáporné celé číslo: STR, DEX, INS, INT, CHA nebo WIS.')
+    def change(state, profiles, perks):
+        stat = state.get('stats', {}).get(actor)
+        if stat is None:
+            raise ValueError('Toto NPC není v boji.')
+        if c._actor_uid(actor) is not None:
+            raise ValueError('Tento příkaz je pouze pro NPC a bosse. Hráčovy atributy se čtou z profilu.')
+        attrs = stat.setdefault('stats', {})
+        before = {k: attrs.get(k, 0) for k in STAT_LABELS}
+        attrs.update(values)
+        if values:
+            snapshot = c.stat_snapshot(stat)
+            c.log_event(state, 'stat', actor, snapshot, snapshot,
+                detail=' · '.join(f'{k} {before[k]} → {v}' for k, v in values.items()), revert=False)
+        return {k: attrs.get(k, 0) for k in STAT_LABELS}
+    return transaction(channel, change)

@@ -40,3 +40,10 @@ Na veřejné kartě jsou pouze **Reakce**, **Hodit** a **🔒 DM**. Vyžádání
 Každý bot aktualizuje pouze vlastní zprávy (kontrola změn každé 3 sekundy), takže `/roll` z jiného bota aktualizuje správnou kartu. Při nedostupnosti Discordu zůstává rozhodnutí v logu. Staré otevřené karty se při interakci převedou; historicky neukládané údaje o jejich bonusové akci/buffech nelze zpětně přesně rekonstruovat.
 
 Automatické testy pokrývají souběžné potvrzení, rollback, zásah/minutí/zrušení/undo, zdroje obou stran, runy, restart, výběr hodu, oprávnění, přepínání postav a ochranu proti přepsání čerstvého zásahu druhým botem. Živé ověření na Discordu vyžaduje restart ArionDND a ArionDM a synchronizaci příkazů podle stávajícího nasazení.
+
+
+## Atributy NPC
+
+Na ArionDM použij `/combat npc_stats name:Hashashin dex:4`. Lze zadat i `str`, `ins`, `int`, `cha`, `wis` a nastavit více atributů současně. Vynechané hodnoty zůstávají stejné; bez hodnot příkaz zobrazí aktuální atributy. Funguje pro NPC i bosse, pouze v daném combatu. Hráčovy hodnoty nadále pocházejí z profilu.
+
+Vyžádaný hod načte aktuální atribut při samotném hodu. Například kostka 6 a DEX 4 se zobrazí jako **6 · DEX: 4**, atribut se nepřičítá automaticky ke kostce. Dřívější hody nejsou zpětně přepisovány; nový pokus může DM připravit přes **Přehodit**. Nenastavený atribut zůstává 0.

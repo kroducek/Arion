@@ -272,6 +272,30 @@ class Flow(unittest.TestCase):
         f.undo(123)
         self.assertFalse(self.profiles()['2:1']['statuses'])
 
+    def test_npc_attributes_are_persistent_and_used_when_rolling(self):
+        a = self.ready()
+        a = f.request_roll(123, a['id'], True, 'NPC', '1d20', ['DEX'])
+        attrs = f.set_npc_stats(123, 'NPC', True, {'DEX': 4, 'STR': 7})
+        self.assertEqual(attrs['DEX'], 4)
+        db.reset_for_tests(self.tmp.name + '/test.db')
+        with patch('src.logic.dice.random.randint', return_value=6):
+            _, rolled = f.submit_roll(123, a['id'], a['requests'][0]['id'], 99, dm=True)
+        self.assertEqual(rolled['result']['total'], 6)
+        self.assertEqual(rolled['result']['stats']['DEX'], 4)
+        f.set_npc_stats(123, 'NPC', True, {'DEX': 9})
+        self.assertEqual(f.set_npc_stats(123, 'NPC', True, {})['STR'], 7)
+        saved = self.state()['pending_attacks'][a['id']]['requests'][0]['result']
+        self.assertEqual(saved['stats']['DEX'], 4)
+
+    def test_npc_attributes_reject_players_invalid_values_and_non_dm(self):
+        for actor, dm, values in [('<@1>', True, {'DEX': 4}), ('Missing', True, {'DEX': 4}),
+                ('NPC', False, {'DEX': 4}), ('NPC', True, {'DEX': -1}), ('NPC', True, {'DEF': 4})]:
+            with self.assertRaises(ValueError):
+                f.set_npc_stats(123, actor, dm, values)
+        self.assertEqual(f.set_npc_stats(123, 'NPC', True, {})['DEX'], 0)
+        f.set_npc_stats(123, 'NPC', True, {'DEX': 0})
+        self.assertEqual(self.profiles()['1:1']['stats']['DEX'], 8)
+
     def test_migration_does_not_double_reserve(self):
         a = self.attack()
         def old(s,p,k):
