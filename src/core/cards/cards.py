@@ -507,7 +507,7 @@ SEED_CARDS = [
     {"id": 29, "name": "Levitující šašek",       "description": "Miluje chaos, často napodobuje emoce a výrazy ostatních", "image": "letajici_sasek.png",               "collection": "jesters"},
     {"id": 30, "name": "Remi",       "description": "Vyvolená služka jenž po smrti svého pána ztratila cestu", "image": "remi.png",               "collection": "chosen"},
     {"id": 31, "name": "Hao",       "description": "Nejsilnější vyvolený jenž okolo sebe shromažďuje silné jedince", "image": "hao2.png",               "collection": "chosen"},
-    {"id": 32, "name": "První stín",       "description": "Žije v něm jakýsi mimozemský symbiot..", "image": "prvni_stin.PNG",               "collection": "shadows"},
+    {"id": 32, "name": "První stín",       "description": "Žije v něm jakýsi mimozemský symbiot..", "image": "prvni_stin.png",               "collection": "shadows"},
     {"id": 33, "name": "Noxarath", "description": "Bohyně temnoty a čarodějka smrti.", "image": "noxarath2.png", "collection": "coven_of_death"},
     {"id": 34, "name": "Saleriom", "description": "Bývalý meč kultu smrti, nyní chrání Alice Aurelion.", "image": "saleriom.png", "collection": "coven_of_death"},
     {"id": 35, "name": "Sidorovic", "description": "Nejvyčůranější obchodník a milovník jídla.", "image": "sidorovic.png", "collection": "friends"},
