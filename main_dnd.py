@@ -76,6 +76,7 @@ DND_COGS = [
     "src.core.dnd.perks",
     "src.core.dnd.blacksmith",
     "src.core.dnd.character",
+    "src.core.dnd.timeline",
     "src.core.dnd.ranks",
 
     # D&D logika / postavy

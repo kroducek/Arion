@@ -18,6 +18,7 @@ from discord.ext import commands
 # Cogy sdílené hráčskými boty a ArionDM. Hráčští boti zahodí admin
 # příkazy, ArionDM naopak všechno ostatní.
 SHARED_COGS = [
+    "src.core.dnd.timeline",
     "src.core.dnd.quests",
     "src.core.dnd.achievements",
     "src.core.dnd.perks",

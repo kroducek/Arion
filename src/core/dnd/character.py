@@ -21,7 +21,7 @@ from src.database.characters import (
     MAX_CHARS,
 )
 from src.utils.paths import PROFILES, ECONOMY, DIARIES, PLAYER_PERKS, REPUTATION
-from src.utils.json_utils import load_json, save_json
+from src.utils.json_utils import load_json, save_json, update_json
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -36,6 +36,12 @@ def _purge_character_data(uid, slot) -> list:
     """
     key = ckey(uid, slot)
     hit = []
+    from src.core.dnd.timeline import timeline_path
+    def remove_timeline(data):
+        for state in data.values():
+            state.get("players", {}).pop(key, None)
+        return data
+    update_json(timeline_path(), remove_timeline)
     for label, path in (
         ("profil", PROFILES),
         ("zlaté", ECONOMY),
