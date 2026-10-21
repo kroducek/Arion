@@ -507,7 +507,7 @@ SEED_CARDS = [
     {"id": 29, "name": "Levitující šašek",       "description": "Miluje chaos, často napodobuje emoce a výrazy ostatních", "image": "letajici_sasek.png",               "collection": "jesters"},
     {"id": 30, "name": "Remi",       "description": "Vyvolená služka jenž po smrti svého pána ztratila cestu", "image": "remi.png",               "collection": "chosen"},
     {"id": 31, "name": "Hao",       "description": "Nejsilnější vyvolený jenž okolo sebe shromažďuje silné jedince", "image": "hao2.png",               "collection": "chosen"},
-    {"id": 32, "name": "První stín",       "description": "Žije v něm jakýsi mimozemský symbiot..", "image": "prvni_stin.PNG",               "collection": "shadows"},
+    {"id": 32, "name": "První stín",       "description": "Žije v něm jakýsi mimozemský symbiot..", "image": "prvni_stin.png",               "collection": "shadows"},
     {"id": 33, "name": "Noxarath", "description": "Bohyně temnoty a čarodějka smrti.", "image": "noxarath2.png", "collection": "coven_of_death"},
     {"id": 34, "name": "Saleriom", "description": "Bývalý meč kultu smrti, nyní chrání Alice Aurelion.", "image": "saleriom.png", "collection": "coven_of_death"},
     {"id": 35, "name": "Sidorovic", "description": "Nejvyčůranější obchodník a milovník jídla.", "image": "sidorovic.png", "collection": "friends"},
@@ -771,7 +771,18 @@ def get_card_image_path(image_filename: str):
     if not image_filename:
         return None
     path = os.path.join(CARDS_DIR, image_filename)
-    return path if os.path.exists(path) else None
+    if os.path.isfile(path):
+        return path
+    # Older inventory entries may retain a differently capitalized filename.
+    if os.path.basename(image_filename) != image_filename:
+        return None
+    if os.path.isdir(CARDS_DIR):
+        for filename in sorted(os.listdir(CARDS_DIR)):
+            if filename.casefold() == image_filename.casefold():
+                candidate = os.path.join(CARDS_DIR, filename)
+                if os.path.isfile(candidate):
+                    return candidate
+    return None
   
   
 def get_frame_by_id(frame_id: str):
