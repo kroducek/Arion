@@ -1,4 +1,4 @@
-"""Sdílený parser kostek a damage zbraní.
+"""Sdílený parser kostek aa damage zbraní.
 
 `/roll`, `/attack` i testy používají stejná pravidla, ať se hody nerozjedou.
 """
