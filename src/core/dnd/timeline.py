@@ -1,13 +1,10 @@
 """Story time is manual, per guild and character; Alice anchors the present."""
-import asyncio
-import io
 import math
-import random
+from pathlib import Path
 
 import discord
 from discord import app_commands
 from discord.ext import commands
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from src.database.characters import get_active_slot, get_char, ckey
 from src.utils import paths
@@ -16,7 +13,9 @@ from src.utils.json_utils import load_json, update_json
 
 PERIODS = ("ráno", "dopoledne", "odpoledne", "večer", "noc")
 PERIOD_CHOICES = [app_commands.Choice(name=p, value=p) for p in PERIODS]
-PAGE_SIZE = 6
+PAGE_SIZE = 20
+LOCATION_PAGE_SIZE = 20
+UNKNOWN_LOCATION = "Bez lokace"
 
 
 def timeline_path():
@@ -29,13 +28,15 @@ def guild_state(guild_id):
     })
 
 
-def set_entry(guild_id, key, day, period, name, note):
+def set_entry(guild_id, key, day, period, name, note, location=None):
     """Player day is relative to Alice at write time, then stored absolutely."""
     def mutate(data):
         state = data.setdefault(str(guild_id), {
             "alice": {"day": 0, "period": "ráno", "note": ""}, "players": {},
         })
-        entry = {"day": day if key is None else state["alice"]["day"] + day,
+        previous = state["alice"] if key is None else state["players"].get(key, {})
+        entry = {"location": location.strip() if location is not None else previous.get("location", ""),
+                 "day": day if key is None else state["alice"]["day"] + day,
                  "period": period, "name": name, "note": note}
         if key is None:
             state["alice"] = entry
@@ -58,116 +59,144 @@ def position(entry):
     return entry["day"] + PERIODS.index(entry["period"]) / len(PERIODS)
 
 
-NODE_COLORS = ("#73dfff", "#bd9bff", "#ff91bf", "#89edbd", "#ffb67f", "#aabaff")
-NODE_ICONS = ("🔵", "🟣", "🌸", "🟢", "🟠", "💠")
-FRAME_COUNT = 30
+def timeline_media():
+    directory = Path(paths.ASSETS_DIR) / "timeline"
+    # Drop the user's finished animation beside the source PNG to activate it.
+    animated = directory / "timeline.gif"
+    return animated if animated.is_file() else directory / "timeline.png"
 
 
-def render_timeline(alice, players, page=1):
-    """Looping energy stream assembled from particles, without raster text."""
-    width, height, center = 1100, 300, 150
-    values = [position(alice)] + [position(e) for e in players]
-    low, high = min(values) - .4, max(values) + .4
-    xs = [int(70 + (v-low) / (high-low) * 960) for v in values]
-    rng = random.Random(42)
-    particles = [(rng.random(), rng.uniform(-1, 1), rng.uniform(0, math.tau),
-                  rng.choice((1, 1, 1, 2))) for _ in range(1050)]
-    frames = []
-    for frame in range(FRAME_COUNT):
-        phase = frame / FRAME_COUNT
-        base = Image.new("RGB", (width, height), (6, 9, 19))
-        energy = Image.new("RGB", base.size)
-        sparks = Image.new("RGB", base.size)
-        ed, sd = ImageDraw.Draw(energy), ImageDraw.Draw(sparks)
-        # Multiple braided filaments breathe together along one horizontal axis.
-        for strand in range(5):
-            points = []
-            for x in range(35, width-34, 4):
-                envelope = math.sin(math.pi * (x-35) / (width-70)) ** .6
-                y = center + envelope * (math.sin(x*.019 - phase*math.tau + strand*1.2)*7
-                                         + math.sin(x*.043 + phase*math.tau + strand)*3)
-                points.append((x, y))
-            ed.line(points, fill=(24+strand*5, 78+strand*15, 120+strand*20), width=2)
-        for start, scatter, offset, radius in particles:
-            travel = (start + phase) % 1
-            x = 35 + travel * (width-70)
-            envelope = max(0, math.sin(math.pi*travel)) ** .5
-            # Loose motes converge into the stream, then dissolve at its end.
-            spread = 4 + 42 * abs(2*travel-1) ** 3
-            y = center + scatter*spread + math.sin(travel*22-phase*math.tau+offset)*5*envelope
-            intensity = .25 + .75*envelope
-            color = (int(75*intensity), int(190*intensity), int(245*intensity))
-            ed.ellipse((x-radius, y-radius, x+radius, y+radius), fill=color)
-            if radius == 1:
-                sd.point((int(x), int(y)), fill=color)
-        # Character anchors have matching colored markers in the text embed.
-        # Draw Alice last so her gold anchor remains visible at shared times.
-        for i in list(range(1, len(xs))) + [0]:
-            x = xs[i]
-            color = "#ffd78a" if i == 0 else NODE_COLORS[(i-1) % len(NODE_COLORS)]
-            pulse = 11 + 3*math.sin(phase*math.tau+i)
-            ed.ellipse((x-pulse, center-pulse, x+pulse, center+pulse), fill=color)
-            sd.ellipse((x-3, center-3, x+3, center+3), fill="#f2faff")
-            for mote in range(8):
-                angle = mote*math.tau/8 + phase*math.tau
-                mx, my = x+math.cos(angle)*20, center+math.sin(angle)*11
-                sd.point((int(mx), int(my)), fill=color)
-        result = ImageChops.add(base, energy.filter(ImageFilter.GaussianBlur(13)))
-        result = ImageChops.add(result, energy.filter(ImageFilter.GaussianBlur(3)))
-        result = ImageChops.add(result, sparks)
-        frames.append(result)
-    output = io.BytesIO()
-    frames[0].save(output, format="GIF", save_all=True, append_images=frames[1:],
-                   duration=70, loop=0, optimize=False)
-    output.seek(0)
-    return output
+def location_of(entry):
+    return " ".join(entry.get("location", "").split()) or UNKNOWN_LOCATION
 
 
-def timeline_embeds(alice, players, page, pages):
-    art = discord.Embed(color=0x73DFFF)
-    art.set_image(url="attachment://timeline.gif")
-    details = discord.Embed(title="Časové proudy", color=0x73DFFF)
-    for i, entry in enumerate([alice] + players):
-        icon = "🟡" if i == 0 else NODE_ICONS[(i-1) % len(NODE_ICONS)]
-        name = "Alice · přítomnost" if i == 0 else entry["name"]
-        value = f"**{entry['period'].capitalize()}** · {relative_text(entry, alice)}"
-        if entry.get("note"):
-            value += "\n" + discord.utils.escape_markdown(entry["note"])
-        details.add_field(name=f"{icon} {name}", value=value, inline=False)
+def clean_text(value):
+    return discord.utils.escape_markdown(" ".join(str(value).split()))
+
+
+def player_line(entry, alice):
+    return (f"**{clean_text(entry['name'])}** · {entry['period']} · "
+            f"{relative_text(entry, alice)} · {clean_text(location_of(entry))}")
+
+
+def timeline_embeds(alice, players, page, pages, location=None):
+    art = discord.Embed(color=0xA894E8)
+    art.set_image(url=f"attachment://{timeline_media().name}")
+    lines = [f"**Alice** · {alice['period']} · přítomnost · {clean_text(location_of(alice))}"]
+    for entry in players:
+        lines.append(player_line(entry, alice))
     if not players:
-        details.description = "DM zatím nepřidal žádné postavy."
-    details.set_footer(text=f"Strana {page}/{pages} · Zleva minulost → budoucnost · Zlatý bod: Alice")
+        lines.append("V této lokaci zatím nejsou žádné postavy." if location else "Zatím nejsou přidané žádné postavy.")
+    details = discord.Embed(title=location or "Všechny lokace", description="\n".join(lines), color=0xA894E8)
+    details.set_footer(text=f"Strana {page}/{pages} · Alice určuje přítomnost")
     return [art, details]
+
+
+class TimelineView(discord.ui.View):
+    def __init__(self, author_id, alice, players, page=1):
+        super().__init__(timeout=600)
+        self.author_id, self.alice, self.players = author_id, alice, players
+        self.page, self.location_page, self.location = page, 0, None
+        # Merge differently capitalized location spellings into one button.
+        locations = {}
+        for entry in players:
+            label = location_of(entry)
+            locations.setdefault(label.casefold(), label)
+        self.locations = sorted(locations.values(), key=str.casefold)
+        self.rebuild()
+
+    def filtered(self):
+        return [entry for entry in self.players if self.location is None or
+                location_of(entry).casefold() == self.location.casefold()]
+
+    @property
+    def pages(self):
+        return len(self.chunks())
+
+    def chunks(self):
+        pages, current, length = [], [], 0
+        for entry in self.filtered():
+            size = len(player_line(entry, self.alice)) + 1
+            if current and (len(current) >= PAGE_SIZE or length + size > 3500):
+                pages.append(current)
+                current, length = [], 0
+            current.append(entry)
+            length += size
+        return pages + [current] if current or not pages else pages
+
+    def embeds(self):
+        entries = self.chunks()[self.page-1]
+        return timeline_embeds(self.alice, entries, self.page, self.pages, self.location)
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("Otevři si vlastní osu přes /timeline.", ephemeral=True)
+            return False
+        return True
+
+    def add_control(self, label, callback, row, active=False, disabled=False):
+        button = discord.ui.Button(label=label, row=row, disabled=disabled,
+                                   style=discord.ButtonStyle.primary if active else discord.ButtonStyle.secondary)
+        button.callback = callback
+        self.add_item(button)
+
+    async def refresh(self, interaction):
+        self.rebuild()
+        await interaction.response.edit_message(embeds=self.embeds(), view=self)
+
+    def rebuild(self):
+        self.clear_items()
+        async def all_locations(interaction):
+            self.location, self.page = None, 1
+            await self.refresh(interaction)
+        self.add_control("Vše", all_locations, 0, active=self.location is None)
+        start = self.location_page * LOCATION_PAGE_SIZE
+        for index, label in enumerate(self.locations[start:start+LOCATION_PAGE_SIZE]):
+            async def select(interaction, selected=label):
+                self.location, self.page = selected, 1
+                await self.refresh(interaction)
+            self.add_control(label, select, (index+1)//5, active=self.location == label)
+        # At most 21 location buttons + four controls fits Discord's 25 buttons.
+        location_pages = max(1, math.ceil(len(self.locations)/LOCATION_PAGE_SIZE))
+        async def previous_locations(interaction):
+            self.location_page = max(0, self.location_page-1)
+            await self.refresh(interaction)
+        async def next_locations(interaction):
+            self.location_page = min(location_pages-1, self.location_page+1)
+            await self.refresh(interaction)
+        async def previous_players(interaction):
+            self.page = max(1, self.page-1)
+            await self.refresh(interaction)
+        async def next_players(interaction):
+            self.page = min(self.pages, self.page+1)
+            await self.refresh(interaction)
+        if location_pages > 1:
+            self.add_control("Lokace zpět", previous_locations, 4, disabled=self.location_page == 0)
+            self.add_control("Další lokace", next_locations, 4, disabled=self.location_page == location_pages-1)
+        self.add_control("Předchozí", previous_players, 4, disabled=self.page == 1)
+        self.add_control("Další", next_players, 4, disabled=self.page == self.pages)
 
 
 class Timeline(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="timeline", description="Animovaná časová osa postav vůči Alicině přítomnosti.")
+    @app_commands.command(name="timeline", description="Časová osa postav podle lokace vůči Alicině přítomnosti.")
     @app_commands.guild_only()
-    @app_commands.describe(strana="Strana časové osy (6 postav na stránku)")
+    @app_commands.describe(strana="Strana časové osy (20 postav na stránku)")
     async def timeline(self, interaction: discord.Interaction, strana: app_commands.Range[int, 1, 1000] = 1):
         state = guild_state(interaction.guild_id)
         rows = sorted(state["players"].items(), key=lambda item: (position(item[1]), item[0]))
         # Deleted characters must not linger on the timeline.
         rows = [entry for key, entry in rows if get_char(*key.split(":"))]
-        pages = max(1, math.ceil(len(rows) / PAGE_SIZE))
-        if strana > pages:
-            await interaction.response.send_message(f"Časová osa má {pages} stran.", ephemeral=True)
+        view = TimelineView(interaction.user.id, state["alice"], rows, strana)
+        if strana > view.pages:
+            await interaction.response.send_message(f"Časová osa má {view.pages} stran.", ephemeral=True)
             return
         await interaction.response.defer(thinking=True, ephemeral=True)
-        selected = rows[(strana-1)*PAGE_SIZE:strana*PAGE_SIZE]
-        try:
-            image = await asyncio.to_thread(render_timeline, state["alice"], selected, strana)
-        except Exception:
-            import logging
-            logging.getLogger(__name__).exception("Timeline render failed")
-            await interaction.followup.send("Časovou osu se nepodařilo vykreslit. Čas postavy najdeš přes /time.", ephemeral=True)
-            return
-        await interaction.followup.send(
-            embeds=timeline_embeds(state["alice"], selected, strana, pages),
-            file=discord.File(image, filename="timeline.gif"), ephemeral=True)
+        await interaction.followup.send(embeds=view.embeds(), view=view,
+            file=discord.File(timeline_media()), ephemeral=True,
+            allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="time", description="Část dne a odstup aktivní postavy od Aliciny přítomnosti.")
     @app_commands.guild_only()
@@ -181,6 +210,7 @@ class Timeline(commands.Cog):
             return
         embed = discord.Embed(title=f"Čas · {entry['name']}", color=0x6EDBFF,
                               description=f"**{entry['period'].capitalize()}**\n{relative_text(entry, state['alice'])}")
+        embed.add_field(name="Lokace", value=location_of(entry), inline=False)
         if entry.get("note"):
             embed.add_field(name="V příběhu", value=entry["note"], inline=False)
         embed.set_footer(text=f"Alice: {state['alice']['period']} · Příběhový čas posouvá DM.")
@@ -191,18 +221,19 @@ class Timeline(commands.Cog):
     @admin_only()
     @app_commands.choices(cast_dne=PERIOD_CHOICES)
     @app_commands.describe(dny="Odstup od Alice ve dnech: -2 = dva dny v minulosti, 0 = stejný den",
-                           slot="Postava 1 nebo 2; bez volby aktivní postava", poznamka="Krátký popis děje")
+                           slot="Postava 1 nebo 2; bez volby aktivní postava", poznamka="Krátký popis děje", lokace="Lokace postavy; bez zadání se zachová stávající")
     async def timeline_set(self, interaction: discord.Interaction, hrac: discord.Member,
                            dny: app_commands.Range[int, -100000, 100000], cast_dne: str,
                            slot: app_commands.Range[int, 1, 2] = None,
-                           poznamka: app_commands.Range[str, 0, 160] = ""):
+                           poznamka: app_commands.Range[str, 0, 160] = "",
+                           lokace: app_commands.Range[str, 1, 60] = None):
         selected = str(slot) if slot is not None else get_active_slot(hrac.id)
         character = get_char(hrac.id, selected)
         if not character:
             await interaction.response.send_message("Hráč v tomto slotu nemá postavu.", ephemeral=True)
             return
         key = ckey(hrac.id, selected)
-        state = set_entry(interaction.guild_id, key, dny, cast_dne, character["name"], poznamka)
+        state = set_entry(interaction.guild_id, key, dny, cast_dne, character["name"], poznamka, lokace)
         await interaction.response.send_message(
             f"Nastaveno: **{character['name']}** · {cast_dne} · {relative_text(state['players'][key], state['alice'])}.",
             ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
@@ -214,8 +245,9 @@ class Timeline(commands.Cog):
     @app_commands.describe(den="Absolutní příběhový den; počáteční je 0. Posun 0 → 1 uběhne jeden den.")
     async def timeline_present(self, interaction: discord.Interaction,
                                den: app_commands.Range[int, -100000, 100000], cast_dne: str,
-                               poznamka: app_commands.Range[str, 0, 160] = ""):
-        set_entry(interaction.guild_id, None, den, cast_dne, "Alice", poznamka)
+                               poznamka: app_commands.Range[str, 0, 160] = "",
+                           lokace: app_commands.Range[str, 1, 60] = None):
+        set_entry(interaction.guild_id, None, den, cast_dne, "Alice", poznamka, lokace)
         await interaction.response.send_message(
             f"Alicina přítomnost: den **{den}**, **{cast_dne}**. Čas ostatních postav zůstává na místě.", ephemeral=True)
 
