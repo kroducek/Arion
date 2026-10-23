@@ -2600,9 +2600,36 @@ class CombatCog(commands.Cog):
     async def _ac_pending(self, interaction, current):
         self.reload_state()
         state = self.active_combats.get(interaction.channel_id, {})
-        return [app_commands.Choice(name=f"{a['attacker']} → {a['target']} · {a.get('weapon_label', '')}"[:100], value=aid)
+        return [app_commands.Choice(name=f"{aid[:6]} · {a['damage']} dmg · {a['attacker']} → {a['target']} · {a.get('weapon_label', '')}"[:100], value=aid)
                 for aid, a in state.get(PENDING_KEY, {}).items()
                 if current.lower() in f"{a['attacker']} {a['target']} {a.get('weapon_label', '')}".lower()][:25]
+
+    async def _ac_merge_second(self, interaction, current):
+        choices = await self._ac_pending(interaction, current)
+        attacks = self.active_combats.get(interaction.channel_id, {}).get(PENDING_KEY, {})
+        selected_id = getattr(interaction.namespace, 'prvni', None)
+        first = attacks.get(selected_id)
+        return [choice for choice in choices if choice.value != selected_id
+                and not attacks[choice.value].get('merged_attacks')
+                and (not first or all(first.get(k) == attacks[choice.value].get(k)
+                                     for k in ('attacker', 'target', 'actors', 'turn_serial')))]
+
+    @combat_group.command(name="sloucit", description="[GM] Sloučí dva čekající útoky na stejný cíl do jedné karty.")
+    @admin_only()
+    @app_commands.describe(prvni="První čekající útok", druhy="Druhý útok stejného útočníka na stejný cíl")
+    @app_commands.autocomplete(prvni=_ac_pending, druhy=_ac_merge_second)
+    async def combat_sloucit(self, interaction: discord.Interaction, prvni: str, druhy: str):
+        from src.logic.attack_ui import attack_embed
+        try:
+            data = attack_flow.merge(interaction.channel_id, prvni, druhy, is_dm(interaction))
+        except ValueError as e:
+            return await interaction.response.send_message(str(e), ephemeral=True)
+        self.reload_state()
+        view = AttackView(self, interaction.channel_id, data=data)
+        # If sending fails the merged attack stays recoverable via /combat pending.
+        await interaction.response.send_message(embed=attack_embed(data), view=view,
+            allowed_mentions=discord.AllowedMentions.none())
+        await self._store_pending(interaction, view)
 
     @combat_group.command(name="pending", description="[GM] Obnoví kartu čekajícího útoku bez nového hodu.")
     @admin_only()

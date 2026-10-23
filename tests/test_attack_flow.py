@@ -59,6 +59,95 @@ class Flow(unittest.TestCase):
         a = self.attack(**kwargs)
         return f.update_reaction(123, a['id'], 2, False, 'Uhnu stranou.')
 
+    def merged(self):
+        first = self.ready()
+        second = self.attack(action='bonus', weapon_id='bow')
+        f.attach_message(123, first['id'], 77, 100)
+        f.attach_message(123, second['id'], 78, 101)
+        return first, second, f.merge(123, first['id'], second['id'], True)
+
+    def test_merge_keeps_rolls_and_charges_both_weapons_once(self):
+        first, second, a = self.merged()
+        self.assertEqual(a['damage'], first['damage'] + second['damage'])
+        self.assertEqual(a['damage'], 24)
+        self.assertEqual(set(self.state()[f.PENDING]), {a['id']})
+        self.assertNotIn('message_id', a)
+        self.assertEqual(len(self.state()['retired_attack_cards']), 2)
+        self.assertEqual(c._ammo_count(self.profiles()['1:1'], 'arrow'), 3)
+        self.assertEqual(self.profiles()['1:1']['mana_cur'], 20)
+        self.assertEqual(a['merged_attacks'][0]['reaction'], 'Uhnu stranou.')
+        f.update_reaction(123, a['id'], 2, False, 'Blokuji obě zbraně.')
+        f.resolve(123, a['id'], True, 'hit')
+        self.assertEqual(self.profiles()['2:1']['hp_cur'], 75)  # 24 + 5 fury - 4 shield
+        self.assertEqual(self.profiles()['1:1']['mana_cur'], 14)
+        self.assertIsNotNone(f.undo(123))
+        self.assertEqual(self.profiles()['2:1']['hp_cur'], 100)
+        self.assertEqual(self.profiles()['1:1']['mana_cur'], 20)
+        self.assertEqual(c._ammo_count(self.profiles()['1:1'], 'arrow'), 5)
+        self.assertEqual(self.state()['turn_state']['<@1>']['attack'], 0)
+        self.assertEqual(self.state()['turn_state']['<@1>']['bonus'], 0)
+
+    def test_merge_cancel_returns_both_actions_and_ammo(self):
+        _, _, a = self.merged()
+        f.resolve(123, a['id'], True, 'cancel')
+        self.assertEqual(c._ammo_count(self.profiles()['1:1'], 'arrow'), 5)
+        self.assertEqual(self.state()['turn_state']['<@1>']['attack'], 0)
+        self.assertEqual(self.state()['turn_state']['<@1>']['bonus'], 0)
+
+    def test_merge_npc_weapons(self):
+        state = self.state()
+        state['current_index'] = 2
+        c.set_npc_weapon(state['stats']['NPC'], 'main', '7+0', 'Pravá čepel')
+        c.set_npc_weapon(state['stats']['NPC'], 'bonus', '8+0', 'Levá čepel')
+        db.save_doc(f.COMBAT, {'123': state})
+        first = f.prepare(123, 'NPC', '<@2>', dm=True)
+        second = f.prepare(123, 'NPC', '<@2>', action='bonus', npc_slot='bonus', dm=True)
+        a = f.merge(123, first['id'], second['id'], True)
+        self.assertEqual(a['damage'], 15)
+        self.assertIn('Pravá čepel', ui.attack_embed(a).description)
+        f.resolve(123, a['id'], True, 'hit', bypass=True)
+        self.assertEqual(self.profiles()['2:1']['hp_cur'], 89)  # 15 - 4 shield
+
+    def test_merge_rejects_incompatible_or_stale_attacks_atomically(self):
+        first = self.attack()
+        second = f.prepare(123, '<@1>', 'NPC', action='bonus', weapon_id='bow', ammo='arrow')
+        before = self.state()
+        for dm, aid in ((False, second['id']), (True, first['id']), (True, second['id'])):
+            with self.assertRaises(ValueError):
+                f.merge(123, first['id'], aid, dm)
+        self.assertEqual(before, self.state())
+
+    def test_merge_preserves_requests_and_defense_costs(self):
+        first = self.ready()
+        second = self.attack(action='bonus', weapon_id='bow')
+        f.request_roll(123, first['id'], True, 'cíl', '1d20')
+        f.confirm_cost(123, first['id'], True, mana=2)
+        f.confirm_cost(123, second['id'], True, mana=3)
+        a = f.merge(123, first['id'], second['id'], True)
+        self.assertEqual(len(a['requests']), 1)
+        self.assertEqual(len(a['costs']), 2)
+        self.assertEqual(self.profiles()['2:1']['mana_cur'], 15)
+        f.resolve(123, a['id'], True, 'cancel', refund=True)
+        self.assertEqual(self.profiles()['2:1']['mana_cur'], 20)
+
+    def test_merged_source_cards_cannot_resolve_again(self):
+        first, second, a = self.merged()
+        for old in (first, second):
+            with self.assertRaises(ValueError):
+                f.resolve(123, old['id'], True, 'hit', bypass=True)
+        with self.assertRaises(ValueError):
+            f.merge(123, first['id'], second['id'], True)
+        self.assertEqual(set(self.state()[f.PENDING]), {a['id']})
+
+    def test_merge_refunds_repeated_defense_perk_in_reverse_order(self):
+        first = self.ready()
+        second = self.attack(action='bonus', weapon_id='bow')
+        f.confirm_cost(123, first['id'], True, perk_id='barrier')
+        f.confirm_cost(123, second['id'], True, perk_id='barrier')
+        a = f.merge(123, first['id'], second['id'], True)
+        f.resolve(123, a['id'], True, 'cancel', refund=True)
+        self.assertEqual(db.load_doc(f.PERKS_DOC)['2:1']['cooldowns'], {})
+
     def test_hit_consumes_both_pools_and_undo_restores_everything(self):
         a = self.ready()
         f.confirm_cost(123, a['id'], True, mana=4, reaction=True, perk_id='barrier')

@@ -26,6 +26,11 @@ def attack_embed(a):
     embed = discord.Embed(title='⚔️ Útok', color=0xC59145,
         description=f"{a['attacker']} → {a['target']}\n**{a.get('weapon_label', 'Zbraň')}** · základ **{a['damage']} dmg**\n{stage}"[:4096])
     embed.add_field(name='Poškození', value=a.get('roll_info', '—')[:700] or '—', inline=False)
+    if a.get('merged_attacks'):
+        embed.title = '⚔️ Sloučený útok'
+        previous = '\n'.join(f"{n}. {part['reaction'][:450]}" for n, part in enumerate(a['merged_attacks'], 1) if part.get('reaction'))
+        if previous:
+            embed.add_field(name='Původní reakce · popiš společnou reakci níže', value=previous, inline=False)
     embed.add_field(name='Reakce', value=a.get('reaction') or 'Cíl popíše svůj záměr tlačítkem Reakce.', inline=False)
     rows = []
     for r in a.get('requests', [])[-12:]:
@@ -38,8 +43,8 @@ def attack_embed(a):
         embed.add_field(name='Hody · výsledek rozhodne DM', value='\n'.join(rows)[:1024], inline=False)
     res = a.get('resources', {})
     info = []
-    if res.get('ammo_qty'):
-        info.append(f"Rezervováno {res['ammo_qty']}× {res['ammo_id']}")
+    for ammo in flow.ammo_reservations(res):
+        info.append(f"Rezervováno {ammo['qty']}× {ammo['id']}")
     if res.get('mana'):
         info.append(f"Útok spotřebuje {res['mana']} many při zásahu i minutí")
     if a.get('mana_note'):
@@ -48,8 +53,8 @@ def attack_embed(a):
         embed.add_field(name='Zdroje útoku', value=' · '.join(info)[:1024], inline=False)
     costs = a.get('costs', [])
     if costs:
-        cost = costs[0]
-        embed.add_field(name='Potvrzené náklady obrany', value=f"{cost['mana']} many · reakce {'ano' if cost['reaction'] else 'ne'} · perk {cost['perk_id'] or '—'}" + (' · již zaplaceno' if cost['already_paid'] else ''), inline=False)
+        rows = [f"{cost['mana']} many · reakce {'ano' if cost['reaction'] else 'ne'} · perk {cost['perk_id'] or '—'}" + (' · již zaplaceno' if cost['already_paid'] else '') for cost in costs]
+        embed.add_field(name='Potvrzené náklady obrany', value='\n'.join(rows)[:1024], inline=False)
     embed.set_footer(text='Hodit můžeš tlačítkem nebo /roll. Zásah přidá přidělenou útočnou furioku; minutí ji zachová.')
     return embed
 
@@ -417,11 +422,26 @@ async def refresh_cards(cog):
         # Offline command-tree checks intentionally do not log in to Discord.
         return
     seen = {}
+    retired = set()
     while not cog.bot.is_closed():
         try:
             states = db.load_doc(flow.COMBAT, {})
             live = set()
             for channel_id, state in states.items():
+                # Player and DM bots must retire their own original cards.
+                for card in state.get('retired_attack_cards', []):
+                    mid = str(card['message_id'])
+                    if mid in retired or str(card['bot_id']) != str(cog.bot.user.id):
+                        continue
+                    channel = cog.bot.get_channel(int(channel_id))
+                    if channel is None:
+                        continue
+                    try:
+                        message = await channel.fetch_message(int(mid))
+                        await message.delete()
+                        retired.add(mid)
+                    except (discord.NotFound, discord.Forbidden):
+                        retired.add(mid)
                 for aid, a in state.get(flow.PENDING, {}).items():
                     mid = a.get('message_id')
                     if not mid or str(a.get('bot_id')) != str(cog.bot.user.id):

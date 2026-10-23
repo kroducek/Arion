@@ -154,6 +154,76 @@ def attach_message(channel, aid, message_id, bot_id):
     transaction(channel, change)
 
 
+def merge(channel, first_id, second_id, dm):
+    """Combine two existing rolls atomically; never reserve resources twice."""
+    if not dm:
+        raise ValueError('Útoky slučuje pouze DM.')
+    if first_id == second_id:
+        raise ValueError('Vyber dva různé útoky.')
+    def change(state, profiles, perks):
+        first, second = pending(state, first_id), pending(state, second_id)
+        attacks = [first, second]
+        if any(not a.get('flow_version') for a in attacks):
+            raise ValueError('Starší útok nejprve obnov přes /combat pending.')
+        if any(a.get('merged_attacks') for a in attacks):
+            raise ValueError('Sloučit lze dva samostatné útoky.')
+        if any(first.get(k) != second.get(k) for k in ('attacker', 'target', 'actors', 'turn_serial')):
+            raise ValueError('Útoky musí mít stejného útočníka, cíl, postavy i tah.')
+        if len(first.get('requests', [])) + len(second.get('requests', [])) > 40:
+            raise ValueError('Útoky mají dohromady příliš mnoho požadavků na hod.')
+        # Shared resources are represented once; ammo can have different IDs.
+        resources = copy.deepcopy(first.get('resources', {}))
+        resources.pop('ammo_id', None)
+        resources.pop('ammo_qty', None)
+        resources['ammo_reservations'] = [
+            dict(id=a['resources']['ammo_id'], qty=a['resources']['ammo_qty'])
+            for a in attacks if a.get('resources', {}).get('ammo_qty')]
+        resources['mana'] = sum(a.get('resources', {}).get('mana', 0) for a in attacks)
+        merged = copy.deepcopy(first)
+        merged.update(id=uuid.uuid4().hex, damage=sum(a['damage'] for a in attacks),
+            weapon_label=' + '.join(a.get('weapon_label', 'Zbraň') for a in attacks),
+            weapon_id=None, resources=resources, mana_cost=resources['mana'],
+            mana_note=' · '.join(dict.fromkeys(a['mana_note'] for a in attacks if a.get('mana_note'))),
+            roll_info='\n'.join(f"{n}. {a.get('weapon_label', 'Zbraň')}: {a.get('roll_info', '')}" for n, a in enumerate(attacks, 1)),
+            merged_attacks=copy.deepcopy(attacks),
+            actions=[a.get('action', 'attack') for a in attacks],
+            requests=[copy.deepcopy(r) for a in attacks for r in a.get('requests', [])],
+            costs=[copy.deepcopy(cost) for a in attacks for cost in a.get('costs', [])],
+            extra_statuses=[copy.deepcopy(s) for a in attacks for s in a.get('extra_statuses', [])],
+            buffs_before=[copy.deepcopy(b) for a in attacks for b in a.get('buffs_before', [])],
+            reaction='', phase='reaction')
+        # A shared reaction is new; original reactions remain visible in the card.
+        merged.pop('message_id', None)
+        merged.pop('bot_id', None)
+        for a in attacks:
+            del state[PENDING][a['id']]
+            if a.get('message_id') and a.get('bot_id'):
+                state.setdefault('retired_attack_cards', []).append({
+                    'message_id': a['message_id'], 'bot_id': a['bot_id']})
+        state['retired_attack_cards'] = state.get('retired_attack_cards', [])[-100:]
+        state[PENDING][merged['id']] = merged
+        return copy.deepcopy(merged)
+    return transaction(channel, change)
+
+
+def ammo_reservations(resources):
+    if 'ammo_reservations' in resources:
+        return resources['ammo_reservations']
+    return ([dict(id=resources['ammo_id'], qty=resources['ammo_qty'])]
+            if resources.get('ammo_qty') else [])
+
+
+def _return_reservations(state, attack, profile):
+    from src.logic import combat as c
+    if profile is not None:
+        for ammo in ammo_reservations(attack.get('resources', {})):
+            c._add_to_inventory(profile.setdefault('inventory', []), ammo['id'], ammo['qty'])
+    if state.get('turn_serial', {}).get(attack['attacker'], 0) == attack.get('turn_serial', 0):
+        for action in attack.get('actions', [attack.get('action', 'attack')]):
+            c.release_action(state, attack['attacker'], action)
+        _restore_buffs(state, attack)
+
+
 def update_reaction(channel, aid, user_id, dm, text):
     from src.logic import combat as c
     def change(state, profiles, perks):
@@ -293,7 +363,7 @@ def confirm_cost(channel, aid, dm, mana=0, reaction=False, perk_id='', already_p
 
 def _refund_costs(state, profiles, perks, costs):
     from src.logic import combat as c
-    for cost in costs:
+    for cost in reversed(costs):
         if cost.get('already_paid'):
             continue
         p = profiles.get(cost.get('profile_key'))
@@ -374,11 +444,7 @@ def resolve(channel, aid, dm, outcome, damage=None, bypass=False, refund=False):
         if bypass and incomplete:
             lines.append('DM rozhodl bez čekání na reakci / zbývající hody.')
         if outcome == 'cancel':
-            if p is not None and res.get('ammo_qty'):
-                c._add_to_inventory(p.setdefault('inventory', []), res['ammo_id'], res['ammo_qty'])
-            if state.get('turn_serial', {}).get(attacker, 0) == a.get('turn_serial', 0):
-                c.release_action(state, attacker, a.get('action', 'attack'))
-                _restore_buffs(state, a)
+            _return_reservations(state, a, p)
             if refund:
                 _refund_costs(state, profiles, perks, a.get('costs', []))
             lines.append('DM: útok zrušen. Rezervace vráceny.' + (' Potvrzené náklady obrany vráceny.' if refund else ' Potvrzené náklady obrany zůstávají zaplacené.'))
@@ -443,13 +509,8 @@ def undo(channel):
         p = profiles.get(a.get('resources', {}).get('profile_key'))
         if p is not None:
             p['mana_cur'] = min(p.get('mana_max', 0), p.get('mana_cur', 0) + event.get('flow_mana_paid', 0))
-            res = a.get('resources', {})
-            if res.get('ammo_qty'):
-                c._add_to_inventory(p.setdefault('inventory', []), res['ammo_id'], res['ammo_qty'])
         _refund_costs(state, profiles, perks, a.get('costs', []))
-        if state.get('turn_serial', {}).get(a['attacker'], 0) == a.get('turn_serial', 0):
-            c.release_action(state, a['attacker'], a.get('action', 'attack'))
-            _restore_buffs(state, a)
+        _return_reservations(state, a, p)
         event['undone'] = True
         return copy.deepcopy(event)
     return transaction(channel, change)
