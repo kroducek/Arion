@@ -229,8 +229,37 @@ def _kostky_embed(guild, currency: str = "silver") -> discord.Embed:
                          color=0xE67E22)
 
 
+def _cards_embed(guild) -> discord.Embed:
+    """Historický rekord denní série CARDS, nezávislý na aktuální sérii."""
+    daily = load_json(_data("summon_daily.json"), default={})
+    rows = []
+    for uid, record in daily.items():
+        if not isinstance(record, dict):
+            continue
+        try:
+            maximum = max(int(record.get("max_streak", 0)), int(record.get("streak", 0)))
+        except (TypeError, ValueError):
+            continue
+        if maximum > 0:
+            rows.append((str(uid), maximum))
+    rows.sort(key=lambda row: (-row[1], row[0]))
+    lines = [f"{_medal(i)} **{_name_for(guild, uid)}** — **{maximum}** dní"
+             for i, (uid, maximum) in enumerate(rows[:10])]
+    embed = discord.Embed(
+        title="🃏 CARDS — Max record",
+        description="\n".join(lines) or "Zatím si nikdo nevyzvedl denní odměnu.",
+        color=0x9B59B6,
+    )
+    embed.set_footer(text="Nejdelší dosažená denní série • /summon daily")
+    return embed
+
+
 # Registr žebříčků: key → (label pro select, emoji, builder, má měnový přepínač?)
 BOARDS = {
+    "cards": {
+        "label": "CARDS — Max record", "emoji": "🃏",
+        "builder": lambda guild, cur: _cards_embed(guild), "toggle": False,
+    },
     "gold": {
         "label": "Bohatství (zlato/stříbro)", "emoji": "💰",
         "builder": lambda guild, cur: _gold_embed(guild, cur), "toggle": True,
@@ -343,10 +372,18 @@ class HubView(discord.ui.View):
                        custom_id="leaderboards:open")
     async def open_boards(self, interaction: discord.Interaction, _b):
         # výchozí: rovnou ukaž první žebříček (bohatství) + rozcestník
-        first = next(iter(BOARDS))
+        first = "gold"
         embed = BOARDS[first]["builder"](interaction.guild, "gold")
         await interaction.response.send_message(
             embed=embed, view=DispatcherView(selected=first), ephemeral=True)
+
+    @discord.ui.button(label="CARDS", emoji="🃏",
+                       style=discord.ButtonStyle.secondary,
+                       custom_id="leaderboards:cards")
+    async def open_cards(self, interaction: discord.Interaction, _b):
+        await interaction.response.send_message(
+            embed=_cards_embed(interaction.guild),
+            view=DispatcherView(selected="cards"), ephemeral=True)
 
 
 def _hub_embed() -> discord.Embed:
