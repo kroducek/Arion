@@ -1549,6 +1549,48 @@ class Cards(commands.Cog):
                    "Rámeček nasazen. Případný původní rámeček se vrátil do inventáře.")
         await interaction.response.send_message(f"✅ **{card.get('name', unique_id)}** · {message}", ephemeral=True)
 
+    @cards_group.command(name="quality", description="Vylepšit kvalitu karty za hvězdný prach")
+    @app_commands.describe(unique_id="ID karty, jejíž kvalitu chceš vylepšit")
+    async def upgrade_quality(self, interaction: discord.Interaction, unique_id: str):
+        from src.core.cards.quality_service import quote, upgrade
+
+        owner = str(interaction.user.id)
+        card = load_inventory().get(unique_id)
+        if not card or card.get("owner_id") != owner:
+            await interaction.response.send_message("Karta neexistuje nebo ti nepatří.", ephemeral=True)
+            return
+        try:
+            target, cost = quote(card)
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        quality, rarity = card.get("quality", "normal"), card.get("rarity")
+        view = discord.ui.View(timeout=60)
+        button = discord.ui.Button(label=f"Vylepšit za {cost:,} ✨", style=discord.ButtonStyle.success)
+
+        async def confirm(click: discord.Interaction):
+            if str(click.user.id) != owner:
+                await click.response.send_message("Toto potvrzení patří majiteli karty.", ephemeral=True)
+                return
+            try:
+                updated, paid = upgrade(owner, unique_id, quality, rarity)
+            except ValueError as exc:
+                await click.response.edit_message(content=f"❌ {exc}", view=None)
+                view.stop()
+                return
+            await click.response.edit_message(
+                content=f"✅ **{updated.get('name', unique_id)}** · {QUALITIES[quality]['name']} → "
+                        f"**{QUALITIES[target]['name']}** · zaplaceno **{paid:,} ✨**.", view=None)
+            view.stop()
+
+        button.callback = confirm
+        view.add_item(button)
+        await interaction.response.send_message(
+            f"**{card.get('name', unique_id)}** (`{unique_id}`) · {rarity.capitalize()}\n"
+            f"{QUALITIES[quality]['name']} → **{QUALITIES[target]['name']}**\n"
+            f"Cena: **{cost:,} ✨ hvězdného prachu**. Vylepšení je zaručené.",
+            view=view, ephemeral=True)
+
     @cards_group.command(name="frames", description="Rámečky ve tvém inventáři")
     async def show_frames(self, interaction: discord.Interaction):
         """Zobrazí rámečky v inventáři hráče."""
@@ -1627,6 +1669,13 @@ class Cards(commands.Cog):
             for qid, qdata in QUALITIES.items()
         ]
         embed.add_field(name="💎 Kvality karet", value="\n".join(quality_lines), inline=True)
+        embed.add_field(name="✨ Vylepšení kvality — /cards quality", value=(
+            "Damaged → Poor → Normal → Excellent → Pristine.\n"
+            "První přechod podle rarity: Common 67 · Uncommon 133 · Rare 233 · "
+            "Epic 333 · Legendary 500 · Mythic 666 prachu.\n"
+            "Jednotlivé přechody stojí 1× / 2× / 4× / 8× základ; "
+            "zaokrouhluje se až výsledná cena. "
+            "Cena se zobrazí před potvrzením; vylepšení je zaručené."), inline=False)
 
         embed.add_field(name="🖼️ Rámeček při summonu", value=(
             f"{frame_drop_chance(1)*100:g} % při 1 lístku → {frame_drop_chance(10)*100:g} % při 10 lístcích. "
