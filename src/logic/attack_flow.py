@@ -86,8 +86,8 @@ def prepare(channel, actor, target, action='attack', weapon_id=None, ammo=None,
         statuses = []
         mana_note = ''
         if p is not None:
-            furioku_amount = max(0, int(furioku_amount or 0))
-            if furioku_amount:
+            requested_furioku = max(0, int(furioku_amount or 0))
+            if requested_furioku:
                 from src.logic.furioku import UTOK
                 uid = c._actor_uid(actor)
                 perk_ids = []
@@ -98,9 +98,9 @@ def prepare(channel, actor, target, action='attack', weapon_id=None, ammo=None,
                     raise ValueError('K použití útočné furioku potřebuješ perk Furioku: Útok.')
                 energy.normalize(p)
                 available, _ = energy.bonuses(p, perk_ids)
-                if furioku_amount > available:
+                if requested_furioku > available:
                     raise ValueError(f'Můžeš použít nejvýše {available} furioku (po odečtení obranné rezervy).')
-                resources['furioku_amount'] = furioku_amount
+                resources['furioku_amount'] = requested_furioku
             items = c._load_items_db()
             wid = weapon_id or p.get('equipment', {}).get('hand_l' if action == 'bonus' else 'hand_r')
             if not wid or wid not in c._player_weapons(p) and not (dm and force):
