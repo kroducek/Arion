@@ -4,6 +4,7 @@ from uuid import uuid5, NAMESPACE_URL
 UTOK = 'furioku_utok'
 OBRANA = 'furioku_obrana'
 JEDNOTA = 'furioku_jednota'
+EMOJI = '<:furioku:1490160933081972866>'
 
 
 def normalize(p):
@@ -22,7 +23,8 @@ def normalize(p):
     valid = {s['id'] for s in spirits}
     p['equipped_spirit_ids'] = list(dict.fromkeys(i for i in p['equipped_spirit_ids'] if i in valid))
     f = p.setdefault('furioka', {})
-    f.setdefault('atk_amount', 0)
+    # Attack energy is selected per attack in /attack; clear legacy allocation.
+    f['atk_amount'] = 0
     f.setdefault('def_amount', 0)
     if 'spirit_ids' not in f:
         enabled = f.get('use_spirit') or f.get('atk_spirit') or f.get('def_spirit')
@@ -75,8 +77,8 @@ def choose_main(p, spirit_id):
 def bonuses(p, perks):
     available = pool(p, perks)
     f = p['furioka']
-    atk = min(available, max(0, f['atk_amount'])) if UTOK in perks else 0
-    defense = min(available - atk, max(0, f['def_amount'])) if OBRANA in perks else 0
+    defense = min(available, max(0, f['def_amount'])) if OBRANA in perks else 0
+    atk = max(0, available - defense) if UTOK in perks else 0
     return atk, defense
 
 
@@ -109,8 +111,10 @@ def absorb(p, damage, perks):
     return max(0, damage) - amount, amount
 
 
-def attack(p, perks):
+def attack(p, perks, limit=None):
     amount, _ = bonuses(p, perks)
+    if limit is not None:
+        amount = min(amount, max(0, int(limit)))
     spend(p, amount, perks)
     p['furioka']['atk_amount'] = 0
     return amount
@@ -169,15 +173,15 @@ def consumption_note(p):
     return f"🔥 Spotřeba: {detail}. {exhausted}".strip()
 
 
-def allocate(p, perks, attack_amount, defense_amount):
+def allocate(p, perks, defense_amount):
     normalize(p)
-    if attack_amount < 0 or defense_amount < 0:
+    if defense_amount < 0:
         raise ValueError('Částky nesmí být záporné.')
-    if attack_amount and UTOK not in perks or defense_amount and OBRANA not in perks:
-        raise ValueError('Chybí perk Útok nebo Obrana.')
-    if attack_amount + defense_amount > pool(p, perks):
+    if defense_amount and OBRANA not in perks:
+        raise ValueError('Chybí perk Furioku: Obrana.')
+    if defense_amount > pool(p, perks):
         raise ValueError('Nemáš tolik dostupné energie.')
-    p['furioka'].update(atk_amount=attack_amount, def_amount=defense_amount)
+    p['furioka'].update(atk_amount=0, def_amount=defense_amount)
 
 
 def set_source_order(p, names):
@@ -202,7 +206,7 @@ def save_preset(p, name):
         raise ValueError('Název sestavy musí mít 1–60 znaků.')
     p.setdefault('furioku_presets', {})[name] = deepcopy({
         key: p['furioka'].get(key, [] if key in ('spirit_ids', 'source_order') else 0)
-        for key in ('spirit_ids', 'source_order', 'atk_amount', 'def_amount')})
+        for key in ('spirit_ids', 'source_order', 'def_amount')})
 
 
 def load_preset(p, name, perks):
@@ -215,10 +219,10 @@ def load_preset(p, name, perks):
     valid = {s['id'] for s in p['spirits']}
     f['spirit_ids'] = [i for i in f['spirit_ids'] if i in valid] if JEDNOTA in perks else []
     f['source_order'] = [i for i in f['source_order'] if i == 'self' or i in valid]
+    f['atk_amount'] = 0
     p['furioka'] = f
-    attack_amount, defense_amount = bonuses(p, perks)
-    f.update(atk_amount=attack_amount, def_amount=defense_amount)
-    return 'Sestava načtena. Přidělení je omezené aktuální energií a vlastněnými perky.'
+    f['def_amount'] = min(max(0, int(f.get('def_amount', 0))), pool(p, perks)) if OBRANA in perks else 0
+    return 'Sestava načtena. Obranná rezerva je omezená aktuální energií a vlastněnými perky; útočnou furioku vybíráš v /attack.'
 
 
 def rank_up_text(results):

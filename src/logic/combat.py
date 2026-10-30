@@ -49,7 +49,7 @@ def _merge_energy(profile, state):
         return
     energy.normalize(profile)
     profile['fury_cur'] = max(0, min(profile.get('fury_max', 0), state.get('fury_cur', 0)))
-    profile['furioka']['atk_amount'] = state['furioka']['atk_amount']
+    profile['furioka']['atk_amount'] = 0
     profile['furioka']['def_amount'] = state['furioka']['def_amount']
     current = {s['id']: s for s in state['spirits']}
     for spirit in profile['spirits']:
@@ -97,10 +97,12 @@ def _absorb_energy(stat, damage):
 
 def _attack_energy(combat, actor, resources):
     stat = combat.get('stats', {}).get(actor, {})
-    if 'energy' not in stat:
+    if ('energy' not in stat or not resources.get('furioku_amount')
+            or energy.UTOK not in stat.get('energy_perks', [])):
         return 0
     before = copy.deepcopy(stat['energy'])
-    amount = energy.attack(stat['energy'], stat.get('energy_perks', []))
+    amount = energy.attack(stat['energy'], stat.get('energy_perks', []),
+                           limit=resources['furioku_amount'])
     resources['energy_note'] = energy.consumption_note(stat['energy'])
     stat['fur'] = energy.pool(stat['energy'], stat.get('energy_perks', []))
     if amount:
@@ -593,7 +595,7 @@ def refund_resources(event: dict) -> str:
             return ""
         _merge_energy(profile, res.get("energy_before"))
         if res.get("energy_before"):
-            notes.append("🔥 Obnovena furioku hráče i duchů a přidělení do útoku.")
+            notes.append("🔥 Obnovena furioku hráče i duchů.")
         mana = int(res.get("mana", 0) or 0)
         if mana:
             cur = profile.get("mana_cur", profile.get("mana_max", 20))
@@ -2410,6 +2412,7 @@ class CombatCog(commands.Cog):
         ammo="Munice pro střelnou zbraň — přičte svůj atk a odečte se kus.",
         akce="Útok nebo bonusový útok (dual wielding).",
         bonus="Ruční bonus k poškození (perky, situace).",
+        furioku="Kolik furioku přidat k tomuto útoku; dostupná částka se ověřuje po obranné rezervě.",
         force="[GM] Ignoruj pojistku na už použitou akci i na zbraň mimo ruce.",
     )
     @app_commands.choices(akce=[
@@ -2425,12 +2428,14 @@ class CombatCog(commands.Cog):
         ammo: Optional[str] = None,
         akce: Optional[app_commands.Choice[str]] = None,
         bonus: int = 0,
+        furioku: app_commands.Range[int, 0] = 0,
         force: bool = False,
     ):
         try:
             data = attack_flow.prepare(interaction.channel_id, interaction.user.mention, cil,
                 action=akce.value if akce else 'attack', weapon_id=zbran, ammo=ammo,
-                bonus=bonus, dm=is_dm(interaction), force=force)
+                bonus=bonus, dm=is_dm(interaction), force=force,
+                furioku_amount=furioku)
         except ValueError as e:
             return await interaction.response.send_message(str(e), ephemeral=True)
         await self._send_attack(interaction, data)

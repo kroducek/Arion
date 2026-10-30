@@ -61,7 +61,8 @@ def check_turn(state, actor, dm=False, force=False):
 
 
 def prepare(channel, actor, target, action='attack', weapon_id=None, ammo=None,
-            bonus=0, dm=False, force=False, npc_expr=None, npc_slot='main'):
+            bonus=0, dm=False, force=False, npc_expr=None, npc_slot='main',
+            furioku_amount=0):
     from src.logic import combat as c
     def change(state, profiles, player_perks):
         check_turn(state, actor, dm, force)
@@ -81,10 +82,25 @@ def prepare(channel, actor, target, action='attack', weapon_id=None, ammo=None,
         if p is not None and not _active_character(key, c._actor_uid(actor)):
             raise ValueError('Přepni se na postavu účastnící se boje.')
         resources = dict(uid=c._actor_uid(actor), profile_key=key, mana=0,
-                         ammo_id=None, ammo_qty=0)
+                         ammo_id=None, ammo_qty=0, furioku_amount=0)
         statuses = []
         mana_note = ''
         if p is not None:
+            furioku_amount = max(0, int(furioku_amount or 0))
+            if furioku_amount:
+                from src.logic.furioku import UTOK
+                uid = c._actor_uid(actor)
+                perk_ids = []
+                perk_keys = dict.fromkeys((key, c._pk(profiles, uid), str(uid)))
+                for perk_key in perk_keys:
+                    perk_ids.extend((player_perks.get(perk_key) or {}).get('perks', []))
+                if UTOK not in perk_ids:
+                    raise ValueError('K použití útočné furioku potřebuješ perk Furioku: Útok.')
+                energy.normalize(p)
+                available, _ = energy.bonuses(p, perk_ids)
+                if furioku_amount > available:
+                    raise ValueError(f'Můžeš použít nejvýše {available} furioku (po odečtení obranné rezervy).')
+                resources['furioku_amount'] = furioku_amount
             items = c._load_items_db()
             wid = weapon_id or p.get('equipment', {}).get('hand_l' if action == 'bonus' else 'hand_r')
             if not wid or wid not in c._player_weapons(p) and not (dm and force):
@@ -118,6 +134,8 @@ def prepare(channel, actor, target, action='attack', weapon_id=None, ammo=None,
         details = [f'{expr}: {roll.detail} = {roll.total}']
         if bonus:
             details.append(f'úprava {bonus:+d}')
+        if resources['furioku_amount']:
+            details.append(f"útočná furioku +{resources['furioku_amount']} {energy.EMOJI} při zásahu")
         if ammo and p is not None:
             ammunition = items.get(ammo, {})
             if ammunition.get('category') != c.AMMO_CATEGORY or not c._consume_ammo(p, ammo):
@@ -179,6 +197,7 @@ def merge(channel, first_id, second_id, dm):
             dict(id=a['resources']['ammo_id'], qty=a['resources']['ammo_qty'])
             for a in attacks if a.get('resources', {}).get('ammo_qty')]
         resources['mana'] = sum(a.get('resources', {}).get('mana', 0) for a in attacks)
+        resources['furioku_amount'] = sum(a.get('resources', {}).get('furioku_amount', 0) for a in attacks)
         merged = copy.deepcopy(first)
         merged.update(id=uuid.uuid4().hex, damage=sum(a['damage'] for a in attacks),
             weapon_label=' + '.join(a.get('weapon_label', 'Zbraň') for a in attacks),

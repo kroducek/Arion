@@ -5,6 +5,7 @@ import logging
 import discord
 from discord import ui
 from src.logic import attack_flow as flow
+from src.logic import furioku as energy
 from src.database import db
 
 
@@ -47,6 +48,8 @@ def attack_embed(a):
         info.append(f"Rezervováno {ammo['qty']}× {ammo['id']}")
     if res.get('mana'):
         info.append(f"Útok spotřebuje {res['mana']} many při zásahu i minutí")
+    if res.get('furioku_amount'):
+        info.append(f"Při zásahu použije {res['furioku_amount']} {energy.EMOJI}; při minutí zůstane.")
     if a.get('mana_note'):
         info.append(a['mana_note'])
     if info:
@@ -55,7 +58,7 @@ def attack_embed(a):
     if costs:
         rows = [f"{cost['mana']} many · reakce {'ano' if cost['reaction'] else 'ne'} · perk {cost['perk_id'] or '—'}" + (' · již zaplaceno' if cost['already_paid'] else '') for cost in costs]
         embed.add_field(name='Potvrzené náklady obrany', value='\n'.join(rows)[:1024], inline=False)
-    embed.set_footer(text='Hodit můžeš tlačítkem nebo /roll. Zásah přidá přidělenou útočnou furioku; minutí ji zachová.')
+    embed.set_footer(text='Hodit můžeš tlačítkem nebo /roll. Útočnou furioku spotřebuje jen zásah, u kterého ji útočník zapnul v /attack.')
     return embed
 
 

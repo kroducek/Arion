@@ -295,7 +295,7 @@ class BreedConfirmView(discord.ui.View):
         )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FURIOKU: ÚTOK / OBRANA  (správa přes /staty → tlačítko Furioku)
+# FURIOKU: útočná energie se volí v /attack, zde se spravuje obrana a duchové.
 # ══════════════════════════════════════════════════════════════════════════════
 #
 # Uloženo v profilu:
@@ -340,26 +340,21 @@ def _furioka_embed(profile: dict, user_id: int, page: int = 0) -> discord.Embed:
 
     has_jednota = PERK_JEDNOTA in perks
     has_obrana  = PERK_OBRANA  in perks
-    has_utok    = PERK_UTOK    in perks
 
-    atk, dfn = furioka_bonuses(profile, user_id)
-    volne    = max(0, pool - atk - dfn)
+    _, dfn = furioka_bonuses(profile, user_id)
 
     current, maximum = energy.totals(profile, perks)
     src = f"Furioku: **{current}/{maximum}** · Vlastní: **{fury_cur}/{profile.get('fury_max', 0)}** · Dostupné: **{pool}**"
+    attack_hint = ("Počet útočné furioku zadáš v `/attack`." if PERK_UTOK in perks
+                   else "Perk Furioku: Útok ti umožní zadat furioku v `/attack`.")
 
     embed = discord.Embed(
         title=f"{FU_EMO}  Správa furioku",
-        description=(f"{src}\n-# Volně k nasazení: **{volne}**\n"
-                     f"-# Rozděl furioku do útoku a obrany. Se **Jednotou** můžeš "
+        description=(f"{src}\n"
+                     f"-# {attack_hint} Zde nastavíš obrannou rezervu.\n"
+                     f"-# Se **Jednotou** můžeš "
                      f"sloučit ducha a využít i jeho furioku."),
         color=0x8e44ad,
-    )
-    embed.add_field(
-        name="⚔️ Útok",
-        value=(f"{FU_EMO} **{f['atk_amount']}**  →  **+{atk}** k dmg\n-# *1d… zbraň + {atk} furioku*"
-               if has_utok else "🔒 *chybí perk Furioku: Útok*"),
-        inline=True,
     )
     embed.add_field(
         name="🛡️ Obrana",
@@ -396,14 +391,12 @@ def _furioka_embed(profile: dict, user_id: int, page: int = 0) -> discord.Embed:
 
 class EnergyModal(discord.ui.Modal):
     def __init__(self, panel, action):
-        super().__init__(title={'amount': 'Přesné přidělení energie', 'order': 'Pořadí čerpání', 'save': 'Uložit sestavu', 'load': 'Načíst sestavu', 'delete': 'Smazat sestavu'}[action])
+        super().__init__(title={'amount': 'Přesná obranná rezerva', 'order': 'Pořadí čerpání', 'save': 'Uložit sestavu', 'load': 'Načíst sestavu', 'delete': 'Smazat sestavu'}[action])
         self.panel, self.action = panel, action
         _, p = panel._get()
         if action == 'amount':
-            self.first = discord.ui.TextInput(label='Útok', default=str(p['furioka']['atk_amount']), max_length=12)
-            self.second = discord.ui.TextInput(label='Obrana', default=str(p['furioka']['def_amount']), max_length=12)
+            self.first = discord.ui.TextInput(label='Obrana', default=str(p['furioka']['def_amount']), max_length=12)
             self.add_item(self.first)
-            self.add_item(self.second)
         else:
             names = {s['id']: s['name'] for s in p['spirits']}
             names['self'] = 'já'
@@ -422,7 +415,7 @@ class EnergyModal(discord.ui.Modal):
         note = 'Nastavení uloženo.'
         try:
             if self.action == 'amount':
-                energy.allocate(p, perks, int(self.first.value), int(self.second.value))
+                energy.allocate(p, perks, int(self.first.value))
             elif self.action == 'order':
                 energy.set_source_order(p, self.first.value.splitlines())
             elif self.action == 'save':
@@ -452,7 +445,7 @@ class EnergySettings(discord.ui.View):
 
 
 class FurioukaView(discord.ui.View):
-    """Rozdělení furioku: +/- do útoku (dmg) a obrany (štít), sloučení ducha."""
+    """Nastavení obranné rezervy a duchů; útočná furioku se zapíná v /attack."""
 
     STEP = 5
 
@@ -527,46 +520,39 @@ class FurioukaView(discord.ui.View):
         await interaction.response.edit_message(
             embed=_furioka_embed(profile, self.user_id, self.page), view=self)
 
-    def _adjust(self, profile: dict, role: str, delta: int) -> str | None:
+    def _adjust_defense(self, profile: dict, delta: int) -> str | None:
         perks = _owned_perks(self.user_id)
-        need  = PERK_UTOK if role == "atk" else PERK_OBRANA
-        if need not in perks:
-            return f"Chybí ti perk **{'Furioku: Útok' if role=='atk' else 'Furioku: Obrana'}**."
+        if PERK_OBRANA not in perks:
+            return "Chybí ti perk **Furioku: Obrana**."
         f   = _furioka(profile)
-        key = f"{role}_amount"
-        new = f[key] + delta
+        new = f['def_amount'] + delta
         if new < 0:
             return None
-        other = f["def_amount"] if role == "atk" else f["atk_amount"]
-        if delta > 0 and new + other > furioku_pool(profile, self.user_id):
+        if delta > 0 and new > furioku_pool(profile, self.user_id):
             return "Nemáš tolik furioku v zásobě."
-        f[key] = new
+        f['def_amount'] = new
         return None
 
-    @discord.ui.button(label="Přesně", row=0)
+    @discord.ui.button(label="Upravit rezervu", row=0)
     async def exact_amount(self, interaction, button):
         if await self._guard(interaction):
             await interaction.response.send_modal(EnergyModal(self, 'amount'))
 
-    async def _all(self, interaction, attack):
+    async def _all_defense(self, interaction):
         if not await self._guard(interaction):
             return
         data, p = self._get()
         perks = _owned_perks(self.user_id)
         amount = energy.pool(p, perks)
         try:
-            energy.allocate(p, perks, amount if attack else 0, 0 if attack else amount)
+            energy.allocate(p, perks, amount)
         except ValueError as exc:
             return await interaction.response.send_message(f'❌ {exc}', ephemeral=True)
         await self._refresh(interaction, data, p)
 
-    @discord.ui.button(label="Vše do útoku", row=0)
-    async def all_attack(self, interaction, button):
-        await self._all(interaction, True)
-
     @discord.ui.button(label="Vše do obrany", row=1)
     async def all_defense(self, interaction, button):
-        await self._all(interaction, False)
+        await self._all_defense(interaction)
 
     @discord.ui.button(label="Sestavy a čerpání", row=2)
     async def settings(self, interaction, button):
@@ -576,36 +562,20 @@ class FurioukaView(discord.ui.View):
         names = ', '.join(p.get('furioku_presets', {})) or 'zatím žádné'
         await interaction.response.send_message('Uložené sestavy: ' + names[:1700] + '\nUložení stejného názvu přepíše sestavu. V pořadí uveď zdroje po řádcích (vlastní = já). Neuvedené zdroje se doplní na konec.', view=EnergySettings(self), ephemeral=True)
 
-    # ── útok ──
-    @discord.ui.button(label="＋5", emoji="⚔️", style=discord.ButtonStyle.danger, row=0)
-    async def atk_plus(self, interaction, _b):
-        if not await self._guard(interaction): return
-        data, profile = self._get()
-        err = self._adjust(profile, "atk", self.STEP)
-        if err: return await interaction.response.send_message(f"❌ {err}", ephemeral=True)
-        await self._refresh(interaction, data, profile)
-
-    @discord.ui.button(label="－5", emoji="⚔️", style=discord.ButtonStyle.secondary, row=0)
-    async def atk_minus(self, interaction, _b):
-        if not await self._guard(interaction): return
-        data, profile = self._get()
-        self._adjust(profile, "atk", -self.STEP)
-        await self._refresh(interaction, data, profile)
-
     # ── obrana ──
-    @discord.ui.button(label="＋5", emoji="🛡️", style=discord.ButtonStyle.success, row=1)
+    @discord.ui.button(label="＋5", emoji="🛡️", style=discord.ButtonStyle.success, row=0)
     async def def_plus(self, interaction, _b):
         if not await self._guard(interaction): return
         data, profile = self._get()
-        err = self._adjust(profile, "def", self.STEP)
+        err = self._adjust_defense(profile, self.STEP)
         if err: return await interaction.response.send_message(f"❌ {err}", ephemeral=True)
         await self._refresh(interaction, data, profile)
 
-    @discord.ui.button(label="－5", emoji="🛡️", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="－5", emoji="🛡️", style=discord.ButtonStyle.secondary, row=0)
     async def def_minus(self, interaction, _b):
         if not await self._guard(interaction): return
         data, profile = self._get()
-        self._adjust(profile, "def", -self.STEP)
+        self._adjust_defense(profile, -self.STEP)
         await self._refresh(interaction, data, profile)
 
     # ── sloučit ducha ──
