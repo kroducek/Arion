@@ -122,14 +122,10 @@ def _writeback_attack(combat, actor, resources):
 
 
 def apply_status_dmg(stat: dict, dmg: int) -> int:
-    """Dmg ze statusu: DEF ignoruje, napřed ubere furioku, zbytek jde do HP.
-
-    Mutuje `stat` (fur, hp). Vrací, kolik pohltila furioka.
-    """
+    """Poškození ze statusu ignoruje DEF i furioku a ubírá přímo HP."""
     dmg = max(0, int(dmg))
-    rest, absorbed = _absorb_energy(stat, dmg)
-    stat['hp'] = max(0, int(stat.get('hp', 0) or 0) - rest)
-    return absorbed
+    stat['hp'] = max(0, int(stat.get('hp', 0) or 0) - dmg)
+    return 0
 
 def deliver_statuses(stat: dict, statuses: list, bs, reg: dict) -> list[str]:
     """Doručí statusy ze zásahu a hned jim dá první tik (jed −dmg HP).
@@ -1270,6 +1266,55 @@ class CombatCog(commands.Cog):
     def save_state(self):
         """Uloží stav boje (volají i jiné cogy, např. perky)."""
         self._save_state()
+
+    @app_commands.command(name="tick", description="Provede tiky tvých statusů mimo boj.")
+    async def status_tick_rp(self, interaction: discord.Interaction):
+        """Ručně provede statusy aktivní postavy při RP mimo combat."""
+        uid = interaction.user.id
+        actor = f"<@{uid}>"
+        for combat in self.active_combats.values():
+            stat = (combat.get("stats") or {}).get(actor)
+            if stat is not None:
+                return await interaction.response.send_message(
+                    console("⚠️ Tvoje postava je v combatu — statusy tikají při začátku tahu."),
+                    ephemeral=True)
+
+        profiles = _load_profiles()
+        key = _pk(profiles, uid)
+        profile = profiles.get(key)
+        if not profile:
+            return await interaction.response.send_message(
+                "❌ Nemáš aktivní profil postavy.", ephemeral=True)
+        bs = _bs()
+        if not bs:
+            return await interaction.response.send_message(
+                "❌ Statusový systém není dostupný.", ephemeral=True)
+        carrier = {
+            "hp": profile.get("hp_cur", profile.get("hp_max", 50)),
+            "max_hp": profile.get("hp_max", 50),
+            "statuses": copy.deepcopy(profile.get("statuses") or []),
+        }
+        if not carrier["statuses"]:
+            return await interaction.response.send_message(
+                console("✅ Nemáš žádné aktivní statusy."), ephemeral=True)
+        dmg, log = bs.tick_statuses(carrier, bs.load_statuses())
+        before_hp = int(carrier["hp"] or 0)
+        if dmg:
+            carrier["hp"] = max(0, before_hp - dmg)
+        profile["hp_cur"] = carrier["hp"]
+        profile["statuses"] = carrier["statuses"]
+        _save_profiles(profiles)
+
+        name = _active_char_name(uid) or interaction.user.display_name
+        lines = [console(f"🩸 Status: **{name}** — " + " · ".join(log))]
+        if dmg:
+            hp, max_hp = carrier["hp"], carrier["max_hp"]
+            bar = _make_bar(hp, max_hp, 8)
+            dead = "  💀" if hp == 0 else ""
+            lines.append(console(f"❤️ `{before_hp}` → `{hp}/{max_hp}` {bar}{dead}"))
+        msg = await interaction.response.send_message("\n".join(lines), wait=True)
+        if len(lines) > 1:
+            await stream_console(msg, lines)
 
     def mutate_combat(self, channel_id: int, change):
         """Atomicky změní jeden boj: čerstvý stav z DB → `change(combat)` → uložit.
