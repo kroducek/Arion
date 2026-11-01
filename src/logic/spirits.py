@@ -93,8 +93,27 @@ def _default_spirit(name: str, rank: int, fury: int,
         "xp":           0,
         "xp_threshold": rank_xp_threshold(rank),
         "total_xp":     0,
+        "age_days":     0,
+        "age_updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         "created_at":   datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
     }
+
+def _spirit_age_days(spirit: dict) -> int | None:
+    """Return the spirit's age in real-world days, including elapsed time since last edit."""
+    age_days = spirit.get("age_days")
+    if age_days is None:
+        return None
+    try:
+        age_days = max(0, int(age_days))
+        updated = datetime.datetime.fromisoformat(
+            str(spirit.get("age_updated_at", "")).replace("Z", "+00:00")
+        )
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=datetime.timezone.utc)
+        elapsed = (datetime.datetime.now(datetime.timezone.utc) - updated).total_seconds()
+        return age_days + max(0, int(elapsed // 86400))
+    except (TypeError, ValueError, OverflowError):
+        return max(0, int(age_days))
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PUBLIC API
@@ -162,9 +181,11 @@ def _spirit_line(s: dict, equipped: bool = False) -> str:
     emoji  = _elem_emoji(s.get("element", ""))
     eq     = "  ⭐ *hlavní duch*" if equipped else ""
     thresh = s.get("xp_threshold", rank_xp_threshold(s["rank"]))
+    age = _spirit_age_days(s)
+    age_text = f"  ·  Věk: {age} dní" if age is not None else ""
     return (
         f"{SPIRIT_EMO} **{s['name']}** {emoji}  ·  {rank_label(s['rank'])}  ·  "
-        f"{s.get('fury_cur', s['fury'])}/{s.get('fury_max', s['fury'])} {FU_EMO} {'💤' if s.get('fury_cur', s['fury']) == 0 else ''}  ·  XP: {s.get('xp', 0)}/{thresh}{eq}"
+        f"{s.get('fury_cur', s['fury'])}/{s.get('fury_max', s['fury'])} {FU_EMO} {'💤' if s.get('fury_cur', s['fury']) == 0 else ''}  ·  XP: {s.get('xp', 0)}/{thresh}{age_text}{eq}"
     )
 
 def _spirit_embed(s: dict, title: str = None) -> discord.Embed:
@@ -175,6 +196,9 @@ def _spirit_embed(s: dict, title: str = None) -> discord.Embed:
     embed.add_field(name="Rank",    value=rank_label(s["rank"]),       inline=True)
     embed.add_field(name="Element", value=f"{emoji} {elem}",           inline=True)
     embed.add_field(name="Furioka", value=f"{s.get('fury_cur', s['fury'])}/{s.get('fury_max', s['fury'])} {FU_EMO} {'💤' if s.get('fury_cur', s['fury']) == 0 else ''}",     inline=True)
+    age = _spirit_age_days(s)
+    if age is not None:
+        embed.add_field(name="Věk", value=f"{age} dní (reálný čas)", inline=True)
     thresh = s.get("xp_threshold", rank_xp_threshold(s["rank"]))
     embed.add_field(
         name="Progres",
@@ -934,6 +958,7 @@ class Spirits(commands.Cog):
         novy_rank="Nový rank (resetuje XP)",
         novy_popis="Nový popis",
         nove_jmeno="Přejmenovat ducha",
+        vek_dni="Věk ducha v reálných dnech",
     )
     @mark_admin
     async def duch_upravit(
@@ -943,6 +968,7 @@ class Spirits(commands.Cog):
         novy_rank: Optional[int] = None,
         novy_popis: Optional[str] = None,
         nove_jmeno: Optional[str] = None,
+        vek_dni: Optional[int] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -985,6 +1011,13 @@ class Spirits(commands.Cog):
             old_name = spirit["name"]
             spirit["name"] = nove_jmeno
             changes.append(f"přejmenován: **{old_name}** → **{nove_jmeno}**")
+        if vek_dni is not None:
+            if vek_dni < 0:
+                await interaction.followup.send("❌ Věk musí být nezáporný počet dní.")
+                return
+            spirit["age_days"] = vek_dni
+            spirit["age_updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+            changes.append(f"věk → **{vek_dni} dní** (dál se počítá v reálném čase)")
 
         if not changes:
             await interaction.followup.send("ℹ️ Nezadal/a jsi žádnou změnu.")
