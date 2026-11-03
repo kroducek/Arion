@@ -1231,6 +1231,9 @@ class Profile(commands.Cog):
         if r != "full" and hodnota is None:
             await interaction.followup.send("❌ Pro heal/damage/set zadej `hodnota`.")
             return
+        if r == "damage" and hodnota < 0:
+            await interaction.followup.send("❌ Režim `damage` vyžaduje kladné množství.")
+            return
 
         # volitelná úprava maxima (HP: min 1, ostatní min 0)
         if maximum is not None:
@@ -1267,8 +1270,20 @@ class Profile(commands.Cog):
                     parts.append(note)
                 mitig_str = "  ".join(parts)
             else:
-                # mana/furioku damage = přímý odečet (mitigace nedává smysl)
-                new = max(0, old - hodnota)
+                if z == "fury":
+                    # Odečti celkovou furioku podle pořadí zdrojů v hráčově sestavě.
+                    from src.logic import furioku as energy
+                    from src.logic.spirits import _owned_perks
+                    perks = _owned_perks(member.id)
+                    spent = energy.spend(profile, hodnota, perks)
+                    new = profile.get("fury_cur", 0)
+                    note = energy.consumption_note(profile)
+                    mitig_str = f"odečteno {spent} 🔥furioku"
+                    if note:
+                        mitig_str += f"  {note}"
+                else:
+                    # Mana/hlad se odečítají přímo.
+                    new = max(0, old - hodnota)
         elif r == "set":
             new = max(0, min(mx, hodnota))
         else:  # full
