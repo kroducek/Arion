@@ -4,6 +4,18 @@ from datetime import datetime, timezone
 from src.database import db
 
 
+CAPABILITIES = (
+    "Jsem asistent pro vypravěče Aurionisu. Přes /arion ask shrnu rozhovor, "
+    "dohledám podklady ke scéně nebo navrhnu pokračování příběhu. "
+    "Běžně dostanu až 20 posledních textových zpráv hráčů v aktuálním kanálu. "
+    "Pro lore vyber archiv nebo do otázky vlož #kanál, například #karl-solo. "
+    "Parametr hledat filtruje text podle slova nebo části fráze bez ohledu na velikost písmen. "
+    "Z nejnovějších 500 zpráv archivu dostanu nejvýše 12 úryvků. Odpověď z archivu "
+    "je soukromá a obsahuje odkazy. Každý dotaz pracuje s nově načtenými podklady. "
+    "Trvalá paměť lore, správa Railway a ovládání ostatních botů nejsou implementované."
+)
+
+
 class AskError(Exception):
     """Zpráva bezpečná pro zobrazení vypravěči."""
 
@@ -47,6 +59,8 @@ async def generate(session, key, model, question, history, lore, output_limit):
             " Pole historie obsahuje skutečné zprávy z aktuálního kanálu od nejstarší. "
             "Při otázce na hráče vyhledej autora podle přezdívky (autor) i uživatelského jména (ucet) "
             "a odpověz z jeho zpráv. Pokud ve výběru chybí, řekni to konkrétně."
+            " U archivního lore odkazuj na příslušné zprávy podle pole zdroj. "
+            "Na otázky o sobě odpovídej podle následujícího popisu funkcí: " + CAPABILITIES
         ),
         "input": json.dumps(dict(dotaz=question, historie=history, lore=lore), ensure_ascii=False),
     }

@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 
 import aiohttp
 import discord
@@ -8,6 +9,48 @@ from discord.ext import commands
 
 from src.database import db
 from . import service
+
+
+def archive_channel(interaction, question, selected):
+    """Parametr archiv nebo první explicitní odkaz na kanál v dotazu."""
+    if selected is None:
+        ref = re.search(r"<#(\d+)>|(?:^|\s)#([\w-]+)", question)
+        if not ref:
+            return None
+        if ref[1]:
+            selected = interaction.guild.get_channel(int(ref[1]))
+        else:
+            selected = discord.utils.find(
+                lambda c: c.name.casefold() == ref[2].casefold(), interaction.guild.text_channels)
+    if not isinstance(selected, discord.TextChannel) or selected.guild.id != interaction.guild_id:
+        raise service.AskError("Archiv není dostupný. Vyber textový kanál v parametru archiv.")
+    for member in (interaction.user, interaction.guild.me):
+        perms = selected.permissions_for(member)
+        if not (perms.view_channel and perms.read_message_history):
+            raise service.AskError("Pro čtení archivu potřebujete ty i ArionAI přístup k jeho historii.")
+    return selected
+
+
+async def search_archive(channel, phrase, before):
+    records = []
+    needle = phrase.strip().casefold()
+    async for msg in channel.history(limit=500, before=before, oldest_first=False):
+        if msg.is_system():
+            continue
+        content = msg.clean_content.strip()
+        if not content:
+            continue
+        pos = content.casefold().find(needle)
+        if pos < 0:
+            continue
+        start = max(0, pos - 300)
+        records.append(dict(autor=msg.author.display_name, text=content[start:start+1000],
+                            zdroj=msg.jump_url))
+        if len(records) == 12:
+            break
+    if not records:
+        raise service.AskError("V posledních 500 zprávách vybraného archivu jsem nenašel odpovídající text.")
+    return records[::-1]
 
 
 async def read_history(interaction, count):
@@ -85,9 +128,13 @@ class ArionAssistant(commands.Cog):
 
     @arion.command(name="ask", description="Zeptej se asistenta pro svět Aurionis.")
     @app_commands.describe(dotaz="Otázka pro ArionAI", zpravy="Kolik textových zpráv přiložit (výchozí 20, 0 vypne historii pro tento dotaz)",
-                           soukrome="Zobrazit odpověď jen tobě (výchozí: veřejně)")
+                           soukrome="Zobrazit odpověď jen tobě (výchozí: veřejně)",
+                           archiv="Zdrojový kanál lore (odpověď bude soukromá)",
+                           hledat="Slovo či fráze v archivu; bez filtru použiji poslední texty")
     async def ask(self, interaction: discord.Interaction, dotaz: app_commands.Range[str, 1, 2000],
-                  zpravy: app_commands.Range[int, 0, 20] = 20, soukrome: bool = False):
+                  zpravy: app_commands.Range[int, 0, 20] = 20, soukrome: bool = False,
+                  archiv: discord.TextChannel | None = None,
+                  hledat: app_commands.Range[str, 1, 100] = ""):
         uid = interaction.user.id
         if uid in self.busy:
             return await interaction.response.send_message("Tvůj předchozí dotaz ještě běží.", ephemeral=True)
@@ -98,6 +145,11 @@ class ArionAssistant(commands.Cog):
                 raise service.AskError("ArionAI je na tomto serveru vypnutý.")
             if self.config_error:
                 raise service.AskError(self.config_error)
+            archive = archive_channel(interaction, dotaz, archiv)
+            if hledat and archive is None:
+                raise service.AskError("Vyber archiv nebo do dotazu vlož #kanál.")
+            if archive is not None:
+                soukrome = True
             if not soukrome:
                 perms = interaction.app_permissions
                 in_thread = isinstance(interaction.channel, discord.Thread)
@@ -108,15 +160,14 @@ class ArionAssistant(commands.Cog):
             step = "potvrzení příkazu v Discordu"
             await interaction.response.defer(ephemeral=True, thinking=True)
             history = []
-            if zpravy:
+            if zpravy and archive is None:
                 step = "načítání historie kanálu"
                 history = await read_history(interaction, zpravy)
-                if not history:
-                    raise service.AskError(
-                        "Mezi posledními 100 zprávami zde není čitelný text hráčů. "
-                        "Zkus napsat běžnou textovou zprávu do stejného kanálu. Pro dotaz bez historie zadej zpravy:0.")
             step = "příprava podkladů a rezervace kvóty"
             lore = service.lore_context(interaction.guild_id, include_dm_only=soukrome)
+            if archive is not None:
+                step = "hledání v archivu"
+                lore = await search_archive(archive, hledat, interaction.created_at)
             service.reserve(interaction.guild_id, self.daily_limit)
             step = "volání OpenAI"
             answer = await service.generate(self.session, self.api_key, self.model, dotaz,
@@ -125,6 +176,9 @@ class ArionAssistant(commands.Cog):
             chunks = [answer[i:i + 1900] for i in range(0, len(answer), 1900)]
             authors = ", ".join(dict.fromkeys(discord.utils.escape_markdown(r["autor"]) for r in history))
             receipt = f"Historie pro tento dotaz: {len(history)} zpráv" + (f" · {authors}" if authors else "")
+            if archive is not None:
+                receipt = f"Podklady z {archive.mention}: " + " · ".join(
+                    f"[{i}](<{record['zdroj']}>)" for i, record in enumerate(lore, 1))
             if soukrome:
                 await interaction.edit_original_response(content=chunks.pop(0))
                 for chunk in chunks:
@@ -153,6 +207,10 @@ class ArionAssistant(commands.Cog):
             await interaction.edit_original_response(content=text)
         else:
             await interaction.response.send_message(text, ephemeral=True)
+
+    @arion.command(name="pomoc", description="Co ArionAI umí a jak hledat v archivu.")
+    async def help_ai(self, interaction: discord.Interaction):
+        await interaction.response.send_message(service.CAPABILITIES, ephemeral=True)
 
 
 async def setup(bot):
