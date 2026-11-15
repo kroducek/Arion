@@ -1569,6 +1569,20 @@ class CombatCog(commands.Cog):
                 out.append(app_commands.Choice(name=label[:100], value=actor))
         return out[:25]
 
+    async def _ac_npc_kill(self, interaction: discord.Interaction, current: str):
+        combat = self.active_combats.get(interaction.channel_id)
+        if not combat:
+            return []
+        cur = current.lower()
+        out = []
+        for actor in combat.get("order", []):
+            if is_player(actor):
+                continue
+            label = actor_label(actor, interaction.guild)
+            if cur in actor.lower() or cur in label.lower():
+                out.append(app_commands.Choice(name=label[:100], value=actor))
+        return out[:25]
+
     async def _ac_status_id(self, interaction: discord.Interaction, current: str):
         bs = _bs()
         if not bs:
@@ -2345,6 +2359,71 @@ class CombatCog(commands.Cog):
 
         await interaction.response.defer()
         await interaction.followup.send(embed=embed, view=view)
+
+    # ── /combat kill ─────────────────────────────────────────────────────────
+
+    @combat_group.command(name="kill", description="[GM] Porazí NPC a přidělí XP vybranému hráči.")
+    @admin_only()
+    @app_commands.describe(
+        hrac="Hráč v combatu, který získá XP",
+        npc="NPC, které bylo poraženo",
+        xp="Počet XP pro vybraného hráče",
+        note="Poznámka k důvodu XP (zobrazí se v /xp-log)",
+    )
+    @app_commands.autocomplete(npc=_ac_npc_kill)
+    async def combat_kill(self, interaction: discord.Interaction, hrac: discord.Member,
+                          npc: str, xp: int, note: str = ""):
+        combat = self.active_combats.get(interaction.channel_id)
+        if not combat:
+            return await interaction.response.send_message("❌ V této místnosti neběží combat.", ephemeral=True)
+        stats = combat.get("stats", {})
+        if npc not in stats or is_player(npc) or npc not in combat.get("order", []):
+            return await interaction.response.send_message("❌ Vybrané NPC není v tomto combatu.", ephemeral=True)
+        player_actor = next((actor for actor in combat.get("order", [])
+                             if _actor_uid(actor) == hrac.id and actor in stats), None)
+        if player_actor is None:
+            return await interaction.response.send_message("❌ Vybraný hráč není v tomto combatu.", ephemeral=True)
+        if xp < 0:
+            return await interaction.response.send_message("❌ XP musí být nezáporné.", ephemeral=True)
+        if any(npc in (a.get('attacker'), a.get('target')) or npc in a.get('actors', {})
+               for a in combat.get(PENDING_KEY, {}).values()):
+            return await interaction.response.send_message(
+                "Nejprve vyhodnoť nebo zruš čekající útoky tohoto NPC.", ephemeral=True)
+
+        from src.logic.stats import add_xp
+        from src.database.characters import use_slot
+        profiles = _load_profiles()
+        player_stat = stats[player_actor]
+        profile_key = player_stat.get("profile_key") or _pk(profiles, hrac.id)
+        slot = profile_key.split(":")[-1] if profile_key else "main"
+        with use_slot(hrac.id, slot):
+            add_xp(hrac.id, xp, reason=note.strip())
+
+        removed_idx = combat["order"].index(npc)
+        gone = stats[npc]
+        snapshot = stat_snapshot(gone)
+        log_event(combat, "remove", npc, snapshot, snapshot,
+                  detail="poražen a odebrán z boje", actor=interaction.user.mention,
+                  revert=False)
+        combat["order"].remove(npc)
+        stats.pop(npc, None)
+        combat.get("initiative", {}).pop(npc, None)
+        combat.get("turn_state", {}).pop(npc, None)
+        if combat.get("boss", {}).get("name") == npc:
+            combat.pop("boss", None)
+        if combat.get("active_player") == npc:
+            combat["active_player"] = combat["order"][0] if combat["order"] else None
+        if combat.get("locked"):
+            if not combat["order"]:
+                combat["locked"] = False
+                combat["current_index"] = 0
+            elif removed_idx <= combat.get("current_index", 0):
+                combat["current_index"] = max(0, combat["current_index"] - 1)
+        self._save_state()
+        await interaction.response.send_message(
+            f"💀 **{npc}** byl poražen. {hrac.mention} získává **{xp:,} XP**."
+            + (f"\n📝 Poznámka: {note.strip()[:500]}" if note.strip() else "")
+        )
 
     # ── /combat end ───────────────────────────────────────────────────────────
 
