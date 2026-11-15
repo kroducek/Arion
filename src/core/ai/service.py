@@ -11,7 +11,8 @@ CAPABILITIES = (
     "Pro lore vyber archiv nebo do otázky vlož #kanál, například #karl-solo. "
     "Parametr hledat filtruje text podle slova nebo části fráze bez ohledu na velikost písmen. "
     "Z nejnovějších 500 zpráv archivu dostanu nejvýše 12 úryvků. Odpověď z archivu "
-    "je soukromá a obsahuje odkazy. Každý dotaz pracuje s nově načtenými podklady. "
+    "je výchozím nastavením soukromá. Volba soukrome: false zveřejní odpověď v kanálu příkazu. "
+    "Přehled zdrojových zpráv dostane DM soukromě. Každý dotaz pracuje s nově načtenými podklady. "
     "Trvalá paměť lore, správa Railway a ovládání ostatních botů nejsou implementované."
 )
 

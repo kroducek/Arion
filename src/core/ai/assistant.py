@@ -128,11 +128,11 @@ class ArionAssistant(commands.Cog):
 
     @arion.command(name="ask", description="Zeptej se asistenta pro svět Aurionis.")
     @app_commands.describe(dotaz="Otázka pro ArionAI", zpravy="Kolik textových zpráv přiložit (výchozí 20, 0 vypne historii pro tento dotaz)",
-                           soukrome="Zobrazit odpověď jen tobě (výchozí: veřejně)",
-                           archiv="Zdrojový kanál lore (odpověď bude soukromá)",
+                           soukrome="Ano: jen tobě. Ne: do kanálu příkazu. Bez volby je odpověď z archivu soukromá.",
+                           archiv="Zdrojový kanál lore",
                            hledat="Slovo či fráze v archivu; bez filtru použiji poslední texty")
     async def ask(self, interaction: discord.Interaction, dotaz: app_commands.Range[str, 1, 2000],
-                  zpravy: app_commands.Range[int, 0, 20] = 20, soukrome: bool = False,
+                  zpravy: app_commands.Range[int, 0, 20] = 20, soukrome: bool | None = None,
                   archiv: discord.TextChannel | None = None,
                   hledat: app_commands.Range[str, 1, 100] = ""):
         uid = interaction.user.id
@@ -148,8 +148,8 @@ class ArionAssistant(commands.Cog):
             archive = archive_channel(interaction, dotaz, archiv)
             if hledat and archive is None:
                 raise service.AskError("Vyber archiv nebo do dotazu vlož #kanál.")
-            if archive is not None:
-                soukrome = True
+            if soukrome is None:
+                soukrome = archive is not None
             if not soukrome:
                 perms = interaction.app_permissions
                 in_thread = isinstance(interaction.channel, discord.Thread)
