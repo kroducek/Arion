@@ -1557,6 +1557,9 @@ class CombatCog(commands.Cog):
     combat_effect = app_commands.Group(
         name="effect", description="Statusy v boji — jed/krvácení atd. (DM).", parent=combat_group)
 
+    combat_info = app_commands.Group(
+        name="info", description="Přehled combatu.", parent=combat_group)
+
     async def _ac_actor(self, interaction: discord.Interaction, current: str):
         combat = self.active_combats.get(interaction.channel_id)
         if not combat:
@@ -2844,7 +2847,7 @@ class CombatCog(commands.Cog):
 
     # ── /combat status ────────────────────────────────────────────────────────
 
-    @combat_group.command(name="status", description="Zobrazí aktuální pořadí a stats")
+    @combat_info.command(name="status", description="Zobrazí aktuální pořadí a stats")
     async def combat_status(self, interaction: discord.Interaction):
         channel_id = interaction.channel_id
         if channel_id not in self.active_combats:
