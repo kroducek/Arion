@@ -59,6 +59,8 @@ dm_thread.start()
 cards_thread = threading.Thread(target=run_optional, args=("main_cards.py", "DISCORD_TOKEN_CARDS"), daemon=True)
 cards_thread.start()
 
+threading.Thread(target=run_optional, args=("main_ai.py", "DISCORD_TOKEN_AI"), daemon=True).start()
+
 # Spustit ArionBOT v main threadu (blokující)
 try:
     run("main_bot.py")
