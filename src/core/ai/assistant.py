@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 
@@ -11,6 +10,29 @@ from src.database import db
 from . import service
 
 
+async def read_history(interaction, count):
+    channel = interaction.channel
+    if not callable(getattr(channel, "history", None)):
+        raise service.AskError("V tomto kanálu nelze načíst historii.")
+    for perms in (interaction.permissions, interaction.app_permissions):
+        if not (perms.view_channel and perms.read_message_history):
+            raise service.AskError("Ty i ArionAI potřebujete v tomto kanálu oprávnění číst historii.")
+
+    records = []
+    async for message in channel.history(limit=100, before=interaction.created_at, oldest_first=False):
+        if message.is_system() or (message.author.bot and not message.webhook_id):
+            continue
+        content = message.clean_content.strip()
+        if not content:
+            continue
+        records.append({"autor": message.author.display_name, "ucet": message.author.name,
+                        "text": content[:1000]})
+        if len(records) == count:
+            break
+    records.reverse()
+    return records
+
+
 class ArionAssistant(commands.Cog):
     arion = app_commands.Group(name="arion", description="AI asistent pro vypravěče.",
                                guild_only=True)
@@ -19,6 +41,9 @@ class ArionAssistant(commands.Cog):
         self.role_id = os.getenv("ARION_AI_DM_ROLE_ID", "").strip()
         self.api_key = os.getenv("OPENAI_API_KEY", "").strip()
         self.model = os.getenv("ARION_AI_MODEL", "").strip()
+        missing = [name for name, value in (("OPENAI_API_KEY", self.api_key),
+                                           ("ARION_AI_MODEL", self.model)) if not value]
+        self.config_error = "V prostředí ArionAI chybí: " + ", ".join(missing) if missing else ""
         self.daily_limit = max(1, int(os.getenv("ARION_AI_DAILY_LIMIT", "50")))
         self.output_limit = max(1, int(os.getenv("ARION_AI_OUTPUT_TOKENS", "800")))
         self.busy = set()
@@ -39,9 +64,8 @@ class ArionAssistant(commands.Cog):
 
     @arion.command(name="on", description="Zapne ArionAI pro tento server.")
     async def enable(self, interaction: discord.Interaction):
-        if not self.api_key or not self.model:
-            return await interaction.response.send_message(
-                "Doplň OPENAI_API_KEY a ARION_AI_MODEL v prostředí ArionAI.", ephemeral=True)
+        if self.config_error:
+            return await interaction.response.send_message(self.config_error, ephemeral=True)
         db.update_doc(service.state_key(interaction.guild_id), lambda state: state.update(enabled=True))
         await interaction.response.send_message("ArionAI je zapnutý.", ephemeral=True)
 
@@ -60,54 +84,66 @@ class ArionAssistant(commands.Cog):
             f"Do půlnoci UTC zbývá {remaining}/{self.daily_limit} dotazů.", ephemeral=True)
 
     @arion.command(name="ask", description="Zeptej se asistenta pro svět Aurionis.")
-    @app_commands.describe(dotaz="Otázka pro ArionAI", zpravy="Kolik posledních zpráv přiložit (0–20)",
+    @app_commands.describe(dotaz="Otázka pro ArionAI", zpravy="Kolik textových zpráv přiložit (výchozí 20, 0 vypne historii pro tento dotaz)",
                            soukrome="Zobrazit odpověď jen tobě (výchozí: veřejně)")
     async def ask(self, interaction: discord.Interaction, dotaz: app_commands.Range[str, 1, 2000],
-                  zpravy: app_commands.Range[int, 0, 20] = 0, soukrome: bool = False):
+                  zpravy: app_commands.Range[int, 0, 20] = 20, soukrome: bool = False):
         uid = interaction.user.id
         if uid in self.busy:
             return await interaction.response.send_message("Tvůj předchozí dotaz ještě běží.", ephemeral=True)
         self.busy.add(uid)
+        step = "kontrola nastavení"
         try:
             if not db.load_doc(service.state_key(interaction.guild_id)).get("enabled"):
                 raise service.AskError("ArionAI je na tomto serveru vypnutý.")
-            if not self.api_key or not self.model:
-                raise service.AskError("ArionAI nemá nastavený klíč nebo model OpenAI.")
+            if self.config_error:
+                raise service.AskError(self.config_error)
+            if not soukrome:
+                perms = interaction.app_permissions
+                in_thread = isinstance(interaction.channel, discord.Thread)
+                can_send = perms.send_messages_in_threads if in_thread else perms.send_messages
+                if not can_send:
+                    raise service.AskError("ArionAI sem nemůže posílat zprávy. Povol mu zápis "
+                                           "nebo použij soukrome: ano.")
+            step = "potvrzení příkazu v Discordu"
             await interaction.response.defer(ephemeral=True, thinking=True)
             history = []
             if zpravy:
-                channel = interaction.channel
-                if not isinstance(channel, (discord.TextChannel, discord.Thread, discord.VoiceChannel)):
-                    raise service.AskError("V tomto kanálu nelze načíst historii.")
-                for member in (interaction.user, interaction.guild.me):
-                    perms = channel.permissions_for(member)
-                    if not (perms.view_channel and perms.read_message_history):
-                        raise service.AskError("Pro přiložení historie potřebuješ ty i bot oprávnění číst historii kanálu.")
-                async for message in channel.history(limit=zpravy, before=interaction.created_at):
-                    if message.content:
-                        history.append([message.author.display_name, message.content[:400]])
-                history.reverse()
+                step = "načítání historie kanálu"
+                history = await read_history(interaction, zpravy)
+                if not history:
+                    raise service.AskError(
+                        "Mezi posledními 100 zprávami zde není čitelný text hráčů. "
+                        "Zkus napsat běžnou textovou zprávu do stejného kanálu. Pro dotaz bez historie zadej zpravy:0.")
+            step = "příprava podkladů a rezervace kvóty"
             lore = service.lore_context(interaction.guild_id, include_dm_only=soukrome)
             service.reserve(interaction.guild_id, self.daily_limit)
+            step = "volání OpenAI"
             answer = await service.generate(self.session, self.api_key, self.model, dotaz,
                                             history, lore, self.output_limit)
+            step = "doručení odpovědi do Discordu"
             chunks = [answer[i:i + 1900] for i in range(0, len(answer), 1900)]
+            authors = ", ".join(dict.fromkeys(discord.utils.escape_markdown(r["autor"]) for r in history))
+            receipt = f"Historie pro tento dotaz: {len(history)} zpráv" + (f" · {authors}" if authors else "")
             if soukrome:
                 await interaction.edit_original_response(content=chunks.pop(0))
                 for chunk in chunks:
                     await interaction.followup.send(chunk, ephemeral=True,
                                                     allowed_mentions=discord.AllowedMentions.none())
+                await interaction.followup.send(receipt, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
             else:
                 for chunk in chunks:
                     await interaction.channel.send(chunk, allowed_mentions=discord.AllowedMentions.none())
-                await interaction.edit_original_response(content="Odpověď je v kanálu.")
+                await interaction.edit_original_response(content="Odpověď je v kanálu. " + receipt)
         except service.AskError as exc:
             await self.error_reply(interaction, str(exc))
         except (aiohttp.ClientError, TimeoutError):
             await self.error_reply(interaction, "OpenAI je dočasně nedostupné nebo vypršel čas na odpověď.")
         except Exception as exc:
-            logging.getLogger("ArionAI").warning("Dotaz selhal (%s)", type(exc).__name__)
-            await self.error_reply(interaction, "Dotaz se nepodařilo dokončit.")
+            kind = type(exc).__name__
+            logging.getLogger("ArionAI").warning("Dotaz %s selhal při kroku '%s' (%s)",
+                                                 interaction.id, step, kind)
+            await self.error_reply(interaction, f"Dotaz selhal při kroku „{step}“ ({kind}).")
         finally:
             self.busy.discard(uid)
 
