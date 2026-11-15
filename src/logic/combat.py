@@ -931,22 +931,14 @@ def _build_order_embed(title: str, combat: dict, note: str = "") -> discord.Embe
     return embed
 
 
-# ── EOT Button View ────────────────────────────────────────────────────────────
+# ── End-of-turn handler ───────────────────────────────────────────────────────
 
-class EOTView(ui.View):
-    """Tlačítko konce tahu. Bez `channel_id` slouží jako persistent view — kanál
-    si vezme z interakce, takže tlačítko šlape i po restartu bota.
-    """
+class EOTView:
+    """Sdílená logika předání tahu pro slash příkaz `/eot`."""
 
     def __init__(self, cog: "CombatCog", channel_id: int | None = None):
-        super().__init__(timeout=None)
         self.cog = cog
         self.channel_id = channel_id
-
-    @ui.button(label="⏭️  End of Turn", style=discord.ButtonStyle.danger,
-               custom_id="arion:combat:eot")
-    async def eot_button(self, interaction: discord.Interaction, button: ui.Button):
-        await self.advance(interaction)
 
     async def advance(self, interaction, allow_pending=False):
         self.cog.reload_state()
@@ -1037,8 +1029,7 @@ class EOTView(ui.View):
         lines = turn_console(combat, next_actor, new_round=new_round)
         lines += [console(f"💀 *{who} je mimo boj — tah přeskočen.*") for who in skipped]
         lines += tick_lines
-        view = EOTView(self.cog, channel_id)
-        await interaction.response.send_message(content=lines[0], view=view)
+        await interaction.response.send_message(content=lines[0])
         await self.cog._stream(interaction, lines)
         if tick_lines:
             if combat.get("boss"):
@@ -1228,8 +1219,6 @@ class CombatCog(commands.Cog):
         self.active_combats = self._load_state()
 
     async def cog_load(self):
-        # Persistent views: tlačítka bez timeoutu fungují i po restartu bota.
-        self.bot.add_view(EOTView(self))
         self.bot.add_view(AttackView(self))
         from src.logic.attack_ui import refresh_cards
         self._attack_refresh = asyncio.create_task(refresh_cards(self))
@@ -1501,15 +1490,14 @@ class CombatCog(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     async def _send_order_with_eot(self, interaction: discord.Interaction, title: str, note: str = ""):
-        """Odešle order embed s EOT tlačítkem (po setorder)."""
+        """Odešle order embed po uzavření pořadí."""
         combat = self.active_combats[interaction.channel_id]
         embed  = _build_order_embed(title, combat, note)
-        view   = EOTView(self, interaction.channel_id)
-        # Pokud interaction už byl deferred, použij followup
+        # Pokud interaction už byl deferred, použij followup.
         try:
-            await interaction.followup.send(embed=embed, view=view)
+            await interaction.followup.send(embed=embed)
         except Exception:
-            await interaction.response.send_message(embed=embed, view=view)
+            await interaction.response.send_message(embed=embed)
 
     # ── Statusy: tick + ovládání ───────────────────────────────────────────────
 
@@ -2356,12 +2344,10 @@ class CombatCog(commands.Cog):
         embed = _build_order_embed(
             "🔒  Pořadí uzavřeno — boj začíná!",
             combat,
-            note="Admin uzavřel pořadí. Použij tlačítko ⏭️ pro předání tahu.",
+            note="Admin uzavřel pořadí. Pro předání tahu použij `/eot`.",
         )
-        view = EOTView(self, channel_id)
-
         await interaction.response.defer()
-        await interaction.followup.send(embed=embed, view=view)
+        await interaction.followup.send(embed=embed)
 
     # ── /combat kill ─────────────────────────────────────────────────────────
 
@@ -2857,12 +2843,11 @@ class CombatCog(commands.Cog):
 
         combat = self.active_combats[channel_id]
         embed  = _build_order_embed("📋  Aktuální stav combatu", combat)
-        view   = EOTView(self, channel_id) if combat.get("locked") else discord.utils.MISSING
+        await interaction.response.send_message(embed=embed)
 
-        if combat.get("locked"):
-            await interaction.response.send_message(embed=embed, view=view)
-        else:
-            await interaction.response.send_message(embed=embed)
+    @app_commands.command(name="eot", description="Předá tah dalšímu aktérovi v combatu.")
+    async def combat_eot(self, interaction: discord.Interaction):
+        await EOTView(self).advance(interaction)
 
 
 async def setup(bot):
