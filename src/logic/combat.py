@@ -1558,7 +1558,7 @@ class CombatCog(commands.Cog):
         name="effect", description="Statusy v boji — jed/krvácení atd. (DM).", parent=combat_group)
 
     combat_info = app_commands.Group(
-        name="info", description="Přehled combatu.", parent=combat_group)
+        name="info", description="Přehled a historie combatu.", parent=combat_group)
 
     async def _ac_actor(self, interaction: discord.Interaction, current: str):
         combat = self.active_combats.get(interaction.channel_id)
@@ -2708,7 +2708,7 @@ class CombatCog(commands.Cog):
             return await interaction.response.send_message(str(e), ephemeral=True)
         await self._send_attack(interaction, data)
 
-    @combat_group.command(
+    @combat_info.command(
         name="log",
         description="Historie změn HP v tomhle boji.")
     @app_commands.describe(pocet="Kolik posledních záznamů (výchozí 10).")
