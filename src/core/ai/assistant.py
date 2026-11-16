@@ -280,9 +280,10 @@ class ArionAssistant(commands.Cog):
         try:
             if not db.load_doc(service.state_key(interaction.guild_id)).get("enabled"):
                 raise service.AskError("ArionAI je na tomto serveru vypnutý.")
-            if not draft and archives.capabilities_question(dotaz):
+            reply = None if draft else service.direct_reply(dotaz)
+            if reply is not None:
                 private = archiv is not None if soukrome is None else soukrome
-                return await interaction.response.send_message(service.CAPABILITIES, ephemeral=private)
+                return await interaction.response.send_message(reply, ephemeral=private)
             if self.config_error:
                 raise service.AskError(self.config_error)
             archive = archive_channel(interaction, dotaz, archiv)
