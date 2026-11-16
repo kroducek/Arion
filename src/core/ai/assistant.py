@@ -93,6 +93,7 @@ async def read_history(interaction, count):
 class ArionAssistant(commands.Cog):
     arion = app_commands.Group(name="arion", description="AI asistent pro vypravěče.",
                                guild_only=True)
+    all_group = app_commands.Group(name="all", description="Přístup hráčů k ArionAI.", parent=arion)
 
     def __init__(self):
         self.role_id = os.getenv("ARION_AI_DM_ROLE_ID", "").strip()
@@ -226,13 +227,34 @@ class ArionAssistant(commands.Cog):
         db.connect().execute("DELETE FROM ai_archives WHERE guild=? AND channel=?", (interaction.guild_id, channel.id))
         await interaction.response.send_message("Registrace a index zpráv byly odstraněny. Schválené lore zůstává uložené.", ephemeral=True)
 
+    def is_dm(self, member):
+        return isinstance(member, discord.Member) and any(
+            str(role.id) == self.role_id and not role.is_default() for role in member.roles
+        )
+
     async def interaction_check(self, interaction):
-        if isinstance(interaction.user, discord.Member) and any(
-            str(role.id) == self.role_id and not role.is_default() for role in interaction.user.roles
+        if self.is_dm(interaction.user):
+            return True
+        if (interaction.type == discord.InteractionType.application_command
+                and isinstance(interaction.user, discord.Member)
+                and interaction.command is not None
+                and interaction.command.qualified_name in {"arion ask", "arion pomoc", "arion status"}
+                and db.load_doc(service.state_key(interaction.guild_id)).get("all_members", False)
         ):
             return True
         await interaction.response.send_message("Potřebuješ autorizovanou roli DM.", ephemeral=True)
         return False
+
+    @all_group.command(name="on", description="Povolí rozhovor s Arion všem členům tohoto serveru.")
+    async def all_on(self, interaction: discord.Interaction):
+        state = db.update_doc(service.state_key(interaction.guild_id), lambda s: s.update(all_members=True))
+        note = "" if state.get("enabled") else " Samotnou AI ještě zapni přes /arion on."
+        await interaction.response.send_message("Přístup mají všichni členové serveru." + note, ephemeral=True)
+
+    @all_group.command(name="off", description="Vrátí přístup k ArionAI pouze členům s rolí DM.")
+    async def all_off(self, interaction: discord.Interaction):
+        db.update_doc(service.state_key(interaction.guild_id), lambda s: s.update(all_members=False))
+        await interaction.response.send_message("Přístup má opět jen role DM.", ephemeral=True)
 
     @arion.command(name="on", description="Zapne ArionAI pro tento server.")
     async def enable(self, interaction: discord.Interaction):
@@ -251,8 +273,9 @@ class ArionAssistant(commands.Cog):
         state = db.load_doc(service.state_key(interaction.guild_id))
         enabled = "zapnutý" if state.get("enabled") else "vypnutý"
         remaining = max(0, self.daily_limit - service.usage(state))
+        access = "všichni členové" if state.get("all_members") else "jen role DM"
         await interaction.response.send_message(
-            f"ArionAI je {enabled}. Model: {self.model or 'nenastaven'}. "
+            f"ArionAI je {enabled}. Přístup: {access}. Model: {self.model or 'nenastaven'}. "
             f"Do půlnoci UTC zbývá {remaining}/{self.daily_limit} dotazů.", ephemeral=True)
 
     @arion.command(name="ask", description="Zeptej se asistenta pro svět Aurionis.")
@@ -287,10 +310,13 @@ class ArionAssistant(commands.Cog):
             if self.config_error:
                 raise service.AskError(self.config_error)
             archive = archive_channel(interaction, dotaz, archiv)
+            dm = self.is_dm(interaction.user)
             if hledat and archive is None:
                 raise service.AskError("Vyber archiv nebo do dotazu vlož #kanál.")
             if soukrome is None:
                 soukrome = archive is not None
+            if archive and archive.id != interaction.channel_id and not dm and not soukrome:
+                raise service.AskError("Výpis z jiného kanálu může hráč zobrazit soukromě. Zvol soukrome: ano.")
             if not soukrome:
                 perms = interaction.app_permissions
                 in_thread = isinstance(interaction.channel, discord.Thread)
@@ -305,7 +331,7 @@ class ArionAssistant(commands.Cog):
                 step = "načítání historie kanálu"
                 history = await read_history(interaction, zpravy)
             step = "příprava podkladů a rezervace kvóty"
-            canon = service.lore_context(interaction.guild_id, include_dm_only=soukrome,
+            canon = service.lore_context(interaction.guild_id, include_dm_only=dm and soukrome,
                                         channel_id=(archive or interaction.channel).id, question=dotaz)
             lore = []
             coverage = ""
@@ -333,7 +359,7 @@ class ArionAssistant(commands.Cog):
                         raise service.AskError(f"{coverage} Pro tento dotaz jsem nenašel zprávy.")
             if draft and not lore:
                 raise service.AskError("Ke schválení potřebuji zdrojové zprávy z archivu.")
-            service.reserve(interaction.guild_id, self.daily_limit)
+            service.reserve(interaction.guild_id, self.daily_limit, require_public_access=not dm)
             step = "volání OpenAI"
             answer = await service.generate(self.session, self.api_key, self.model, dotaz,
                                             history, lore, self.output_limit, canon=canon,
