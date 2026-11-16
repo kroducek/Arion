@@ -4,6 +4,7 @@ import os
 import re
 import sqlite3
 from contextlib import closing
+from itertools import zip_longest
 
 import aiohttp
 import discord
@@ -15,10 +16,36 @@ from . import archives, service
 from .canon import CanonDraft
 
 
+CHANNEL_REF = re.compile(r"<#(\d+)>|(?:^|\s)#([\w-]+)")
+
+
+def readable(interaction, channel):
+    for member in (interaction.user, interaction.guild.me):
+        if member is None:
+            return False
+        perms = channel.permissions_for(member)
+        if not (perms.view_channel and perms.read_message_history):
+            return False
+    return True
+
+
+def available_archives(interaction):
+    registry = {r["channel"]: r for r in archives.registered(interaction.guild_id)}
+    available = []
+    for channel in interaction.guild.text_channels:
+        row = registry.get(channel.id)
+        labels = archives.words(channel.name + " " + (channel.category.name if channel.category else ""))
+        if row is None and not any(t == "solo" or t.startswith("archiv") for t in labels):
+            continue
+        if readable(interaction, channel):
+            available.append((channel, row))
+    return available
+
+
 def archive_channel(interaction, question, selected):
     """Parametr archiv nebo první explicitní odkaz na kanál v dotazu."""
     if selected is None:
-        ref = re.search(r"<#(\d+)>|(?:^|\s)#([\w-]+)", question)
+        ref = CHANNEL_REF.search(question)
         if not ref:
             matches = []
             registry = archives.registered(interaction.guild_id)
@@ -54,7 +81,7 @@ def archive_channel(interaction, question, selected):
     return selected
 
 
-async def search_archive(channel, question, phrase, interaction):
+async def search_archive(channel, question, phrase, interaction, *, subject=(), home=False):
     # Jednorázový výběr kanálu nepovoluje trvalé ukládání jeho obsahu.
     with closing(sqlite3.connect(":memory:")) as conn:
         conn.row_factory = sqlite3.Row
@@ -64,7 +91,10 @@ async def search_archive(channel, question, phrase, interaction):
         rows = [archives.rows_for(msg, interaction.client.user.id)
                 async for msg in channel.history(limit=500, before=interaction.created_at, oldest_first=False)]
         conn.executemany("INSERT INTO ai_messages(channel,id,author,body,searchable) VALUES(?,?,?,?,?)", rows)
-        return archives.select_scene(channel, question, phrase, [], interaction.id, conn)
+        records = archives.select_scene(channel, question, phrase, [], interaction.id, conn, subject=subject)
+        if not records and home and not phrase:
+            records = archives.select_scene(channel, "naposledy", "", [], interaction.id, conn)[-8:]
+        return records
 
 
 async def read_history(interaction, count):
@@ -119,6 +149,71 @@ class ArionAssistant(commands.Cog):
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await self.session.close()
+
+    async def lookup(self, interaction, candidates, terms, question, phrase, private_canon):
+        # Registrované archivy čteme z indexu. Jednorázové náhledy omezíme časem i souběhem.
+        slots = asyncio.Semaphore(3)
+
+        async def collect(channel, row):
+            aliases = row["names"].split(",") if row else archives.words(channel.name)
+            home = any(archives.normalize(a.strip()) in terms for a in aliases)
+            if row is None:
+                async with slots:
+                    records = await search_archive(channel, question, phrase, interaction, subject=terms,
+                                                   home=home)
+                partial = True
+            else:
+                self.start_index(channel)
+                ready = self.first_pages.get(channel.id)
+                if ready:
+                    try:
+                        await asyncio.wait_for(ready.wait(), timeout=5)
+                    except TimeoutError:
+                        pass
+                records = archives.select_scene(channel, question, phrase, [], interaction.id, subject=terms)
+                if not records and home and not phrase:
+                    records = archives.select_scene(channel, "naposledy", "", [], interaction.id)[-8:]
+                partial = channel.id not in self.indexed
+            canon = service.lore_context(interaction.guild_id, include_dm_only=private_canon,
+                                         channel_id=channel.id, question=question, required_terms=terms)
+            for record in records:
+                record["kanal"] = channel.name
+            return records, canon, partial
+
+        tasks = [asyncio.create_task(collect(channel, row)) for channel, row in candidates]
+        groups, canon = [], []
+        partial = False
+        scanned = 0
+        try:
+            done, _ = await asyncio.wait(tasks, timeout=30)
+            for task, (channel, _) in zip(tasks, candidates):
+                if task not in done or not readable(interaction, channel):
+                    partial = True
+                    continue
+                try:
+                    records, approved, limited = task.result()
+                except (discord.HTTPException, TimeoutError):
+                    partial = True
+                    continue
+                scanned += 1
+                partial |= limited
+                # Přímé zmínky mají přednost před sousedními řádky dialogu.
+                records.sort(key=lambda r: not any(t in archives.normalize(r["text"] + " " + r["autor"])
+                                                   for t in terms))
+                if records:
+                    groups.append(records)
+                canon.extend(approved)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        balanced = [rec for batch in zip_longest(*groups) for rec in batch if rec][:30]
+        balanced.sort(key=lambda rec: int(rec["zdroj"].rsplit("/", 1)[1]))
+        coverage = f"Prohledané archivy: {scanned}/{len(candidates)}."
+        if partial:
+            coverage += " Část historie byla dostupná jen v omezeném rozsahu."
+        return balanced, canon[:5], coverage
 
     def start_index(self, channel):
         if channel.id in self.index_tasks or channel.id in self.indexed:
@@ -309,13 +404,21 @@ class ArionAssistant(commands.Cog):
                 return await interaction.response.send_message(reply, ephemeral=private)
             if self.config_error:
                 raise service.AskError(self.config_error)
-            archive = archive_channel(interaction, dotaz, archiv)
+            candidates, terms = [], []
+            if archiv is None and not draft and not CHANNEL_REF.search(dotaz):
+                candidates = available_archives(interaction)
+                terms = archives.lookup_terms(dotaz, hledat,
+                                               [row["names"].split(",") for _, row in candidates if row])
+            multi = bool(candidates and terms)
+            archive = None if multi else archive_channel(interaction, dotaz, archiv)
             dm = self.is_dm(interaction.user)
-            if hledat and archive is None:
-                raise service.AskError("Vyber archiv nebo do dotazu vlož #kanál.")
+            if hledat and archive is None and not multi:
+                raise service.AskError("Žádný dostupný archiv. Vyber zdroj v parametru archiv.")
             if soukrome is None:
-                soukrome = archive is not None
-            if archive and archive.id != interaction.channel_id and not dm and not soukrome:
+                soukrome = multi or archive is not None
+            cross_channel = (any(c.id != interaction.channel_id for c, _ in candidates) if multi
+                             else archive is not None and archive.id != interaction.channel_id)
+            if cross_channel and not dm and not soukrome:
                 raise service.AskError("Výpis z jiného kanálu může hráč zobrazit soukromě. Zvol soukrome: ano.")
             if not soukrome:
                 perms = interaction.app_permissions
@@ -327,15 +430,21 @@ class ArionAssistant(commands.Cog):
             step = "potvrzení příkazu v Discordu"
             await interaction.response.defer(ephemeral=True, thinking=True)
             history = []
-            if zpravy and archive is None:
+            if zpravy and archive is None and not multi:
                 step = "načítání historie kanálu"
                 history = await read_history(interaction, zpravy)
             step = "příprava podkladů a rezervace kvóty"
-            canon = service.lore_context(interaction.guild_id, include_dm_only=dm and soukrome,
-                                        channel_id=(archive or interaction.channel).id, question=dotaz)
+            canon = [] if multi else service.lore_context(interaction.guild_id, include_dm_only=dm and soukrome,
+                                                         channel_id=(archive or interaction.channel).id, question=dotaz)
             lore = []
             coverage = ""
-            if archive is not None:
+            if multi:
+                step = "hledání v dostupných archivech"
+                lore, canon, coverage = await self.lookup(interaction, candidates, terms, dotaz, hledat,
+                                                          private_canon=dm and soukrome)
+                if not lore and not canon:
+                    raise service.AskError(f"{coverage} K tématu „{', '.join(terms)}“ jsem nenašla žádné podklady.")
+            elif archive is not None:
                 step = "hledání v archivu"
                 row = next((r for r in archives.registered(interaction.guild_id) if r["channel"] == archive.id), None)
                 if row:
@@ -371,7 +480,8 @@ class ArionAssistant(commands.Cog):
             authors = ", ".join(dict.fromkeys(discord.utils.escape_markdown(r["autor"]) for r in history))
             receipt = f"Historie pro tento dotaz: {len(history)} zpráv" + (f" · {authors}" if authors else "")
             if sources:
-                receipt = f"{coverage} Podklady z {(archive or interaction.channel).mention}: " + " · ".join(
+                origin = "Odkazy na zprávy" if multi else f"Podklady z {(archive or interaction.channel).mention}"
+                receipt = f"{coverage} {origin}: " + " · ".join(
                     f"[{i}](<{url}>)" for i, url in enumerate(sources, 1))
             if draft:
                 view = CanonDraft(self, interaction, archive.id, answer, sources)

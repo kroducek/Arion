@@ -31,6 +31,17 @@ class ArchiveSearchTests(unittest.TestCase):
         self.assertTrue(archives.alias_match("Vall", "Co se Vallovi přihodilo?"))
         self.assertEqual(len(self.scene("Stručně řekni, co posledního Vall zažil.")), 2)
 
+    def test_profile_does_not_require_the_subject_to_own_an_archive(self):
+        terms = archives.lookup_terms("Co víš o Karlovi?", "", [["Vall"]])
+        self.assertEqual(terms, ["karl"])
+        question = "Kdo je Karl?"
+        self.fill(["Vall svěřil Karlovi mapu."])
+        archives.insert_batch([(20, 50, "Karl", "Mám ji.", "mam ji.")])
+        rows = archives.select_scene(self.channel, question, "", [], 10000, subject=terms)
+        self.assertEqual([r["autor"] for r in rows], ["Vypravěč", "Karl"])
+        self.assertEqual(archives.lookup_terms("Kdo je Vall?", "", [["Vall", "Vlk"]]), ["vall", "vlk"])
+        self.assertEqual(archives.lookup_terms("Kdo je Vall?", "pečeť", [["Vall"]]), ["pecet"])
+
     def test_early_encounter_context_edit_and_deletion(self):
         self.fill(["U brány stojí rytíř.", "Karl se představí.", "Vall mu nabízí nocleh."] +
                   ["Další scéna."] * 550 + ["Karl se vrací."])

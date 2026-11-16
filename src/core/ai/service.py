@@ -27,7 +27,8 @@ CAPABILITIES = (
     "Mňau! Tady Arion, šéfka guildy dobrodruhů 😎. Přes /arion ask shrnu rozhovor, "
     "dohledám podklady ke scéně nebo navrhnu pokračování příběhu. "
     "Běžně dostanu až 20 posledních textových zpráv hráčů v aktuálním kanálu. "
-    "Pro lore vyber archiv nebo do otázky vlož #kanál, například #karl-solo. "
+    "Zeptej se třeba „Kdo je Vall?“ a sama projdu přístupné registrované archivy "
+    "i kanály označené jako archiv nebo solo. Archiv či #kanál můžeš vybrat pro hledání na jednom místě. "
     "Parametr hledat filtruje text podle slova nebo části fráze bez ohledu na velikost písmen. "
     "Přes /arion archiv může DM přiřadit jména postavy ke kanálu. V registrovaném archivu "
     "hledám i starší události, okolní dialog a závěr příběhu. U jednorázově vybraného "
@@ -86,11 +87,13 @@ def reserve(guild_id, daily_limit, *, require_public_access=False):
     db.update_doc(state_key(guild_id), change)
 
 
-def lore_context(guild_id, *, include_dm_only, channel_id, question):
+def lore_context(guild_id, *, include_dm_only, channel_id, question, required_terms=()):
     terms = set(archives.words(question)) - archives.STOP
     matches = []
     for entry in reversed(db.load_doc(f"arion_canon:{guild_id}").values()):
         if entry["channel"] != channel_id or not (entry["public"] or include_dm_only):
+            continue
+        if required_terms and not any(t in archives.normalize(entry["text"]) for t in required_terms):
             continue
         score = len(terms.intersection(archives.words(entry["text"])))
         matches.append((score, {"text": entry["text"], "druh": entry["druh"], "zdroje": entry.get("sources", [])}))

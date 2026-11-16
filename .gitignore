@@ -29,3 +29,6 @@ src/database/data/json_backup_*/
 
 # Local summon animation previews
 /summon-preview/
+
+# AI
+src/ai/

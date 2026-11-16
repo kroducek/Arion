@@ -37,6 +37,7 @@ def setup(conn=None):
             channel INTEGER NOT NULL REFERENCES ai_archives(channel) ON DELETE CASCADE,
             id INTEGER NOT NULL, author TEXT NOT NULL, body TEXT NOT NULL, searchable TEXT NOT NULL,
             PRIMARY KEY(channel,id));
+        CREATE INDEX IF NOT EXISTS ai_message_authors ON ai_messages(channel,author,id);
     """)
     # Produkční SQLite podporuje FTS5. Na sestavení bez něj funguje vyhledání přes instr().
     fresh = not conn.execute("SELECT 1 FROM sqlite_master WHERE name='ai_terms'").fetchone()
@@ -103,7 +104,29 @@ STOP = set("""co kdy kde kdo jak proc prvni poprve naposled naposledy posledni p
               zkratka zkratku slovo pribehu jake jsou jeho jeji scene scena mezi archiv archivu""".split())
 
 
-def select_scene(channel, question, phrase, aliases, before_id, conn=None):
+def lookup_terms(question, phrase, names):
+    """Téma neřízeného hledání. Scénové dotazy ponechá výběru děje v archivu postavy."""
+    if phrase.strip():
+        return [normalize(phrase.strip())]
+    q = " ".join(words(question))
+    match = re.search(r"\b(?:kdo (?:je|byl|byla)|co (?:vis|vime|znas|se vi) o|co o|"
+                      r"(?:informace|zminky|neco|vsechno) o|co je zac|"
+                      r"(?:vyhledej|dohledej|najdi)(?: mi)?) (.+)", q)
+    aliases = set()
+    for group in names:
+        if any(alias_match(name, question) for name in group):
+            aliases.update(normalize(name.strip()) for name in group if name.strip())
+    if not match and any(w.startswith(("naposled", "posledn", "poprve", "prvni")) for w in q.split()):
+        return []
+    if aliases:
+        return sorted(aliases)[:10]
+    if match:
+        tokens = [w for w in match[1].split() if w not in STOP and w not in {"vis", "vime", "vlastne", "znas"} and len(w) > 1]
+        return [re.sub(r"(ovi|em|ou|a|u)$", "", w) if len(w) > 3 else w for w in tokens[:6]]
+    return []
+
+
+def select_scene(channel, question, phrase, aliases, before_id, conn=None, *, subject=()):
     """Najde kotvy a doplní sousední zprávy. Pořadí Discord ID odpovídá času."""
     conn = db.connect() if conn is None else conn
     q = words(question)
@@ -116,7 +139,9 @@ def select_scene(channel, question, phrase, aliases, before_id, conn=None):
     if not short and "zkratka" in q:
         pos = q.index("zkratka") + 1
         short = q[pos:pos+1]
-    if phrase.strip():
+    if subject:
+        terms = list(subject)
+    elif phrase.strip():
         terms = [normalize(phrase.strip())]
     elif short:
         terms = short
@@ -132,7 +157,8 @@ def select_scene(channel, question, phrase, aliases, before_id, conn=None):
         "SELECT 1 FROM sqlite_master WHERE name='ai_terms'").fetchone()
     if fulltext:
         # Pouze normalizovaná slova; zkratka vyžaduje celé slovo, jména připouštějí koncovku.
-        expression = " OR ".join(f'"{term}"' + ("" if short else "*") for term in terms)
+        quoted = ['"' + term.replace('"', '""') + '"' for term in terms]
+        expression = " OR ".join(term + ("" if short and not subject else "*") for term in quoted)
         order = "m.id ASC" if first else "rank, m.id DESC"
         anchors = conn.execute(f"""SELECT m.id FROM ai_terms JOIN ai_messages m ON m.rowid=ai_terms.rowid
             WHERE ai_terms MATCH ? AND m.channel=? AND m.id<? ORDER BY {order} LIMIT 5""",
@@ -148,6 +174,15 @@ def select_scene(channel, question, phrase, aliases, before_id, conn=None):
         anchors = conn.execute(f"SELECT id FROM ai_messages WHERE {scene_scope} ORDER BY id {direction} LIMIT 36",
                                params).fetchall()
     ids = {row["id"] for row in anchors}
+    if subject and not phrase.strip():
+        # Repliky podepsané jménem postavy často neobsahují její jméno v textu.
+        authors = conn.execute("SELECT DISTINCT author FROM ai_messages WHERE channel=?", (channel.id,))
+        names = [r["author"] for r in authors if any(alias_match(t, r["author"]) for t in subject)][:32]
+        if names:
+            slots = ",".join("?" for _ in names)
+            ids.update(r["id"] for r in conn.execute(
+                f"SELECT id FROM ai_messages WHERE {scope} AND author IN ({slots}) ORDER BY id {direction} LIMIT 4",
+                (*params, *names)))
     if terms:
         for row in anchors:
             for op, order in (("<", "DESC"), (">", "ASC")):
