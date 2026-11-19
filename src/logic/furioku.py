@@ -5,6 +5,7 @@ UTOK = 'furioku_utok'
 OBRANA = 'furioku_obrana'
 JEDNOTA = 'furioku_jednota'
 EMOJI = '<:furioku:1490160933081972866>'
+SPIRIT_XP_MULTIPLIER = 30
 
 
 def normalize(p):
@@ -17,6 +18,7 @@ def normalize(p):
         s.setdefault('fury_cur', s['fury_max'])
         s['fury_cur'] = max(0, min(s['fury_max'], s['fury_cur']))
         s['fury'] = s['fury_max']  # legacy display compatibility, never spent
+        s['xp_threshold'] = threshold(s.get('rank', 1))
     if 'equipped_spirit_ids' not in p:
         idx = p.get('equipped_spirit_idx')
         p['equipped_spirit_ids'] = [spirits[idx]['id']] if isinstance(idx, int) and 0 <= idx < len(spirits) else []
@@ -128,7 +130,8 @@ def recalc(p):
 
 
 def threshold(rank):
-    return max(1, int(100 * rank ** 1.6))
+    # Scale the original rounded thresholds to preserve the agreed XP table.
+    return max(1, int(100 * rank ** 1.6)) * SPIRIT_XP_MULTIPLIER
 
 
 def grant_xp(p, amount):

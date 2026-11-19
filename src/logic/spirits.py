@@ -36,7 +36,7 @@ ELEMENTS: dict[str, dict] = {
 }
 
 def rank_xp_threshold(rank: int) -> int:
-    return int(100 * (rank ** 1.6))
+    return energy.threshold(rank)
 
 BREED_CHANCE: dict[int, float] = {0: 0.80, 1: 0.55, 2: 0.30, 3: 0.10}
 BREED_ELEMENT_BONUS   = 0.15
