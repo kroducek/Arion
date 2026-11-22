@@ -104,14 +104,29 @@ def load_doc(name: str, default: Any = None) -> Any:
         return {} if default is None else default
 
 
+def _read_doc(conn, name, default):
+    row = conn.execute("SELECT data FROM docs WHERE name = ?", (name,)).fetchone()
+    return json.loads(row["data"]) if row else default
+
+
+def _write_doc(conn, name, data):
+    conn.execute(
+        "INSERT INTO docs (name, data, updated_at) VALUES (?, ?, datetime('now')) "
+        "ON CONFLICT(name) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
+        (name, json.dumps(data, ensure_ascii=False)),
+    )
+
+
+def _track_profile_deaths(conn, name, data):
+    if name == "profiles.json":
+        from src.database.deaths import track_deaths
+        track_deaths(conn, _read_doc(conn, name, {}), data)
+
+
 def save_doc(name: str, data: Any) -> None:
-    payload = json.dumps(data, ensure_ascii=False)
     with transaction() as conn:
-        conn.execute(
-            "INSERT INTO docs (name, data, updated_at) VALUES (?, ?, datetime('now')) "
-            "ON CONFLICT(name) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
-            (name, payload),
-        )
+        _track_profile_deaths(conn, name, data)
+        _write_doc(conn, name, data)
 
 
 def update_doc(name: str, mutate: Callable[[Any], Any], default: Any = None) -> Any:
@@ -126,11 +141,8 @@ def update_doc(name: str, mutate: Callable[[Any], Any], default: Any = None) -> 
         current = json.loads(row["data"]) if row else ({} if default is None else default)
         result = mutate(current)
         new_data = current if result is None else result
-        conn.execute(
-            "INSERT INTO docs (name, data, updated_at) VALUES (?, ?, datetime('now')) "
-            "ON CONFLICT(name) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
-            (name, json.dumps(new_data, ensure_ascii=False)),
-        )
+        _track_profile_deaths(conn, name, new_data)
+        _write_doc(conn, name, new_data)
         return new_data
 
 
@@ -174,8 +186,6 @@ def update_documents(names, mutate):
             docs[name] = json.loads(row['data']) if row else {}
         result = mutate(docs)
         for name, data in docs.items():
-            conn.execute(
-                "INSERT INTO docs (name, data, updated_at) VALUES (?, ?, datetime('now')) "
-                "ON CONFLICT(name) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at",
-                (name, json.dumps(data, ensure_ascii=False)))
+            _track_profile_deaths(conn, name, data)
+            _write_doc(conn, name, data)
         return result

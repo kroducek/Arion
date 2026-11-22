@@ -62,6 +62,7 @@ _run_migration()
 _paths.bootstrap_items()
 
 from src.utils.admin_gate import drop_admin_commands
+from src.core.dnd.death_screen import DeathChannelTree
 
 DND_COGS = [
     # D&D core
@@ -76,6 +77,7 @@ DND_COGS = [
     "src.core.dnd.perks",
     "src.core.dnd.blacksmith",
     "src.core.dnd.character",
+    "src.core.dnd.death_screen",
     "src.core.dnd.timeline",
     "src.core.dnd.ranks",
 
@@ -113,6 +115,7 @@ class ArionDND(commands.Bot):
         super().__init__(
             command_prefix=config['prefix'],
             intents=intents,
+            tree_cls=DeathChannelTree,
             help_command=None
         )
 

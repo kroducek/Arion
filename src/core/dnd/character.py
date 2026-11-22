@@ -17,69 +17,11 @@ from discord.ext import commands
 
 from src.database.characters import (
     list_chars, char_count, active_name, get_active_slot,
-    create_char, switch_char, delete_char, ckey,
+    create_char, switch_char,
     MAX_CHARS,
 )
-from src.utils.paths import PROFILES, ECONOMY, DIARIES, PLAYER_PERKS, REPUTATION
-from src.utils.json_utils import load_json, save_json, update_json
+from src.database.deaths import delete_character
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Purge per-postava dat (při mazání postavy)
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _purge_character_data(uid, slot) -> list:
-    """
-    Smaže VŠECHNA per-postava data na klíči '<uid>:<slot>'.
-    Účtové soubory (silver, stardust, achievementy, guilds, parties) NESAHÁ.
-    Vrátí seznam toho, co se reálně smazalo (pro report).
-    """
-    key = ckey(uid, slot)
-    hit = []
-    from src.core.dnd.timeline import timeline_path
-    def remove_timeline(data):
-        for state in data.values():
-            state.get("players", {}).pop(key, None)
-        return data
-    update_json(timeline_path(), remove_timeline)
-    for label, path in (
-        ("profil", PROFILES),
-        ("zlaté", ECONOMY),
-        ("deník", DIARIES),
-        ("perky", PLAYER_PERKS),
-    ):
-        try:
-            d = load_json(path, default={})
-            if key in d:
-                del d[key]
-                save_json(path, d)
-                hit.append(label)
-        except Exception:
-            pass
-
-    # reputace má tvar {gid: {players: {key: ...}}}
-    try:
-        rep = load_json(REPUTATION, default={})
-        changed = False
-        for gid, gdata in rep.items():
-            if not isinstance(gdata, dict):
-                continue
-            players = gdata.get("players", {})
-            if key in players:
-                del players[key]
-                changed = True
-        if changed:
-            save_json(REPUTATION, rep)
-            hit.append("reputace")
-    except Exception:
-        pass
-
-    return hit
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Potvrzovací view pro mazání
-# ══════════════════════════════════════════════════════════════════════════════
 
 class ConfirmDeleteView(discord.ui.View):
     def __init__(self, author_id: int):
@@ -300,8 +242,12 @@ class CharacterCog(commands.Cog):
             await interaction.edit_original_response(content=msg, embed=None, view=None)
             return
 
-        hit = _purge_character_data(uid, slot_s)
-        delete_char(uid, slot_s)  # smaže z registru + přepne aktivní na zbývající
+        hit = delete_character(uid, slot_s)
+        if hit is None:
+            await interaction.edit_original_response(
+                content="Postavu už nelze smazat.", embed=None, view=None
+            )
+            return
         new_name = active_name(uid)
         await self._rename_roster(interaction, new_name)
         await self._resync_rank_role(interaction)

@@ -43,6 +43,7 @@ from src.utils import paths as _paths
 os.makedirs(_paths.DATA_DIR, exist_ok=True)
 
 from src.utils.admin_gate import SHARED_COGS, drop_listeners, keep_only_admin
+from src.core.dnd.death_screen import DeathChannelTree
 
 # Cogy, které patří výhradně ArionDM.
 DM_COGS = [
@@ -77,6 +78,7 @@ class ArionDM(commands.Bot):
         super().__init__(
             command_prefix=config['prefix'],
             intents=intents,
+            tree_cls=DeathChannelTree,
             help_command=None
         )
 

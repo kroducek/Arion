@@ -3,6 +3,7 @@ import copy
 import os
 import uuid
 from src.database import db
+from src.database.deaths import in_channel
 from src.utils.paths import COMBAT_STATE, PROFILES, PLAYER_PERKS
 from src.logic.dice import roll_expr
 from src.logic import furioku as energy
@@ -19,7 +20,8 @@ def transaction(channel, change):
         if state is None:
             raise ValueError('Combat už neběží.')
         return change(state, docs[PROFILES_DOC], docs[PERKS_DOC])
-    return db.update_documents([COMBAT, PROFILES_DOC, PERKS_DOC], mutate)
+    with in_channel(channel):
+        return db.update_documents([COMBAT, PROFILES_DOC, PERKS_DOC], mutate)
 
 
 def pending(state, attack_id):

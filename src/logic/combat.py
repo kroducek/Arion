@@ -10,6 +10,7 @@ from discord import app_commands, ui
 from src.utils.paths import COMBAT_STATE
 from src.utils.json_utils import load_json, save_json, update_json
 from src.database.characters import active_name as _active_char_name
+from src.database.deaths import in_channel, pending_deaths
 from src.database.profiles import (
     load_items as _load_items_db,
     load_profiles as _load_profiles,
@@ -1013,7 +1014,8 @@ class EOTView:
                 ticked.add(next_actor)
                 if is_down(combat, next_actor):
                     break
-                tick_lines += self.cog._tick_actor(combat, next_actor)
+                with in_channel(channel_id):
+                    tick_lines += self.cog._tick_actor(combat, next_actor)
                 if not is_down(combat, next_actor):
                     break
                 skipped.append(next_actor)
@@ -2013,6 +2015,13 @@ class CombatCog(commands.Cog):
                 ephemeral=True,
             )
 
+        uid = _actor_uid(name)
+        if uid is not None and hp > 0:
+            key = stats[name].get("profile_key") or _pk(_load_profiles(), uid)
+            if key in pending_deaths():
+                return await interaction.response.send_message(
+                    "💀 Smrt zrušíš přes panel DM na oznámení.", ephemeral=True)
+
         old_hp = stats[name]["hp"]
         max_hp = stats[name]["max_hp"]
         before = stat_snapshot(stats[name])
@@ -2031,14 +2040,8 @@ class CombatCog(commands.Cog):
         self._save_state()
 
         # ── Zpětný zápis do profilu pokud jde o hráče (mention) ──────────────
-        is_player = name.startswith("<@")
-        if is_player:
-            # Parsujeme user ID z mentiony: <@123456> nebo <@!123456>
-            try:
-                uid = int(name.strip("<@!>"))
-                _writeback_player_state(uid, stats[name])
-            except ValueError:
-                pass
+        if uid is not None:
+            _writeback_player_state(uid, stats[name])
 
         # Krátká hláška (default) — plný přehled je na /combat status.
         if not combat.get("verbose"):

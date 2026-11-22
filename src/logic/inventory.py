@@ -5,6 +5,7 @@ from discord.ext import commands
 from discord import app_commands
 from typing import Optional
 
+from src.database.deaths import pending_deaths
 from src.database.profiles import (
     load_items as _load_items,
     load_profiles as _load_profiles,
@@ -2265,7 +2266,8 @@ class Inventory(commands.Cog):
     async def _use_item(self, interaction: discord.Interaction, item: str) -> None:
         """Použití consumable itemu — sdílené pro /inv-use i /use."""
         profiles = _load_profiles()
-        profile  = profiles.get(_pk(profiles, interaction.user.id))
+        key = _pk(profiles, interaction.user.id)
+        profile = profiles.get(key)
         if not profile:
             await interaction.followup.send("❌ Nemáš profil.", ephemeral=True)
             return
@@ -2279,6 +2281,10 @@ class Inventory(commands.Cog):
         if not db_item.get("consumable"):
             await interaction.followup.send(
                 f"❌ **{db_item['name']}** není consumable.", ephemeral=True)
+            return
+        if db_item.get("hp_restore") and key in pending_deaths():
+            await interaction.followup.send(
+                "💀 Smrt může zrušit DM přes panel na oznámení.", ephemeral=True)
             return
         entry = _find_consumable_entry(profile["inventory"], item)
         if not entry:
