@@ -10,6 +10,7 @@ from src.utils.paths import PLAYER_PERKS, ACHIEVEMENTS, REPUTATION, DATA_DIR
 from src.utils.json_utils import load_json, save_json
 from src.logic.stats import get_xp_cap, level_label, add_xp, STAT_LABELS, _skill_registry, _roman
 from src.logic.profile_render import render_stats_card, render_prukaz_card
+from src.logic import furioku as energy
 from src.logic.economy import (
     get_balance,
     set_balance,
@@ -1187,6 +1188,7 @@ class Profile(commands.Cog):
         rezim="heal (+), damage (−), set (nastav), full (na max).",
         hodnota="Množství (pro heal/damage/set). U 'full' se ignoruje.",
         maximum="Volitelně nastav i maximum (mana/HP/furioku).",
+        duch="U furioku vyber konkrétního ducha hráče.",
     )
     @app_commands.choices(
         zdroj=[
@@ -1210,6 +1212,7 @@ class Profile(commands.Cog):
         rezim: app_commands.Choice[str],
         hodnota: Optional[int] = None,
         maximum: Optional[int] = None,
+        duch: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -1228,6 +1231,19 @@ class Profile(commands.Cog):
         r = rezim.value    # heal / damage / set / full
         cur_key, max_key = f"{z}_cur", f"{z}_max"
 
+        target = profile
+        spirit = None
+        if duch is not None:
+            if z != "fury":
+                return await interaction.followup.send("❌ Možnost `duch` lze použít jen pro furioku.")
+            energy.normalize(profile)
+            spirit = next((s for s in profile["spirits"] if s["id"] == duch), None)
+            if spirit is None:
+                spirit = next((s for s in profile["spirits"] if s["name"].casefold() == duch.casefold()), None)
+            if spirit is None:
+                return await interaction.followup.send("❌ Vybraný duch není ve sbírce hráče.")
+            target = spirit
+
         if r != "full" and hodnota is None:
             await interaction.followup.send("❌ Pro heal/damage/set zadej `hodnota`.")
             return
@@ -1237,10 +1253,10 @@ class Profile(commands.Cog):
 
         # volitelná úprava maxima (HP: min 1, ostatní min 0)
         if maximum is not None:
-            profile[max_key] = max(1 if z == "hp" else 0, maximum)
+            target[max_key] = max(1 if z == "hp" else 0, maximum)
 
-        mx  = profile.get(max_key, 0)
-        old = profile.get(cur_key, 0)
+        mx  = target.get(max_key, 0)
+        old = target.get(cur_key, 0)
         mitig_str = ""
         if r == "heal":
             new = min(mx, old + hodnota)
@@ -1270,9 +1286,8 @@ class Profile(commands.Cog):
                     parts.append(note)
                 mitig_str = "  ".join(parts)
             else:
-                if z == "fury":
+                if z == "fury" and spirit is None:
                     # Odečti celkovou furioku podle pořadí zdrojů v hráčově sestavě.
-                    from src.logic import furioku as energy
                     from src.logic.spirits import _owned_perks
                     perks = _owned_perks(member.id)
                     spent = energy.spend(profile, hodnota, perks)
@@ -1282,13 +1297,15 @@ class Profile(commands.Cog):
                     if note:
                         mitig_str += f"  {note}"
                 else:
-                    # Mana/hlad se odečítají přímo.
                     new = max(0, old - hodnota)
         elif r == "set":
             new = max(0, min(mx, hodnota))
         else:  # full
             new = mx
-        profile[cur_key] = new
+        if spirit is not None:
+            new = max(0, min(mx, new))
+            spirit["fury"] = mx
+        target[cur_key] = new
         save_data(data)
 
         # hezký výpis se správným barem podle zdroje
@@ -1299,7 +1316,8 @@ class Profile(commands.Cog):
         elif z == "hunger":
             bar, emoji, label = _hunger_bar(new, mx), "🍖", "Hlad"
         else:
-            bar, emoji, label = "", "🔥", "Furioku"
+            bar, emoji = "", "🔥"
+            label = f"Furioku ducha **{spirit['name']}**" if spirit is not None else "Furioku"
         bar_str = f"{bar}  " if bar else ""
         extra = f"\n-# {mitig_str}" if mitig_str else ""
         # když se při zásahu spotřebovala furioku, ukaž i to
@@ -1309,6 +1327,22 @@ class Profile(commands.Cog):
             f"✅ **{member.display_name}** — {emoji} {label} aktualizováno.\n"
             f"{bar_str}**{new}/{mx}**  *(bylo {old})*{extra}"
         )
+
+    @dmset.autocomplete("duch")
+    async def dmset_duch_autocomplete(self, interaction: discord.Interaction, current: str):
+        member = getattr(interaction.namespace, "member", None)
+        if not _is_dm(interaction) or not isinstance(member, discord.Member):
+            return []
+        if getattr(interaction.namespace, "zdroj", None) != "fury":
+            return []
+        profile = load_data().get(pkey(member.id), {})
+        energy.normalize(profile)
+        return [
+            app_commands.Choice(
+                name=f"{s['name']} · {s['fury_cur']}/{s['fury_max']}"[:100], value=s["id"])
+            for s in profile["spirits"]
+            if current.casefold() in s["name"].casefold()
+        ][:25]
 
     # ── /profile-admin-vliv ───────────────────────────────────────────────────
 

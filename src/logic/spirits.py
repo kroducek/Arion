@@ -7,6 +7,7 @@ from typing import Optional
 import random
 import datetime
 import logging
+from urllib.parse import urlsplit
 
 logger = logging.getLogger("Spirits")
 
@@ -81,6 +82,18 @@ def _is_dm(interaction: discord.Interaction) -> bool:
     if interaction.user.guild_permissions.administrator:
         return True
     return any(r.name == DM_ROLE_NAME for r in interaction.user.roles)
+
+def _spirit_image_url(value: str) -> str:
+    url = value.strip()
+    try:
+        parsed = urlsplit(url)
+        if (parsed.scheme in ("https", "http") and parsed.hostname
+                and parsed.username is None and parsed.password is None
+                and len(url) <= 2048 and not any(c.isspace() or ord(c) < 32 for c in url)):
+            return url
+    except ValueError:
+        pass
+    raise ValueError("Zadej platnou URL obrázku začínající na https:// nebo http://.")
 
 def _default_spirit(name: str, rank: int, fury: int,
                     element: str, description: str = "") -> dict:
@@ -206,7 +219,9 @@ def _spirit_embed(s: dict, title: str = None) -> discord.Embed:
         inline=False,
     )
     if s.get("description"):
-        embed.add_field(name="Popis", value=f"*{s['description']}*", inline=False)
+        embed.add_field(name="Popis", value=f"*{s['description'][:1022]}*", inline=False)
+    if s.get("image_url"):
+        embed.set_image(url=s["image_url"])
     embed.set_footer(text=f"Získán: {s.get('created_at', '?')[:10]}")
     return embed
 
@@ -737,6 +752,7 @@ class Spirits(commands.Cog):
         fury="Kolik furioku duch přináší",
         element="Element ducha",
         description="Krátký popis (volitelné)",
+        obrazek_url="Přímá URL obrázku ducha (volitelné)",
     )
     @app_commands.choices(element=[
         app_commands.Choice(name=f"{v['emoji']} {k.capitalize()}", value=k)
@@ -747,6 +763,7 @@ class Spirits(commands.Cog):
         self, interaction: discord.Interaction,
         member: discord.Member, name: str, rank: int, fury: int,
         element: app_commands.Choice[str], description: str = "",
+        obrazek_url: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -766,6 +783,11 @@ class Spirits(commands.Cog):
             return
 
         spirit = _default_spirit(name, rank, fury, element.value, description)
+        if obrazek_url is not None:
+            try:
+                spirit["image_url"] = _spirit_image_url(obrazek_url)
+            except ValueError as exc:
+                return await interaction.followup.send(f"❌ {exc}")
         spirits.append(spirit)
         energy.normalize(profile)
         _save(data)
@@ -863,9 +885,9 @@ class Spirits(commands.Cog):
             profile = data.get(pkey(target_id)) or {}
             cur     = (current or "").lower()
             return [
-                app_commands.Choice(name=f"{s['name']} ({s.get('fury', 0)} 🔥)", value=s["name"])
+                app_commands.Choice(name=f"{s['name']} ({s.get('fury', 0)} 🔥)"[:100], value=s["name"])
                 for s in profile.get("spirits", [])
-                if cur in s["name"].lower()
+                if cur in s["name"].lower() and len(s["name"]) <= 100
             ][:25]
         except Exception:
             logger.exception("[spirits] autocomplete jména selhal")
@@ -959,7 +981,9 @@ class Spirits(commands.Cog):
         novy_popis="Nový popis",
         nove_jmeno="Přejmenovat ducha",
         vek_dni="Věk ducha v reálných dnech",
+        obrazek_url="Nová přímá URL obrázku ducha",
     )
+    @app_commands.autocomplete(name=_ac_spirit_name)
     @mark_admin
     async def duch_upravit(
         self, interaction: discord.Interaction,
@@ -969,6 +993,7 @@ class Spirits(commands.Cog):
         novy_popis: Optional[str] = None,
         nove_jmeno: Optional[str] = None,
         vek_dni: Optional[int] = None,
+        obrazek_url: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -990,6 +1015,12 @@ class Spirits(commands.Cog):
             return
 
         changes = []
+        if obrazek_url is not None:
+            try:
+                spirit["image_url"] = _spirit_image_url(obrazek_url)
+            except ValueError as exc:
+                return await interaction.followup.send(f"❌ {exc}")
+            changes.append("obrázek aktualizován")
         if nove_fury is not None and nove_fury >= 0:
             energy.normalize(profile)
             spirit["fury_cur"] = min(nove_fury, spirit["fury_cur"])
@@ -1108,6 +1139,7 @@ class Spirits(commands.Cog):
 
     @duch.command(name="info", description="Zobraz detailní info o konkrétním duchovi.")
     @app_commands.describe(name="Jméno ducha", member="Hráč (výchozí: ty)")
+    @app_commands.autocomplete(name=_ac_spirit_name)
     async def duch_info(
         self, interaction: discord.Interaction,
         name: str, member: Optional[discord.Member] = None,
