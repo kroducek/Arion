@@ -22,10 +22,11 @@ ARION_NAME = "Aurionis"
 
 # ── Skupiny a barvy ───────────────────────────────────────────────────────────
 
-GROUP_ORDER = ["Furioku", "Magie", "Pasivky", "Útočné", "Posilovací", "Rovnováha", "Temnota", "Světlo", "Základní", "Výzbroj", "Unikátní"]
+GROUP_ORDER = ["Furioku", "Magie", "Techniky", "Pasivky", "Útočné", "Posilovací", "Rovnováha", "Temnota", "Světlo", "Základní", "Výzbroj", "Unikátní"]
 GROUP_EMOJI = {
     "Furioku":    "👻",
     "Magie":      "🔮",
+    "Techniky":   "⚔️",
     "Pasivky":    "🛡️",
     "Útočné":     "🗡️",
     "Posilovací": "💪",
@@ -39,6 +40,7 @@ GROUP_EMOJI = {
 GROUP_COLOR = {
     "Furioku":    0x7B68EE,
     "Magie":      0x9B59B6,
+    "Techniky":   0x398782,
     "Pasivky":    0x95A5A6,
     "Útočné":     0xC0392B,
     "Posilovací": 0xE67E22,
@@ -55,6 +57,12 @@ GROUP_COLOR = {
 # learnable=True → perk není v náhodném poolu, získá se pouze učením (Základní / Výzbroj)
 
 _SEED_PERKS: dict[str, dict] = {
+    "butterfly_dance": {
+        "name": "1st Technique – Butterfly Dance", "group": "Techniky",
+        "passive": False, "unique": False, "technique_cap": 3,
+        "desc": "Mečová technika složená ze čtyř navazujících pohybů.",
+        "subdesc": None, "cooldown_uses": 0, "cooldown_type": None,
+    },
     # ── Furioku ──────────────────────────────────────────────────────────────
     "furioku_promena": {
         "name": "Furioku: Proměna",
@@ -1931,7 +1939,7 @@ class PerksCog(commands.Cog):
         perk_id="ID perku (např. fire_magic_1)",
         name="Jméno perku",
         description="Popis co perk dělá",
-        group="Skupina (Furioku, Magie, Pasivky, Temnota, Světlo, Základní, Výzbroj, Unikátní)",
+        group="Skupina perku, například Techniky, Magie nebo Furioku",
         passive="Je to pasivní perk? (true/false)",
         unique="Je to unikátní? (true/false)",
         equip="Lze vybavit? (true/false, default false)",
@@ -1960,6 +1968,7 @@ class PerksCog(commands.Cog):
         unlock_skill_name: str = "",
         unlock_skill_gives: str = "none",
         stat_bonus: str = "",
+        urovne: Optional[app_commands.Range[int, 1, 100]] = None,
     ):
         try:
             # Zvaliduj group
@@ -1994,6 +2003,10 @@ class PerksCog(commands.Cog):
                 "cooldown_uses": cooldown_uses if not passive_bool else 0,
                 "cooldown_type": cooldown_type_final if not passive_bool else None,
             }
+            if group == "Techniky":
+                perks[perk_id]["technique_cap"] = urovne or 3
+            elif urovne is not None:
+                return await interaction.response.send_message("Počet úrovní nastav u techniky.", ephemeral=True)
             if equip_bool:
                 perks[perk_id]["equip"] = True
             if learnable_bool:
@@ -2098,6 +2111,8 @@ class PerksCog(commands.Cog):
         if not perk:
             await interaction.followup.send(f"Perk `{perk_id}` není v databázi.", ephemeral=True)
             return
+        if perk.get("group") == "Techniky":
+            return await interaction.followup.send("Techniky se vylepšují za SP přes /staty.", ephemeral=True)
         if not perk.get("learnable"):
             await interaction.followup.send(f"Perk `{perk_id}` není learnable — nelze levelovat.", ephemeral=True)
             return
@@ -2265,6 +2280,7 @@ class PerksCog(commands.Cog):
         unlock_skill_name: str = "",
         unlock_skill_gives: str = "none",
         stat_bonus: str = "",
+        urovne: Optional[app_commands.Range[int, 1, 100]] = None,
     ):
         perks = load_perks()
         if perk_id not in perks:
@@ -2294,6 +2310,11 @@ class PerksCog(commands.Cog):
                     f"❌ Neznámá skupina. Platné: {', '.join(GROUP_ORDER)}", ephemeral=True)
                 return
             p["group"] = group.strip(); changed.append("skupina")
+        if urovne is not None:
+            if p.get("group") != "Techniky":
+                return await interaction.response.send_message("Počet úrovní nastav u techniky.", ephemeral=True)
+            p["technique_cap"] = urovne
+            changed.append(f"maximum {urovne} úrovní")
         if subdesc.strip():
             p["subdesc"] = None if subdesc.strip() == "-" else subdesc.strip(); changed.append("subdesc")
         if cooldown_uses >= 0:

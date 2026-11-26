@@ -126,6 +126,8 @@ DEFAULT_ITEMS = {
         "desc": "Balíček 10 obyčejných šípů"
     },
     "ogniva_runa": {
+        "reusable": True,
+        "mana_cost": 3,
         "name": "Ohnivá runa",
         "category": "zbraně",
         "slot": "hand_l",
@@ -135,6 +137,8 @@ DEFAULT_ITEMS = {
         "desc": "Runa ohnivé magie — 🔥"
     },
     "ledova_runa": {
+        "reusable": True,
+        "mana_cost": 3,
         "name": "Ledová runa",
         "category": "zbraně",
         "slot": "hand_l",
@@ -182,6 +186,11 @@ def bootstrap_items() -> None:
             items = {}
         for item_id, item_def in DEFAULT_ITEMS.items():
             items.setdefault(item_id, item_def)
+        for item_id in ("ogniva_runa", "ledova_runa"):
+            rune = items[item_id]
+            if not rune.get("consumable"):
+                rune.setdefault("reusable", True)
+            rune.setdefault("mana_cost", DEFAULT_ITEMS[item_id]["mana_cost"])
         return items
 
     try:

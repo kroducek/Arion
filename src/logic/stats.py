@@ -149,6 +149,13 @@ _BASE_SKILLS = [
     {"id": "magie", "name": "Magie", "gives": "mana"},  # mana +5/SP
 ]
 
+def _perk_skill(pid: str, perk: dict):
+    if perk.get("group") == "Techniky":
+        return {"id": f"technika_{pid}", "name": perk["name"],
+                "max_level": perk.get("technique_cap", 3), "gives": None}
+    return perk.get("unlocks_skill")
+
+
 def _skill_registry() -> dict:
     """Globální registr skillů (základní Výdrž + z perků): id → {id,name,gives}.
 
@@ -173,7 +180,7 @@ def _skill_registry() -> dict:
                 # smazaný seed perk (a není vzkříšený v živé DB) → přeskoč
                 if pid in deleted and pid not in live:
                     continue
-                us = perk.get("unlocks_skill")
+                us = _perk_skill(pid, perk)
                 if isinstance(us, dict) and us.get("id"):
                     reg[us["id"]] = us
     except Exception:
@@ -218,8 +225,7 @@ def available_skills(user_id: int) -> list:
     for pid in owned:
         try:
             _dbp = db.get(pid)
-            us   = (_dbp.get("unlocks_skill") if isinstance(_dbp, dict) else None) \
-                   or _SEED_PERKS.get(pid, {}).get("unlocks_skill")
+            us = _perk_skill(pid, _dbp or _SEED_PERKS.get(pid, {}))
             if isinstance(us, dict) and us.get("id"):
                 out[us["id"]] = us
         except Exception:
@@ -627,7 +633,7 @@ def spend_sp(user_id: int, skill_id: str, amount: int = 1) -> bool:
     p    = _profile(data, uid)
     skills = p.setdefault("skills", {})
     cur = skills.get(skill_id, 0)
-    if cur >= SKILL_CAP:
+    if cur >= meta.get("max_level", SKILL_CAP):
         return False
     cost = sp_cost(cur)
     if p.get("sp", 0) < cost:
@@ -821,10 +827,18 @@ class StatPointView(discord.ui.View):
             )
         else:
             title = "⚡ Skill Pointy"
-            _names = ", ".join(sk["name"] for sk in available_skills(self.user_id)) or "—"
+            names = []
+            for skill in available_skills(self.user_id):
+                label = skill["name"]
+                if "max_level" in skill:
+                    level = p.get("skills", {}).get(skill["id"], 0)
+                    cap = skill["max_level"]
+                    label += f" ({level}/{cap}" + (" · mistr)" if level >= cap else ")")
+                names.append(label)
+            _names = ", ".join(names) or "—"
             body  = (
                 f"Máš **{sp}** volných ⚡ SP.\n\n"
-                f"Klikni na skill (max **{SKILL_CAP}**). Cena levelu roste: **1, 2, 3…** SP.\n"
+                "Klikni na skill. Cena levelu roste: **1, 2, 3…** SP.\n"
                 f"-# Odemčené: {_names}\n"
                 "-# Další skilly odemykáš perky."
             )
@@ -866,9 +880,11 @@ class StatPointView(discord.ui.View):
                             ephemeral=True)
                 else:
                     cur = p.get("skills", {}).get(tid, 0)
-                    if cur + planned + 1 > SKILL_CAP:
+                    meta = skill_meta(self.user_id, tid) or {}
+                    cap = meta.get("max_level", SKILL_CAP)
+                    if cur + planned + 1 > cap:
                         return await interaction.response.send_message(
-                            f"❌ **{name}** by přesáhl maximum (level {SKILL_CAP}).", ephemeral=True)
+                            f"❌ **{name}** by přesáhl maximum (level {cap}).", ephemeral=True)
                     # cena celého draftu + tenhle další level nesmí přesáhnout SP
                     cost_now, _ = self._draft_cost(p)
                     next_cost = sp_cost(cur + planned)

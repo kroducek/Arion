@@ -2,6 +2,7 @@
 import asyncio
 import copy
 import logging
+import re
 import discord
 from discord import ui
 from src.logic import attack_flow as flow
@@ -20,6 +21,21 @@ async def notice(i, text):
     await sender(text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
 
+async def announce_attack(i, attack, *, roll=False):
+    actors = [attack['attacker'], attack['target'], *attack.get('area_targets', [])]
+    text = f"⚔️ {actors[0]} → {', '.join(actors[1:])}"
+    if roll:
+        request = attack['requests'][-1]
+        actors.append(request['actor'])
+        text += f" · DM žádá hod {request['expr']}. Hází {request['actor']}."
+    else:
+        text += " · Reakce přidána. Čeká se na rozhodnutí DM."
+    user_ids = {int(match[1]) for actor in actors if (match := re.fullmatch(r"<@!?(\d+)>", actor))}
+    users = [discord.Object(id=uid) for uid in user_ids]
+    await i.channel.send(text, allowed_mentions=discord.AllowedMentions(
+        users=users, roles=False, everyone=False, replied_user=False))
+
+
 def attack_embed(a):
     unresolved = [r for r in a.get('requests', []) if r.get('result') is None and not r.get('superseded')]
     waiting = ', '.join(dict.fromkeys(r['actor'] for r in unresolved))
@@ -27,6 +43,8 @@ def attack_embed(a):
     embed = discord.Embed(title='⚔️ Útok', color=0xC59145,
         description=f"{a['attacker']} → {a['target']}\n**{a.get('weapon_label', 'Zbraň')}** · základ **{a['damage']} dmg**\n{stage}"[:4096])
     embed.add_field(name='Poškození', value=a.get('roll_info', '—')[:700] or '—', inline=False)
+    if a.get('area_targets'):
+        embed.add_field(name='Další zasažené cíle', value=', '.join(a['area_targets'])[:1024], inline=False)
     if a.get('merged_attacks'):
         embed.title = '⚔️ Sloučený útok'
         previous = '\n'.join(f"{n}. {part['reaction'][:450]}" for n, part in enumerate(a['merged_attacks'], 1) if part.get('reaction'))
@@ -296,6 +314,7 @@ class ReactionModal(ui.Modal, title='Jak reaguješ na útok?'):
         try:
             a = flow.update_reaction(i.channel_id, self.view_ref.aid, i.user.id, is_dm(i), str(self.text))
             await self.view_ref.refresh(i, a)
+            await announce_attack(i, a)
         except ValueError as e:
             await notice(i, str(e))
 
@@ -313,6 +332,7 @@ class RequestModal(ui.Modal, title='Vyžádat hod'):
             a = flow.request_roll(i.channel_id, self.view_ref.aid, is_dm(i), str(self.actor).strip(),
                 str(self.dice), str(self.attrs).replace(' ', '').split(','), str(self.note))
             await self.view_ref.refresh(i, a)
+            await announce_attack(i, a, roll=True)
         except ValueError as e:
             await notice(i, str(e))
 
@@ -381,8 +401,9 @@ class RollChoice(ui.View):
             aid, r = choices[int(select.values[0])]
             if reroll:
                 try:
-                    flow.request_roll(i.channel_id, aid, is_dm(i), r['actor'], r['expr'], r['attrs'], r.get('note', ''), reroll=r['id'])
+                    attack = flow.request_roll(i.channel_id, aid, is_dm(i), r['actor'], r['expr'], r['attrs'], r.get('note', ''), reroll=r['id'])
                     await notice(i, 'Nový pokus je připravený. Původní hod zůstává v historii.')
+                    await announce_attack(i, attack, roll=True)
                 except ValueError as e:
                     await notice(i, str(e))
             else:

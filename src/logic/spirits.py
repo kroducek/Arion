@@ -708,7 +708,7 @@ class Spirits(commands.Cog):
                 if current.casefold() in s['name'].casefold()][:25]
 
     @bond.command(name="success", description="[DM] Úspěch bondingu; třetí úspěch vyvolá evoluci.")
-    @app_commands.describe(nove_maximum="Pouze třetí úspěch: nové maximum furioku (výchozí ×2)")
+    @app_commands.describe(nove_maximum="Při třetím úspěchu nastav vlastní maximum. Výchozí odměna je +50 % maxima, zaokrouhleno nahoru.")
     @mark_admin
     async def bond_success(self, interaction: discord.Interaction, nove_maximum: app_commands.Range[int, 0] | None = None):
         await self._bond_action(interaction, 'success', new_maximum=nove_maximum)

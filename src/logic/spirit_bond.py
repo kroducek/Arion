@@ -46,7 +46,7 @@ def change_bond(channel_id, action, *, profile_key=None, user_id=None,
                     raise ValueError('Nové maximum můžeš zadat až při třetím úspěchu.')
                 if count == 3:
                     old = spirit['fury_max']
-                    maximum = old * 2 if new_maximum is None else new_maximum
+                    maximum = old + (old + 1) // 2 if new_maximum is None else new_maximum
                     if maximum < old:
                         raise ValueError(f'Nové maximum nesmí být menší než současných {old}.')
                     spirit['fury_max'] = spirit['fury'] = maximum

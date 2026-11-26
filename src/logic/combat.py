@@ -26,6 +26,7 @@ from src.logic.inventory import (
     _remove_entry,
     _remove_from_inventory,
     apply_item_effects,
+    usable_item,
 )
 from src.utils.admin_gate import admin_only, mark_admin
 
@@ -2560,13 +2561,15 @@ class CombatCog(commands.Cog):
 
     @combat_group.command(
         name="use",
-        description="Použij lektvar/protijed v boji — stojí bonusovou akci.")
+        description="Použij předmět. Útočný stojí akci, podpůrný bonusovou akci.")
     @app_commands.describe(
-        item="Item z inventáře (lektvar, protijed…).",
+        item="Předmět z inventáře.",
+        cil="Cíl útočného předmětu.",
+        dalsi_cile="Další cíle plošného účinku (zmínky hráčů nebo jména NPC oddělená čárkou).",
         force="[GM] Ignoruj pojistku na už použitou bonusovou akci.")
-    @app_commands.autocomplete(item=_ac_consumable_item)
+    @app_commands.autocomplete(item=_ac_consumable_item, cil=_ac_actor)
     async def combat_use(self, interaction: discord.Interaction, item: str,
-                         force: bool = False):
+                         force: bool = False, cil: Optional[str] = None, dalsi_cile: Optional[str] = None):
         combat = self.active_combats.get(interaction.channel_id)
         if not combat:
             return await interaction.response.send_message(
@@ -2581,9 +2584,21 @@ class CombatCog(commands.Cog):
         db_item = _load_items_db().get(item) or {}
         if not profile:
             return await interaction.response.send_message("❌ Nemáš profil.", ephemeral=True)
-        if not db_item.get("consumable"):
+        if not usable_item(db_item):
             return await interaction.response.send_message(
                 f"❌ **{db_item.get('name', item)}** se nedá použít.", ephemeral=True)
+        if item_damage_expr(db_item):
+            if not cil:
+                return await interaction.response.send_message("Vyber cíl útoku.", ephemeral=True)
+            try:
+                attack = attack_flow.prepare(interaction.channel_id, actor, cil,
+                    consumable_id=item, dm=is_dm(interaction), force=force,
+                    area_targets=[s.strip() for s in (dalsi_cile or "").split(",") if s.strip()])
+            except ValueError as exc:
+                return await interaction.response.send_message(str(exc), ephemeral=True)
+            return await self._send_attack(interaction, attack)
+        if cil or dalsi_cile:
+            return await interaction.response.send_message("Cíl lze vybrat u útočného předmětu.", ephemeral=True)
         entry = _find_consumable_entry(profile.setdefault("inventory", []), item)
         if not entry:
             return await interaction.response.send_message(

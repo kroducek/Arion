@@ -64,7 +64,7 @@ def check_turn(state, actor, dm=False, force=False):
 
 def prepare(channel, actor, target, action='attack', weapon_id=None, ammo=None,
             bonus=0, dm=False, force=False, npc_expr=None, npc_slot='main',
-            furioku_amount=0):
+            furioku_amount=0, consumable_id=None, area_targets=None):
     from src.logic import combat as c
     def change(state, profiles, player_perks):
         check_turn(state, actor, dm, force)
@@ -87,7 +87,28 @@ def prepare(channel, actor, target, action='attack', weapon_id=None, ammo=None,
                          ammo_id=None, ammo_qty=0, furioku_amount=0)
         statuses = []
         mana_note = ''
-        if p is not None:
+        if consumable_id is not None:
+            if p is None:
+                raise ValueError('Chybí profil postavy.')
+            item = c._load_items_db().get(consumable_id, {})
+            expr = c.item_damage_expr(item)
+            if not c.usable_item(item) or not expr:
+                raise ValueError('Předmět nelze použít k útoku.')
+            entry = c._find_consumable_entry(p.get('inventory', []), consumable_id)
+            if not entry or entry.get('coating') or entry.get('runes'):
+                raise ValueError('Nemáš volný kus tohoto předmětu.')
+            resources['mana'] = max(0, int(item.get('mana_cost') or 0))
+            if resources['mana'] > p.get('mana_cur', p.get('mana_max', 0)):
+                raise ValueError('Nemáš dost many.')
+            if not item.get('reusable'):
+                if not c._remove_entry(p['inventory'], entry, 1):
+                    raise ValueError('Předmět už není dostupný.')
+                resources.update(ammo_id=consumable_id, ammo_qty=1)
+            wid = None
+            weapon_label = item.get('name', consumable_id)
+            if item.get('hit_status'):
+                statuses.append((item['hit_status'], 'zbran'))
+        elif p is not None:
             requested_furioku = max(0, int(furioku_amount or 0))
             if requested_furioku:
                 from src.logic.furioku import UTOK
@@ -148,7 +169,7 @@ def prepare(channel, actor, target, action='attack', weapon_id=None, ammo=None,
                 damage += ammo_roll.total
                 details.append(f'munice {ammo_roll.detail} = {ammo_roll.total}')
             resources.update(ammo_id=ammo, ammo_qty=1)
-        elif p is not None and c._is_ranged(item):
+        elif p is not None and not consumable_id and c._is_ranged(item):
             raise ValueError('Vyber dostupnou munici pro střelnou zbraň.')
         buffs_before = copy.deepcopy(state.get('buffs', {}).get(actor, []))
         for buff in c.take_attack_buffs(state, actor):
@@ -164,6 +185,13 @@ def prepare(channel, actor, target, action='attack', weapon_id=None, ammo=None,
                       costs=[], actors={actor: key, target: target_key}, buffs_before=buffs_before,
                       turn_serial=state.get('turn_serial', {}).get(actor, 0), phase='reaction')
         state.setdefault(PENDING, {})[aid] = attack
+        if area_targets:
+            extra = list(dict.fromkeys(t for t in area_targets if t != target))
+            if not consumable_id or len(extra) + 1 > item.get('area_targets', 1):
+                raise ValueError('Příliš mnoho cílů pro tento předmět.')
+            for other in extra:
+                attack['actors'][other], _ = actor_profile(state, profiles, other)
+            attack['area_targets'] = extra
         return copy.deepcopy(attack)
     return transaction(channel, change)
 
@@ -187,6 +215,8 @@ def merge(channel, first_id, second_id, dm):
             raise ValueError('Starší útok nejprve obnov přes /combat pending.')
         if any(a.get('merged_attacks') for a in attacks):
             raise ValueError('Sloučit lze dva samostatné útoky.')
+        if any(a.get('area_targets') for a in attacks):
+            raise ValueError('Plošný útok vyhodnoť samostatně.')
         if any(first.get(k) != second.get(k) for k in ('attacker', 'target', 'actors', 'turn_serial')):
             raise ValueError('Útoky musí mít stejného útočníka, cíl, postavy i tah.')
         if len(first.get('requests', [])) + len(second.get('requests', [])) > 40:
@@ -437,7 +467,8 @@ def resolve(channel, aid, dm, outcome, damage=None, bypass=False, refund=False):
         p = profiles.get(key)
         before_profiles = {}
         before_stats = {}
-        for actor in dict.fromkeys((attacker, target)):
+        participants = list(dict.fromkeys([attacker, target, *a.get('area_targets', [])]))
+        for actor in participants:
             carrier = state['stats'].get(actor)
             if carrier is None:
                 continue
@@ -486,9 +517,16 @@ def resolve(channel, aid, dm, outcome, damage=None, bypass=False, refund=False):
                 if res.get('energy_note'):
                     lines.append('Útok: ' + res['energy_note'])
                 lines += applied
+                for other in a.get('area_targets', []):
+                    other_stat = state['stats'][other]
+                    hit = c.apply_hit(other_stat, raw)
+                    lines.append(f"{other} · {hit['change_str']}")
+                    if bs and a.get('extra_statuses'):
+                        registry = db.load_doc(os.path.basename(bs.STATUSES_FILE), {}) or bs.DEFAULT_STATUSES
+                        lines += c.deliver_statuses(other_stat, a['extra_statuses'], bs, registry)
             else:
                 lines.append('DM: minutí.')
-            for actor in (attacker, target):
+            for actor in participants:
                 pk = a.get('actors', {}).get(actor)
                 prof = profiles.get(pk)
                 carrier = state['stats'][actor]

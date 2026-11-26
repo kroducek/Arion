@@ -14,7 +14,7 @@ from src.database.profiles import (
     save_profiles as _save_profiles,
 )
 from src.core.dnd import blacksmith as _blacksmith
-from src.logic.dice import DiceError, roll_expr
+from src.logic.dice import DiceError, item_damage_expr, roll_expr
 from src.utils.admin_gate import mark_admin
 from src.utils.json_utils import load_json
 from src.utils.paths import COMBAT_STATE
@@ -113,7 +113,7 @@ _KNOWN_ITEM_FIELDS = {
     "roll_tags", "id", "offhand",
     "rune_slots", "default_runes",
     "dmg", "reusable",
-    "image_url", "cures",
+    "image_url", "cures", "area_targets", "hit_status",
 }
 
 # Sloty které zabírá full_set item
@@ -579,17 +579,17 @@ def _find_consumable_entry(inventory: list, item_key: str) -> dict | None:
     key = item_key.lower()
     fallback = None
     for entry in inventory:
-        if entry.get("type") == "registered":
-            matches = entry.get("id", "").lower() == key
-        else:
-            matches = entry.get("name", "").lower() == key
-        if not matches:
+        if entry.get("type") != "registered" or entry.get("id", "").lower() != key:
             continue
         if entry.get("runes") or entry.get("coating"):
             fallback = fallback or entry
             continue
         return entry
     return fallback
+
+
+def usable_item(item: dict) -> bool:
+    return bool(item.get("consumable") or item.get("reusable"))
 
 
 def item_cures(db_item: dict) -> list[str]:
@@ -1702,7 +1702,7 @@ async def _ac_consumable_item(
         if entry["type"] != "registered":
             continue
         db_item = items_db.get(entry["id"])
-        if not db_item or not db_item.get("consumable"):
+        if not db_item or not usable_item(db_item):
             continue
         name = db_item["name"]
         if cur in name.lower() or cur in entry["id"].lower():
@@ -1729,7 +1729,7 @@ async def _ac_use_item(
         if entry["type"] != "registered":
             continue
         db_item = items_db.get(entry["id"])
-        if not db_item or not db_item.get("consumable"):
+        if not db_item or not usable_item(db_item):
             continue
         cat = db_item.get("category", "")
         if kategorie and kategorie != "ostatní" and cat != kategorie:
@@ -2278,7 +2278,7 @@ class Inventory(commands.Cog):
             await interaction.followup.send(
                 "❌ Tento item není v databázi.", ephemeral=True)
             return
-        if not db_item.get("consumable"):
+        if not usable_item(db_item):
             await interaction.followup.send(
                 f"❌ **{db_item['name']}** není consumable.", ephemeral=True)
             return
@@ -2291,11 +2291,12 @@ class Inventory(commands.Cog):
             await interaction.followup.send(
                 f"❌ **{db_item['name']}** nemáš v inventáři.", ephemeral=True)
             return
-        if ((db_item.get("hp_restore") or item_cures(db_item))
+        damage_expr = item_damage_expr(db_item)
+        if ((damage_expr or db_item.get("hp_restore") or item_cures(db_item))
                 and in_active_combat(interaction.user.id)):
             await interaction.followup.send(
                 f"⚔️ Jsi v boji — **{db_item['name']}** použij přes `/combat use` "
-                "(stojí bonusovou akci).", ephemeral=True)
+                "podle typu předmětu.", ephemeral=True)
             return
 
         # ── Zkontroluj mana_cost před použitím ───────────────────────────────
@@ -2310,6 +2311,10 @@ class Inventory(commands.Cog):
                 return
 
         # Runy a jiné `reusable` itemy použití stojí manu, ale nezničí se.
+        try:
+            damage = roll_expr(damage_expr) if damage_expr else None
+        except DiceError as exc:
+            return await interaction.followup.send(f"❌ Neplatné poškození: {exc}", ephemeral=True)
         reusable = bool(db_item.get("reusable"))
         if not reusable:
             if entry.get("runes") or entry.get("coating"):
@@ -2322,6 +2327,8 @@ class Inventory(commands.Cog):
             _remove_entry(profile["inventory"], entry, 1)
 
         effects = apply_item_effects(profile, db_item)
+        if damage is not None:
+            effects.append(f"💥 Poškození ({damage_expr}): {damage.detail} = **{damage.total}**")
         _save_profiles(profiles)
 
         effect_str = "\n".join(effects) if effects else ""
@@ -2779,12 +2786,14 @@ class Inventory(commands.Cog):
 
     @inv_db.command(
         name="combat",
-        description="[DM] Nastaví damage zbraně a příznak reusable (runy).")
+        description="[DM] Nastaví poškození, počet cílů, status a opakované použití předmětu.")
     @mark_admin
     @app_commands.describe(
         item_id="ID itemu.",
         dmg="Damage výraz pro /attack (např. 1d8+2 · 'clear' = odebrat).",
         reusable="Použití se nespotřebuje (runy) — jen odečte manu.",
+        pocet_cilu="Maximum zasažených cílů včetně hlavního (výchozí 1).",
+        status="ID statusu při zásahu, například pro hoření. 'clear' jej odebere.",
     )
     @app_commands.autocomplete(item_id=_ac_database_item)
     async def inv_db_combat(
@@ -2792,6 +2801,8 @@ class Inventory(commands.Cog):
         item_id: str,
         dmg: Optional[str] = None,
         reusable: Optional[bool] = None,
+        pocet_cilu: Optional[app_commands.Range[int, 1, 25]] = None,
+        status: Optional[str] = None,
     ):
         await interaction.response.defer(ephemeral=True)
         if not _is_dm(interaction):
@@ -2816,11 +2827,21 @@ class Inventory(commands.Cog):
                 item["dmg"] = clean
         if reusable is not None:
             if reusable: item["reusable"] = True
-            else:        item.pop("reusable", None)
+            else:        item["reusable"] = False
+        if pocet_cilu is not None:
+            item["area_targets"] = pocet_cilu
+        if status is not None:
+            if status == "clear":
+                item.pop("hit_status", None)
+            elif status in _blacksmith.load_statuses():
+                item["hit_status"] = status
+            else:
+                return await interaction.followup.send("❌ Neznámé ID statusu.")
         _save_items(items_db)
         await interaction.followup.send(
             f"✅ **{item['name']}** — dmg: `{item.get('dmg', '—')}`, "
-            f"reusable: `{bool(item.get('reusable'))}`.")
+            f"opakované použití: `{bool(item.get('reusable'))}`, "
+            f"cíle: {item.get('area_targets', 1)}, status: {item.get('hit_status') or '—'}.")
 
     @inv_db.command(name="set-cure",
                     description="[DM] Nastaví, které skupiny statusů item léčí (protijed).")
