@@ -534,7 +534,8 @@ def resolve(channel, aid, dm, outcome, damage=None, bypass=False, refund=False):
                     c._merge_energy(prof, carrier.get('energy'))
                     prof['hp_cur'] = carrier['hp']
                     prof['statuses'] = copy.deepcopy(carrier.get('statuses', []))
-            lines.append(f"❤️ {target}: {before['hp']} → {stat['hp']}/{stat.get('max_hp', 0)}")
+            hp_line = "???" if stat.get("immortal") else f"{before['hp']} → {c._hp_display(stat)}"
+            lines.append(f"❤️ {target}: {hp_line}")
             if mana_paid:
                 lines.append(f'🔷 Útočník: −{mana_paid} many')
         event = c.log_event(state, 'attack' if outcome == 'hit' else outcome, target, before,

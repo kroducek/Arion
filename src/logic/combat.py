@@ -126,7 +126,7 @@ def _writeback_attack(combat, actor, resources):
 def apply_status_dmg(stat: dict, dmg: int) -> int:
     """Poškození ze statusu ignoruje DEF i furioku a ubírá přímo HP."""
     dmg = max(0, int(dmg))
-    stat['hp'] = max(0, int(stat.get('hp', 0) or 0) - dmg)
+    _subtract_hp(stat, dmg)
     return 0
 
 def deliver_statuses(stat: dict, statuses: list, bs, reg: dict) -> list[str]:
@@ -217,6 +217,25 @@ def _make_bar(current: int, maximum: int, length: int = 10) -> str:
     return "█" * filled + "░" * (length - filled)
 
 
+def _subtract_hp(stat: dict, damage: int) -> None:
+    remaining = stat["hp"] - damage
+    # Immortals use the signed balance for damage accounting and undo.
+    stat["hp"] = remaining if stat.get("immortal") else max(0, remaining)
+
+
+def _npc_health(value: str, current: int = -1) -> dict:
+    if str(value).strip() == "???":
+        return {"hp": 0, "max_hp": 0, "immortal": True}
+    if not str(value).strip().isascii() or not str(value).strip().isdecimal():
+        raise ValueError("HP musí být nezáporné celé číslo nebo ???.")
+    maximum = int(value)
+    return {"hp": maximum if current == -1 else max(0, min(current, maximum)), "max_hp": maximum}
+
+
+def _hp_display(stat: dict) -> str:
+    return "???" if stat.get("immortal") else f"{stat['hp']}/{stat['max_hp']}"
+
+
 def apply_hit(stat: dict, raw_hit: int) -> dict:
     """Zásah: DEF pohltí napřed, pak se spotřebuje furioka, zbytek jde do HP.
 
@@ -228,7 +247,7 @@ def apply_hit(stat: dict, raw_hit: int) -> dict:
     final, absorbed = _absorb_energy(stat, after_def)
 
     old_hp = int(stat.get("hp", 0) or 0)
-    stat["hp"] = max(0, old_hp - final)
+    _subtract_hp(stat, final)
 
     parts = [f"zásah {raw_hit}"]
     if dfn:
@@ -401,6 +420,12 @@ def hp_recap_console(combat: dict) -> list[str]:
         s = stats.get(name)
         if not s:
             continue
+        if s.get("immortal"):
+            lines.append(console(f"❤️ **{name}** `???`"))
+            tracker = status_tracker(s, reg)
+            if tracker:
+                lines.append(console(f"Status: {tracker}"))
+            continue
         hp, max_hp = s.get("hp", 0), s.get("max_hp", 0)
         bar = _make_bar(hp, max_hp, 8)
         dead = "  💀" if hp == 0 else ""
@@ -429,7 +454,7 @@ def undo_console(event: dict, target: str, hp: int, max_hp: int) -> list[str]:
     """Vrácení poslední změny HP ve stejném stylu jako zásah."""
     return [
         console(f"↩️ ❤️ **{target}**"),
-        console(f"`{event['after'].get('hp', 0)}` → `{hp}/{max_hp}`"),
+        console("HP `???`" if event["after"].get("immortal") else f"`{event['after'].get('hp', 0)}` → `{hp}/{max_hp}`"),
         console(f"*(vráceno: {event.get('detail') or event.get('kind', '')})*"),
     ]
 
@@ -514,6 +539,8 @@ def stat_snapshot(stat: dict) -> dict:
     """Stav aktéra pro undo — čísla i statusy (kopie, ne odkaz)."""
     snap = {key: int(stat.get(key, 0) or 0) for key in SNAPSHOT_KEYS}
     snap["statuses"] = copy.deepcopy(stat.get("statuses") or [])
+    if stat.get("immortal"):
+        snap["immortal"] = True
     if "energy" in stat:
         snap["energy"] = copy.deepcopy(stat["energy"])
     return snap
@@ -625,6 +652,8 @@ def format_log_event(event: dict) -> str:
     hp_to = event["after"].get("hp", 0)
     if not event.get("revert", True):
         change = "minul"
+    elif event["after"].get("immortal"):
+        change = "??? HP"
     elif hp_from == hp_to:
         change = f"{hp_to} HP"        # změna mimo HP (status, DEF) — detail řekne co
     else:
@@ -672,7 +701,7 @@ def is_player(actor: str) -> bool:
 def is_down(combat: dict, actor: str) -> bool:
     """Aktér na 0 HP — padl, takže nehraje a neútočí se na něj."""
     stat = combat.get("stats", {}).get(actor)
-    return stat is not None and int(stat.get("hp", 0) or 0) <= 0
+    return stat is not None and not stat.get("immortal") and int(stat.get("hp", 0) or 0) <= 0
 
 
 def advance_turn(combat: dict) -> tuple[str, int, list[str]]:
@@ -730,7 +759,7 @@ def wipeout_side(combat: dict) -> str | None:
     if not sides["players"] or not sides["npc"]:
         return None
     for side, stats in sides.items():
-        if all(int(s.get("hp", 0) or 0) <= 0 for s in stats):
+        if all(not s.get("immortal") and int(s.get("hp", 0) or 0) <= 0 for s in stats):
             return side
     return None
 
@@ -746,7 +775,7 @@ def build_summary_embed(combat: dict, title: str) -> discord.Embed:
         lines.append(f"{medal} **{actor}** — " + "  ".join(parts))
 
     stats = combat.get("stats", {})
-    fallen = [a for a, s in stats.items() if int(s.get("hp", 0) or 0) <= 0]
+    fallen = [a for a in stats if is_down(combat, a)]
     embed = discord.Embed(
         title=title,
         description="\n".join(lines) if lines else "*Nikdo si ani neškrábl.*",
@@ -824,6 +853,8 @@ def _format_actor_line(name: str, stats: dict, is_active: bool, idx_marker: bool
         bar     = _make_bar(hp, max_hp, 8)
 
         hp_str  = f"❤️ `{hp:>3}/{max_hp}` {bar}"
+        if s.get("immortal"):
+            hp_str = "❤️ `???`"
         def_str = f"  🛡️`{defense}`" if defense > 0 else ""
         fur_str = f"  🔥`{fury}`"    if fury    > 0 else ""
         st_str  = f"  {status_str}" if status_str else ""
@@ -873,6 +904,8 @@ def _boss_embed(name: str, s: dict, flashing: bool = False) -> discord.Embed:
         f"╚══════════════════════╝\n"
         f"```"
     )
+    if s.get("immortal"):
+        desc, color, dead = "❤️ HP: **???**", 0x71368a, False
     if defense > 0:
         desc += f"\n🛡️ DEF: **{defense}**"
     if fury > 0:
@@ -1530,6 +1563,8 @@ class CombatCog(commands.Cog):
         if not log:
             return []
         lines = [console(f"🩸 Status: **{actor}** — " + " · ".join(log))]
+        if dmg and stat.get("immortal"):
+            return lines + [console("❤️ `???`")]
         if dmg:
             hp, max_hp = stat.get("hp", 0), stat.get("max_hp", 0)
             bar = _make_bar(hp, max_hp, 8)
@@ -1783,7 +1818,7 @@ class CombatCog(commands.Cog):
     @admin_only()
     @app_commands.describe(
         name="Jméno NPC",
-        hp="Maximum životů (výchozí: 100)",
+        hp="Maximum životů (výchozí 100), nebo ??? pro nesmrtelné NPC.",
         current_hp="Aktuální HP při vstupu — pokud nenastaveno, použije se max HP",
         defense="Obrana / DEF (výchozí: 0)",
         fury="Zuřivost / FUR (výchozí: 0)",
@@ -1796,7 +1831,7 @@ class CombatCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         name: str,
-        hp: int = 100,
+        hp: str = "100",
         current_hp: int = -1,
         defense: int = 0,
         fury: int = 0,
@@ -1817,7 +1852,10 @@ class CombatCog(commands.Cog):
                 "⚠️ *Jméno NPC nesmí být prázdné.*", ephemeral=True
             )
 
-        actual_current = hp if current_hp == -1 else max(0, min(current_hp, hp))
+        try:
+            health = _npc_health(hp, current_hp)
+        except ValueError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
         combat = self.active_combats[channel_id]
 
         final_name = name
@@ -1827,8 +1865,7 @@ class CombatCog(commands.Cog):
             counter += 1
 
         stat = {
-            "hp":     actual_current,
-            "max_hp": hp,
+            **health,
             "def":    defense,
             "fur":    fury,
         }
@@ -1854,7 +1891,7 @@ class CombatCog(commands.Cog):
         await self._send_order(
             interaction,
             f"💀  {final_name} vstupuje do boje!",
-            note=(f"NPC přidáno — HP {actual_current}/{hp}  DEF {defense}  FUR {fury}  "
+            note=(f"NPC přidáno — HP {_hp_display(stat)}  DEF {defense}  FUR {fury}  "
                   f"🎲 init {npc_init}" + (f"\n{weapons}" if weapons else "")),
         )
 
@@ -1910,7 +1947,7 @@ class CombatCog(commands.Cog):
     @admin_only()
     @app_commands.describe(
         name="Jméno bosse",
-        hp="Maximum životů (výchozí: 200)",
+        hp="Maximum životů (výchozí 200), nebo ??? pro nesmrtelného bosse.",
         defense="DEF (výchozí: 0)",
         fury="FUR (výchozí: 0)",
         dmg="Damage hlavní zbraně (`1d8`, `2d6+2`, holé číslo = kostka).",
@@ -1922,7 +1959,7 @@ class CombatCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         name: str,
-        hp: int = 200,
+        hp: str = "200",
         defense: int = 0,
         fury: int = 0,
         dmg: Optional[str] = None,
@@ -1954,7 +1991,11 @@ class CombatCog(commands.Cog):
                 f"⚠️ *V boji už je aktér **{name}** — zvol jiné jméno.*", ephemeral=True
             )
 
-        stat = {"hp": hp, "max_hp": hp, "def": defense, "fur": fury}
+        try:
+            stat = _npc_health(hp)
+        except ValueError as exc:
+            return await interaction.response.send_message(str(exc), ephemeral=True)
+        stat.update({"def": defense, "fur": fury})
         try:
             if dmg:
                 set_npc_weapon(stat, "main", dmg, zbran or "")
@@ -1983,7 +2024,7 @@ class CombatCog(commands.Cog):
 
         weapons = npc_weapons_line(stat)
         await interaction.followup.send(
-            f"☠️ *Boss **{name}** vstoupil do boje!*  ❤️ `{hp}` HP  🛡️ `{defense}` DEF  "
+            f"☠️ *Boss **{name}** vstoupil do boje!*  ❤️ `{_hp_display(stat)}` HP  🛡️ `{defense}` DEF  "
             f"🔥 `{fury}` FUR  🎲 init {combat['initiative'][name]}"
             + (f"\n{weapons}" if weapons else "")
         )
@@ -2026,6 +2067,9 @@ class CombatCog(commands.Cog):
         old_hp = stats[name]["hp"]
         max_hp = stats[name]["max_hp"]
         before = stat_snapshot(stats[name])
+        immortal = bool(stats[name].get("immortal"))
+        if immortal and hp >= 0:
+            return await interaction.response.send_message("Nesmrtelná postava má HP ???. Zranění zadej záporným číslem.", ephemeral=True)
 
         if hp < 0:
             result     = apply_hit(stats[name], -hp)
@@ -2045,8 +2089,8 @@ class CombatCog(commands.Cog):
             _writeback_player_state(uid, stats[name])
 
         # Krátká hláška (default) — plný přehled je na /combat status.
-        if not combat.get("verbose"):
-            lines = hp_console(name, old_hp, new_hp, max_hp, change_str,
+        if immortal or not combat.get("verbose"):
+            lines = [console(f"❤️ **{name}** `???`"), console(change_str)] if immortal else hp_console(name, old_hp, new_hp, max_hp, change_str,
                                attacker=utocnik)
             await interaction.response.send_message(lines[0])
             asyncio.create_task(self._stream(interaction, lines))
@@ -2561,7 +2605,7 @@ class CombatCog(commands.Cog):
 
     @combat_group.command(
         name="use",
-        description="Použij předmět. Útočný stojí akci, podpůrný bonusovou akci.")
+        description="Použij útočný nebo podpůrný předmět za bonusovou akci.")
     @app_commands.describe(
         item="Předmět z inventáře.",
         cil="Cíl útočného předmětu.",
@@ -2592,7 +2636,7 @@ class CombatCog(commands.Cog):
                 return await interaction.response.send_message("Vyber cíl útoku.", ephemeral=True)
             try:
                 attack = attack_flow.prepare(interaction.channel_id, actor, cil,
-                    consumable_id=item, dm=is_dm(interaction), force=force,
+                    action="bonus", consumable_id=item, dm=is_dm(interaction), force=force,
                     area_targets=[s.strip() for s in (dalsi_cile or "").split(",") if s.strip()])
             except ValueError as exc:
                 return await interaction.response.send_message(str(exc), ephemeral=True)
