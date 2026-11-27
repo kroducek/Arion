@@ -19,7 +19,7 @@ characters.json
 ═══════════════════════════════════════════════════════════════════════════════
 
 KLÍČOVÁNÍ DAT:
-  • Per-postava soubory (profiles, economy-gold, diaries, player_perks,
+  • Per-postava soubory (profiles, economy-gold, notes, player_perks,
     quest_log, reputation-inner, takedowns, combat_state) se klíčují přes
     pkey(uid) → "<uid>:<slot>".
   • Účtové soubory (silver, stardust, achievements, guilds, parties,
@@ -224,7 +224,7 @@ def delete_char(uid, slot) -> bool:
     Pokud mažeš aktivní, přepne se na nějakou zbývající.
 
     POZOR: tohle maže jen záznam v characters.json. Vlastní data postavy
-    (profil/gold/deník/perky/questy/reputaci na klíči '<uid>:<slot>') musí
+    (profil/gold/poznámky/perky/questy/reputaci na klíči '<uid>:<slot>') musí
     smazat volající (cog), aby nevznikla osiřelá data — viz purge ve fázi 4.
     """
     data = _load()

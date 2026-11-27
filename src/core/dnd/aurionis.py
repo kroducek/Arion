@@ -151,7 +151,7 @@ KRONIKA = {
                     "`/profile` — Průkaz dobrodruha\n"
                     "`/profile-edit` — Upravit průkaz\n"
                     "`/eat` — Sněz jídlo z inventáře\n"
-                    "`/diary add/show` — Deník postavy\n"
+                    "`/notes list` — Poznámky postavy\n"
                     "`/memory show/add/remove/edit` — Vzpomínky postavy"
                 ),
             },

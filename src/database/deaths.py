@@ -84,6 +84,7 @@ def _remove_character(conn, profiles, key, uid, slot, allow_last):
         (PROFILES, "profil"),
         ("economy.json", "zlaté"),
         ("diaries.json", "deník"),
+        ("notes.json", "poznámky"),
         ("player_perks.json", "perky"),
     ):
         data = profiles if doc == PROFILES else db._read_doc(conn, doc, {})

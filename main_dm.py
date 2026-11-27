@@ -50,7 +50,6 @@ DM_COGS = [
     "src.core.dm.board",
     "src.core.dm.lore",
     "src.core.dm.backup",
-    "src.core.dm.diary_admin",
     "src.core.dm.news_admin",
     "src.core.dm.aurionis_admin",
 ]

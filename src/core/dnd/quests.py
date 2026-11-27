@@ -6,7 +6,7 @@ import os
 import unicodedata
 from datetime import datetime
 
-from src.utils.paths import QUESTS as QUESTS_FILE, QUEST_LOG as QUEST_LOG_FILE, DIARIES as DIARY_FILE
+from src.utils.paths import QUESTS as QUESTS_FILE, QUEST_LOG as QUEST_LOG_FILE
 from src.utils.json_utils import load_json, save_json
 from src.core.dnd.ranks import (
     DIFFICULTY, DEFAULT_DIFFICULTY, award_quest_rank, next_rank,
@@ -17,7 +17,6 @@ from src.database.characters import get_active_slot, use_slot
 from src.utils.admin_gate import admin_only
 
 ARION_NAME = "Aurionis"
-QUEST_TAG  = "📜"
 
 # ── Status a kategorie ────────────────────────────────────────────────────────
 
@@ -86,12 +85,6 @@ def load_quest_log() -> list:
 def save_quest_log(data: list):
     save_json(QUEST_LOG_FILE, data)
 
-def load_diaries() -> dict:
-    return load_json(DIARY_FILE)
-
-def save_diaries(data: dict):
-    save_json(DIARY_FILE, data)
-
 def today() -> str:
     return datetime.now().strftime("%d.%m.")
 
@@ -120,7 +113,7 @@ def _xp_warning(xp) -> str:
 
 
 # ── Postavy: quest si pamatuje, které postavě patří ──────────────────────────
-# Per-postava data (deníky, XP, ranky) se klíčují '<uid>:<slot>'. Quest členy
+# Per-postava data (XP, ranky) se klíčují '<uid>:<slot>'. Quest členy
 # eviduje jako čisté Discord ID, takže slot postavy se ukládá zvlášť.
 
 def _member_slots(quest_data: dict) -> dict:
@@ -141,43 +134,6 @@ def _quest_slot(quest_data: dict, uid: int) -> str:
     """Slot postavy, která quest plní. Starší questy slot nemají → aktivní postava."""
     slots = quest_data.get("member_slots") or {}
     return str(slots.get(str(uid)) or get_active_slot(uid))
-
-def _diary_key(uid, slot) -> str:
-    return f"{uid}:{slot}"
-
-def _migrate_entries(raw) -> list:
-    """Bezpečná migrace — vždy vrátí list bez ohledu na vstup."""
-    if not isinstance(raw, list):
-        return []
-    return [e if isinstance(e, dict) else {"text": str(e), "pinned": False, "tag": None} for e in raw]
-
-def make_diary_entry(quest_name: str, info: str, xp: str | None) -> dict:
-    """Vytvoří nový quest záznam v deníku (dict formát kompatibilní s diary.py)."""
-    xp_part = f"  ✨ {xp}" if xp else ""
-    text    = f"{today()} — 📜 **{quest_name}** — {info}{xp_part}"
-    return {"text": text, "pinned": False, "tag": QUEST_TAG}
-
-def update_diary_quest_status(entries: list, quest_name: str, status: str) -> bool:
-    """
-    Najde existující quest záznam v deníku a upraví jeho text — přidá status badge.
-    Vrátí True pokud byl záznam nalezen a upraven, False pokud ne (pak je třeba přidat nový).
-    """
-    meta    = STATUS_META[status]
-    pattern = f"**{quest_name}**"   # hledáme podle názvu questu
-
-    for entry in reversed(entries):   # hledáme od konce — nejnovější záznam tohoto questu
-        text = entry.get("text", "") if isinstance(entry, dict) else str(entry)
-        if QUEST_TAG in text and pattern in text:
-            # Odstraň případný starý status badge a přidej nový
-            for old_status, old_meta in STATUS_META.items():
-                old_badge = f"  {old_meta['emoji']} {old_status.upper()}"
-                text = text.replace(old_badge, "")
-            text += f"  {meta['emoji']} {status.upper()}"
-            if isinstance(entry, dict):
-                entry["text"] = text
-            return True
-
-    return False
 
 def _status_line(added: str, closed: str | None) -> str:
     """Malý řádek s datumy dole pod questem."""
@@ -201,41 +157,29 @@ def _parse_member_mentions(text: str, guild: discord.Guild, exclude_ids: set[int
     return ids
 
 
-async def _assign_and_notify(
+async def _notify_assignment(
     guild: discord.Guild,
     member_ids: list[int],
-    diaries: dict,
     quest_name: str,
     quest_info: str,
     category: str,
     xp: str | None,
-    slots: dict | None = None,
 ) -> list[str]:
-    """Zapíše quest do deníků a pošle DM každému hráči. Vrátí jména kde DM selhalo.
-
-    slots: dict questu {uid: slot} — doplní se o postavu, která quest dostala.
-    """
+    """Pošle hráčům oznámení o přiřazení questu."""
     cat_meta = CATEGORY_META.get(category, CATEGORY_META[Category.SIDE])
     errors: list[str] = []
     for uid in member_ids:
-        slot = str((slots or {}).get(str(uid)) or get_active_slot(uid))
-        if slots is not None:
-            slots[str(uid)] = slot
-        key     = _diary_key(uid, slot)
-        entries = _migrate_entries(diaries.get(key, []))
-        entries.append(make_diary_entry(quest_name, quest_info, xp))
-        diaries[key] = entries
         member = guild.get_member(uid)
         if member:
             try:
                 dm = discord.Embed(
-                    title=f"{cat_meta['emoji']}  Nový quest v deníku",
+                    title=f"{cat_meta['emoji']}  Nový quest",
                     description=f"**{quest_name}**" + (f"\n{quest_info}" if quest_info else ""),
                     color=STATUS_META[Status.ACTIVE]["color"],
                 )
                 if xp:
                     dm.add_field(name="✨ Odměna", value=xp, inline=True)
-                dm.set_footer(text=f"⭐ {ARION_NAME}  ·  Zapsáno do tvého deníku s tagem 📜")
+                dm.set_footer(text=f"⭐ {ARION_NAME}  ·  Najdeš ho v /quests")
                 await member.send(embed=dm)
             except discord.Forbidden:
                 errors.append(member.display_name)
@@ -302,17 +246,8 @@ def _pages(blocks: list[str], per_page: int) -> list[list[str]]:
     return pages
 
 
-def _fit_description(blocks: list[str]) -> str:
-    """Spojí bloky do popisu embedu a případný zbytek nahradí poznámkou."""
-    pages = _pages(blocks, per_page=len(blocks) or 1)
-    if len(pages) == 1:
-        return "\n\n".join(pages[0])
-    hidden = len(blocks) - len(pages[0])
-    return "\n\n".join(pages[0]) + f"\n\n-# … a dalších {hidden} questů se sem nevešlo."
-
-
 def format_side_block(name: str, data: dict, status: str = Status.ACTIVE) -> str:
-    """Side quest bez rodiče — samostatný blok."""
+    """Quest jako samostatný blok."""
     meta   = STATUS_META.get(status, STATUS_META[Status.ACTIVE])
     xp     = data.get("xp")
     info   = data.get("info", "")
@@ -320,7 +255,8 @@ def format_side_block(name: str, data: dict, status: str = Status.ACTIVE) -> str
     closed = data.get("closed")
 
     s_suffix = f"  {meta['emoji']}" if status != Status.ACTIVE else ""
-    lines = [f"📜 **(side)**{s_suffix}  **{name}**"]
+    category = data.get("category", Category.SIDE)
+    lines = [f"📜 **({category})**{s_suffix}  **{name}**"]
     if info:
         lines.append(f"*{info}*")
     if xp:
@@ -328,112 +264,69 @@ def format_side_block(name: str, data: dict, status: str = Status.ACTIVE) -> str
     lines.append(_status_line(added, closed))
     return "\n".join(lines)
 
-def quest_embed(name: str, data: dict, guild: discord.Guild | None = None,
-                status: str = Status.ACTIVE) -> discord.Embed:
-    """Jednoduchý embed pro DiaryQuestView (tlačítko v deníku)."""
-    meta     = STATUS_META.get(status, STATUS_META[Status.ACTIVE])
-    cat      = data.get("category", Category.SIDE)
-    cat_meta = CATEGORY_META.get(cat, CATEGORY_META[Category.SIDE])
-    xp       = data.get("xp")
-    added    = data.get("added", "?")
-    closed   = data.get("closed")
-    parent   = data.get("parent_quest")
-
-    cat_label = f"{cat_meta['label']} (main)" if cat == Category.MAIN else f"{cat_meta['label']} (side)"
-    status_suffix = f"  {meta['emoji']} *{status.capitalize()}*" if status != Status.ACTIVE else ""
-
-    info = data.get("info", "")
-    desc_parts = []
-    if info:
-        desc_parts.append(f"*{info}*")
-    if xp:
-        desc_parts.append(f"⭐ xp: {xp}")
-    if parent:
-        desc_parts.append(f"-# ↳ {parent}")
-    desc_parts.append(_status_line(added, closed))
-
-    embed = discord.Embed(
-        title=f"📜  {name}  ({cat_label}){status_suffix}",
-        description="\n".join(desc_parts),
-        color=meta["color"],
-    )
-    embed.set_footer(text=f"⭐ {ARION_NAME}")
-    return embed
-
-
-# ── View: tlačítko QUESTY v deníku ────────────────────────────────────────────
-
-class DiaryQuestView(discord.ui.View):
-    def __init__(self, user_id: int):
-        super().__init__(timeout=120)
-        self.user_id = user_id
-
-    @discord.ui.button(label="📜 Questy", style=discord.ButtonStyle.success)
-    async def show_quests(self, interaction: discord.Interaction, button: discord.ui.Button):
-        quests = load_quests()
-        user_quests = {
-            name: data for name, data in quests.items()
-            if self.user_id in data.get("members", [])
-        }
-        if not user_quests:
-            await interaction.response.send_message("Nemáš žádné aktivní questy.", ephemeral=True)
-            return
-
-        n     = len(user_quests)
-        label = "aktivní quest" if n == 1 else "aktivní questy" if n <= 4 else "aktivních questů"
-        header = discord.Embed(
-            title="📜  Tvoje aktivní questy",
-            description=f"Máš **{n}** {label}.",
-            color=STATUS_META[Status.ACTIVE]["color"],
-        )
-        header.set_footer(text=f"⭐ {ARION_NAME}")
-        embeds = [quest_embed(name, data) for name, data in user_quests.items()]
-        await interaction.response.send_message(embeds=[header] + embeds[:9], ephemeral=True)
-
-
-# ── Nástěnkové questy ─────────────────────────────────────────────────────────
-
-# Značka questu vzatého z nástěnky (zapisuje ji board.py při přijetí zakázky).
 BOARD_SOURCE = "board"
 
-def board_quests(quests: dict) -> dict:
-    """Zakázky z nástěnky + side questy, které nevisí pod žádným existujícím mainem.
 
-    Tyhle questy se v /quests neukazují v hlavním přehledu, ale pod tlačítkem.
-    """
-    mains = {n for n, d in quests.items() if d.get("category") == Category.MAIN}
-    return {
-        n: d for n, d in quests.items()
-        if d.get("source") == BOARD_SOURCE
-        or (d.get("category") == Category.SIDE and d.get("parent_quest") not in mains)
-    }
+def _visible_quests(quests: dict, uid: int, slot: str, *, mine: bool) -> dict:
+    if mine:
+        return {
+            name: data for name, data in quests.items()
+            if uid in data.get("members", []) and _quest_slot(data, uid) == slot
+        }
+    return {name: data for name, data in quests.items() if data.get("source") != BOARD_SOURCE}
 
 
-# ── View: tlačítko NÁSTĚNKA pod /quests ───────────────────────────────────────
-
-class BoardQuestsView(discord.ui.View):
-    """Tlačítko pod /quests — ukáže nástěnkové questy zvlášť, ať nezahlcují hlavní přehled."""
-
-    def __init__(self):
+class QuestListView(discord.ui.View):
+    def __init__(self, user_id: int):
         super().__init__(timeout=300)
+        self.user_id = user_id
+        self.page = 0
+        self.pages = []
+        self.mine = True
 
-    @discord.ui.button(label="📋 Nástěnkové questy", style=discord.ButtonStyle.secondary)
-    async def show_board_quests(self, interaction: discord.Interaction, button: discord.ui.Button):
-        board = board_quests(load_quests())
-        if not board:
-            await interaction.response.send_message("📋 Nástěnka je momentálně prázdná.", ephemeral=True)
-            return
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == self.user_id
 
-        n     = len(board)
-        label = "quest" if n == 1 else "questy" if n <= 4 else "questů"
-        blocks = [format_side_block(name, data) for name, data in board.items()]
-        embed  = discord.Embed(
-            title="📋  Nástěnkové questy",
-            description=_fit_description(blocks),
+    def load(self, *, mine: bool):
+        self.mine = mine
+        self.page = 0
+        quests = _visible_quests(load_quests(), self.user_id, get_active_slot(self.user_id), mine=mine)
+        self.pages = _pages([format_side_block(name, data) for name, data in quests.items()], 8)
+
+    def embed(self) -> discord.Embed:
+        self.previous.disabled = self.page == 0
+        self.next_page.disabled = self.page + 1 >= len(self.pages)
+        self.my_quests.style = discord.ButtonStyle.primary if self.mine else discord.ButtonStyle.secondary
+        self.all_quests.style = discord.ButtonStyle.secondary if self.mine else discord.ButtonStyle.primary
+        empty = "Aktivní postava nemá žádné aktivní questy." if self.mine else "Žádné aktivní questy."
+        embed = discord.Embed(
+            title="Moje questy" if self.mine else "Všechny questy",
+            description="\n\n".join(self.pages[self.page]) if self.pages else empty,
             color=STATUS_META[Status.ACTIVE]["color"],
         )
-        embed.set_footer(text=f"⭐ {ARION_NAME}  ·  {n} {label} na nástěnce")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        if len(self.pages) > 1:
+            embed.set_footer(text=f"{self.page + 1} / {len(self.pages)}")
+        return embed
+
+    @discord.ui.button(label="Moje questy")
+    async def my_quests(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.load(mine=True)
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    @discord.ui.button(label="Všechny questy")
+    async def all_quests(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.load(mine=False)
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    @discord.ui.button(label="Zpět", row=1)
+    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = max(0, self.page - 1)
+        await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    @discord.ui.button(label="Další", row=1)
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = min(max(0, len(self.pages) - 1), self.page + 1)
+        await interaction.response.edit_message(embed=self.embed(), view=self)
 
 
 # ── Migrace — seed nových questů při startu ────────────────────────────────────
@@ -571,6 +464,13 @@ def _migrate_quests():
         elif _sync_seed_fields(quests[name], seed):
             changed = True
 
+    # Starší přiřazení dostanou pevný slot, aby necestovala při přepnutí postavy.
+    for quest in quests.values():
+        for uid in quest.get("members", []):
+            if not (quest.get("member_slots") or {}).get(str(uid)):
+                _remember_slot(quest, uid)
+                changed = True
+
     # Oprav pořadí: ne-seedované questy napřed (Chapter I atd.), pak seedované v seed pořadí
     non_seed  = {n: d for n, d in quests.items() if n not in _SEED_QUESTS}
     seeded    = {n: quests[n] for n in _SEED_QUESTS if n in quests}
@@ -584,92 +484,27 @@ def _migrate_quests():
         print("[quests] Migrace dokončena.")
 
 
-def _migrate_diaries():
-    """Quest zápisy dřív mířily na holé '<uid>', deník je ale čte na '<uid>:<slot>'.
-    Jednorázově je slije do první postavy, ať hráčům nechybí v /diary."""
-    diaries = load_diaries()
-    legacy  = [k for k in diaries if ":" not in str(k)]
-    if not legacy:
-        return
-    for key in legacy:
-        entries = _migrate_entries(diaries.pop(key))
-        target  = f"{key}:1"
-        merged  = _migrate_entries(diaries.get(target, []))
-        known   = {e.get("text") for e in merged}
-        merged.extend(e for e in entries if e.get("text") not in known)
-        diaries[target] = merged
-    save_diaries(diaries)
-    print(f"[quests] Deníky: sloučeno {len(legacy)} legacy záznamů do postavy 1.")
-
-
 # ── Quests Cog ────────────────────────────────────────────────────────────────
 
 class QuestsCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         _migrate_quests()
-        _migrate_diaries()
 
     quest_group = app_commands.Group(name="quest", description="Správa questů")
 
     # ── /quests ───────────────────────────────────────────────────────────────
 
-    @app_commands.command(name="quests", description="Zobraz všechny aktivní questy")
+    @app_commands.command(name="quests", description="Zobraz svoje nebo všechny aktivní questy")
     async def quests_list(self, interaction: discord.Interaction):
-        quests = load_quests()
-
-        if not quests:
-            embed = discord.Embed(
-                title="📜  Aktivní questy",
-                description="*Momentálně nejsou žádné aktivní questy.*",
-                color=STATUS_META[Status.ACTIVE]["color"],
-            )
-            embed.set_footer(text=f"⭐ {ARION_NAME}")
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        # Zakázky z nástěnky (vč. těch vedených jako solo) mají vlastní tlačítko níž.
-        board = board_quests(quests)
-        mains = {n: d for n, d in quests.items() if d.get("category") == Category.MAIN}
-        sides = {n: d for n, d in quests.items()
-                 if d.get("category") == Category.SIDE and n not in board}
-        solos = {n: d for n, d in quests.items()
-                 if d.get("category") == Category.SOLO and n not in board}
-
-        blocks   = []
-        used_sides = set()
-
-        for main_name, main_data in mains.items():
-            # Najdi side questy patřící pod tento main
-            children = [
-                (sn, sd, Status.ACTIVE)
-                for sn, sd in sides.items()
-                if sd.get("parent_quest") == main_name
-            ]
-            for sn, _, _ in children:
-                used_sides.add(sn)
-            blocks.append(format_main_block(main_name, main_data, interaction.guild, children))
-
-        # Solo questy — úplně naspodu
-        for solo_name, solo_data in solos.items():
-            blocks.append(format_side_block(solo_name, solo_data))
-
-        n     = len(mains) + len(used_sides) + len(solos)
-        label = "quest" if n == 1 else "questy" if n <= 4 else "questů"
-        embed = discord.Embed(
-            title="📜  Aktivní questy",
-            description=_fit_description(blocks),
-            color=STATUS_META[Status.ACTIVE]["color"],
-        )
-        embed.set_footer(text=f"⭐ {ARION_NAME}  ·  {n} {label} celkem")
-        if board:
-            await interaction.response.send_message(embed=embed, view=BoardQuestsView())
-        else:
-            await interaction.response.send_message(embed=embed)
+        await interaction.response.defer(ephemeral=True)
+        view = QuestListView(interaction.user.id)
+        view.load(mine=True)
+        await interaction.followup.send(embed=view.embed(), view=view, ephemeral=True)
 
     # ── /quest add ────────────────────────────────────────────────────────────
 
-    @quest_group.command(name="add", description="Vytvoř nový quest a přidej ho hráčům do deníků")
+    @quest_group.command(name="add", description="Vytvoř a přiřaď nový quest")
     @admin_only()
     @app_commands.describe(
         name="Název questu",
@@ -766,15 +601,10 @@ class QuestsCog(commands.Cog):
             "members":      member_ids,
             "added":        today(),
         }
+        for uid in member_ids:
+            _remember_slot(quests[name], uid)
         save_quests(quests)
-
-        diaries   = load_diaries()
-        dm_errors = await _assign_and_notify(
-            guild, member_ids, diaries, name, info, category, xp,
-            slots=_member_slots(quests[name]),
-        )
-        save_diaries(diaries)
-        save_quests(quests)
+        dm_errors = await _notify_assignment(guild, member_ids, name, info, category, xp)
 
         cat_meta = CATEGORY_META[category]
         if category == Category.MAIN and everyone:
@@ -795,10 +625,10 @@ class QuestsCog(commands.Cog):
         if xp:
             announce.add_field(name="✨ Odměna", value=xp,               inline=True)
         announce.add_field(name="👥 Přiřazeno",  value=assign_str,        inline=False)
-        announce.set_footer(text=f"⭐ {ARION_NAME}  ·  Quest byl zapsán do deníků hráčů")
+        announce.set_footer(text=f"⭐ {ARION_NAME}  ·  Přiřazené questy najdeš v /quests")
         await interaction.channel.send(embed=announce)
 
-        msg = f"✅ Quest **{name}** přidán a zapsán do {len(member_ids)} deníků." + _xp_warning(xp)
+        msg = f"✅ Quest **{name}** přidán a přiřazen {len(member_ids)} hráčům." + _xp_warning(xp)
         if dm_errors:
             msg += f"\n⚠️ DM se nepodařilo odeslat: {', '.join(dm_errors)}."
         await interaction.followup.send(msg, ephemeral=True)
@@ -821,28 +651,18 @@ class QuestsCog(commands.Cog):
         if not main_quests:
             return
 
-        diaries = load_diaries()
-        uid_str = _diary_key(member.id, get_active_slot(member.id))
-        entries = _migrate_entries(diaries.get(uid_str, []))
-
-        # Přidej každý aktivní main quest do deníku nového hráče
-        for qname, qdata in main_quests.items():
-            # Zapiš do deníku
-            entries.append(make_diary_entry(qname, qdata.get("info", ""), qdata.get("xp")))
-            # Přidej hráče do member listu questu
+        for qdata in main_quests.values():
             if member.id not in qdata.get("members", []):
                 qdata.setdefault("members", []).append(member.id)
             _remember_slot(qdata, member.id)
 
-        diaries[uid_str] = entries
-        save_diaries(diaries)
         save_quests(quests)
 
         # DM nováčkovi
         try:
             embed = discord.Embed(
                 title="⚔️  Vítej ve světě Aurionis",
-                description="Tvůj příběh právě začíná. Záznamy byly přidány do tvého deníku.",
+                description="Tvůj příběh právě začíná. Své úkoly najdeš v /quests.",
                 color=STATUS_META[Status.ACTIVE]["color"],
             )
             for qname, qdata in main_quests.items():
@@ -851,7 +671,7 @@ class QuestsCog(commands.Cog):
                     value=f"*{qdata.get('info', '')}*",
                     inline=False,
                 )
-            embed.set_footer(text=f"⭐ {ARION_NAME}  ·  Napiš /diary show")
+            embed.set_footer(text=f"⭐ {ARION_NAME}  ·  Napiš /quests")
             await member.send(embed=embed)
         except discord.Forbidden:
             pass
@@ -884,20 +704,13 @@ class QuestsCog(commands.Cog):
             return None  # už ho má — nic nového k oznámení
 
         quest_data.setdefault("members", []).append(member.id)
-        slot = _remember_slot(quest_data, member.id)
+        _remember_slot(quest_data, member.id)
         save_quests(quests)
-
-        diaries = load_diaries()
-        uid_str = _diary_key(member.id, slot)
-        entries = _migrate_entries(diaries.get(uid_str, []))
-        entries.append(make_diary_entry(quest_name, quest_data.get("info", ""), quest_data.get("xp")))
-        diaries[uid_str] = entries
-        save_diaries(diaries)
 
         if notify:
             try:
                 embed = discord.Embed(
-                    title="📜  Nový quest v deníku",
+                    title="📜  Nový quest",
                     description=f"**{quest_name}**\n{quest_data.get('info', '')}",
                     color=STATUS_META[Status.ACTIVE]["color"],
                 )
@@ -973,7 +786,6 @@ class QuestsCog(commands.Cog):
             # ── Automatické přidělování XP při dokončení ─────────────────────────
             xp_reward = _parse_xp(quest_data.get("xp")) if status == Status.COMPLETED else 0
 
-            diaries = load_diaries()
             for uid in member_ids:
                 # Závod: vítěz má DOKONČENO, ostatní NESPLNĚNO.
                 # (Bez vítěze se chová quest jako dřív — všem stejně.)
@@ -982,16 +794,6 @@ class QuestsCog(commands.Cog):
                 u_meta    = STATUS_META[u_status]
 
                 slot    = _quest_slot(quest_data, uid)
-                uid_str = _diary_key(uid, slot)
-                entries = _migrate_entries(diaries.get(uid_str, []))
-                if not update_diary_quest_status(entries, name, u_status):
-                    entries.append({
-                        "text":   f"{today()} — {u_meta['emoji']} **{name}** — {u_status.upper()}",
-                        "pinned": False,
-                        "tag":    QUEST_TAG,
-                    })
-                diaries[uid_str] = entries
-
                 # DM embed se staví PRO KAŽDÉHO ZVLÁŠŤ — dřív se vyráběl jednou
                 # před smyčkou, takže druhému hráči přistály i odměny prvního.
                 dm_embed = discord.Embed(
@@ -1005,7 +807,7 @@ class QuestsCog(commands.Cog):
                         f"\n-# Zakázku splnil/a první "
                         f"{win_m.display_name if win_m else 'někdo jiný'}. Příště buď rychlejší."
                     )
-                dm_embed.set_footer(text=f"⭐ {ARION_NAME}  ·  Zapsáno do tvého deníku")
+                dm_embed.set_footer(text=f"⭐ {ARION_NAME}  ·  Uzavřený quest")
 
                 member = guild.get_member(uid)
                 earns  = (u_status == Status.COMPLETED)
@@ -1064,7 +866,6 @@ class QuestsCog(commands.Cog):
                         await member.send(embed=dm_embed)
                     except discord.Forbidden:
                         pass
-            save_diaries(diaries)
 
             # Oznámení do kanálu
             mentions    = [guild.get_member(uid).mention if guild.get_member(uid) else f"<@{uid}>" for uid in member_ids]
@@ -1114,14 +915,6 @@ class QuestsCog(commands.Cog):
         quests[name] = quest_data
         save_quests(quests)
         save_quest_log(log)
-
-        diaries = load_diaries()
-        for uid in quest_data.get("members", []) or []:
-            key     = _diary_key(uid, _quest_slot(quest_data, uid))
-            entries = _migrate_entries(diaries.get(key, []))
-            if update_diary_quest_status(entries, name, Status.ACTIVE):
-                diaries[key] = entries
-        save_diaries(diaries)
 
         await interaction.followup.send(
             f"🟢 Quest **{name}** vrácen z logu mezi aktivní.\n"
@@ -1236,7 +1029,7 @@ class QuestsCog(commands.Cog):
 
     # ── /quest remove ─────────────────────────────────────────────────────────
 
-    @quest_group.command(name="remove", description="Odeber quest z databáze a ze všech deníků")
+    @quest_group.command(name="remove", description="Odeber quest z databáze")
     @admin_only()
     @app_commands.describe(name="Název questu k odebrání")
     async def quest_remove(self, interaction: discord.Interaction, name: str):
@@ -1247,32 +1040,12 @@ class QuestsCog(commands.Cog):
             await interaction.followup.send(f"Quest **{name}** neexistuje.", ephemeral=True)
             return
 
-        quest_data = quests[name]
-        member_ids = quest_data.get("members", [])
         del quests[name]
         save_quests(quests)
 
-        diaries = load_diaries()
-        removed_from = 0
-        for uid in member_ids:
-            uid_str = _diary_key(uid, _quest_slot(quest_data, uid))
-            if uid_str not in diaries:
-                continue
-            before   = len(diaries[uid_str])
-            filtered = []
-            for e in diaries[uid_str]:
-                text = e["text"] if isinstance(e, dict) else str(e)
-                if QUEST_TAG in text and f"**{name}**" in text:
-                    continue
-                filtered.append(e)
-            diaries[uid_str] = filtered
-            if len(filtered) < before:
-                removed_from += 1
-
-        save_diaries(diaries)
         log_action("quest_remove", interaction.user.display_name, name)
         await interaction.followup.send(
-            f"🗑️ Quest **{name}** odebrán z databáze a smazán z {removed_from} deníků.",
+            f"🗑️ Quest **{name}** odebrán z databáze.",
             ephemeral=True,
         )
 
@@ -1296,16 +1069,14 @@ class QuestsCog(commands.Cog):
             return
 
         quest_data.setdefault("members", []).extend(new_ids)
+        for uid in new_ids:
+            _remember_slot(quest_data, uid)
         save_quests(quests)
 
-        diaries   = load_diaries()
-        dm_errors = await _assign_and_notify(
-            guild, new_ids, diaries, name,
+        dm_errors = await _notify_assignment(
+            guild, new_ids, name,
             quest_data.get("info", ""), quest_data.get("category", Category.SIDE), quest_data.get("xp"),
-            slots=_member_slots(quest_data),
         )
-        save_diaries(diaries)
-        save_quests(quests)
 
         mentions = [guild.get_member(uid).mention if guild.get_member(uid) else f"<@{uid}>" for uid in new_ids]
         cat_meta = CATEGORY_META[quest_data.get("category", Category.SIDE)]
@@ -1317,7 +1088,7 @@ class QuestsCog(commands.Cog):
         announce.add_field(name="👥 Přiřazeno", value="  ·  ".join(mentions), inline=False)
         if quest_data.get("xp"):
             announce.add_field(name="✨ Odměna", value=quest_data["xp"], inline=True)
-        announce.set_footer(text=f"⭐ {ARION_NAME}  ·  Quest byl zapsán do deníků hráčů")
+        announce.set_footer(text=f"⭐ {ARION_NAME}  ·  Přiřazené questy najdeš v /quests")
         await interaction.channel.send(embed=announce)
 
         members_str = ", ".join(guild.get_member(uid).display_name if guild.get_member(uid) else str(uid) for uid in new_ids)
@@ -1355,13 +1126,8 @@ class QuestsCog(commands.Cog):
         embed.set_footer(text=f"⭐ {ARION_NAME}")
         await interaction.channel.send(embed=embed)
 
-        # Pokrok se do deníků NEZAPISUJE — ten dostává jen zahájení a
-        # dokončení/nesplnění questu (viz make_diary_entry a quest_status),
-        # ať se nezaplňuje spamem průběžných oznámení.
         log_action("quest_pokrok", interaction.user.display_name, name, note or "")
         await interaction.followup.send("✅ Pokrok oznámen v kanálu.", ephemeral=True)
-
-    # ── Autocomplete (sdílené pro remove + status + give) ─────────────────────
 
     @quest_remove.autocomplete("name")
     @quest_give.autocomplete("name")

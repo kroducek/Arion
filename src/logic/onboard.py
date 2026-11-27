@@ -2514,10 +2514,7 @@ class FinalEnterView(TutorialView):
         # ── Auto-přiřazení questů (musí být před hub embedem) ─────────────
         assigned: list[tuple[str, str]] = []
         try:
-            from src.core.dnd.quests import (
-                load_quests, save_quests, load_diaries, save_diaries,
-                make_diary_entry, _migrate_entries,
-            )
+            from src.core.dnd.quests import load_quests, save_quests, _remember_slot
 
             # "Volání hvězdy" je hlavní main quest nad vším ostatním — dává se
             # jako jediný main všem hráčům při vstupu na server. Tady jde jen
@@ -2525,17 +2522,12 @@ class FinalEnterView(TutorialView):
             # on_member_join stihl přidat.
             MAIN_QUEST = "Volání hvězdy"
             uid_int    = interaction.user.id
-            uid_str    = str(uid_int)
             quests     = load_quests()
             main_data  = quests.get(MAIN_QUEST)
 
             if main_data and uid_int not in main_data.get("members", []):
                 main_data.setdefault("members", []).append(uid_int)
-                diaries = load_diaries()
-                entries = _migrate_entries(diaries.get(uid_str, []))
-                entries.append(make_diary_entry(MAIN_QUEST, main_data.get("info", ""), main_data.get("xp")))
-                diaries[uid_str] = entries
-                save_diaries(diaries)
+                _remember_slot(main_data, uid_int)
                 save_quests(quests)
                 assigned.append((MAIN_QUEST, main_data.get("xp", "")))
 
@@ -2584,11 +2576,11 @@ class FinalEnterView(TutorialView):
                             for qname, qxp in assigned
                         ]
                         welcome.add_field(
-                            name="📋 Questy přidány do deníku",
+                            name="📋 Přiřazené questy",
                             value="\n".join(quest_lines),
                             inline=False,
                         )
-                    welcome.set_footer(text="⭐ Aurionis  ·  /diary show — zobraz svůj deník")
+                    welcome.set_footer(text="⭐ Aurionis  ·  /quests — zobraz svoje questy")
 
                     # mention musí být v contentu, v embedu by hráče nepingnul
                     await chat_channel.send(
@@ -2598,26 +2590,6 @@ class FinalEnterView(TutorialView):
                     )
                 except Exception as e:
                     logger.exception(f"[onboard] Nepodařilo se přidat do chat kanálu: {e}")
-
-        # ── Zápis do deníku ────────────────────────────────────────────────
-        try:
-            from datetime import datetime
-            from src.utils.paths import DIARIES as diary_path
-            uid        = pkey(interaction.user.id)
-            date_str   = datetime.now().strftime("%d.%m.")
-
-            def _add_entry(diaries: dict) -> None:
-                entries = diaries.get(uid, [])
-                entries.append({
-                    "text":   f"{date_str} — Tutorial byl dokončen, vítej v Aurionisu.",
-                    "pinned": True,
-                    "tag":    "⭐",
-                })
-                diaries[uid] = entries
-
-            update_json(diary_path, _add_entry)
-        except Exception as e:
-            logger.exception(f"[onboard] Nepodařilo se zapsat do deníku: {e}")
 
         # Achievement se udělí úplně nakonec, až po uvítání v hubu i městském chatu.
         # "Vítej v Aurionisu" se dá jen za PRVNÍ dokončení tutoriálu (grant_achievement

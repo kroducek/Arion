@@ -670,7 +670,7 @@ def format_log_event(event: dict) -> str:
 # ── Shrnutí boje ─────────────────────────────────────────────────────────────
 
 WIPEOUT_TITLE = {
-    "npc": "🏆  Nepřátelé padli!",
+    "npc": "🏆  Nepřátelé padli — boj ukončen!",
     "players": "💀  Družina padla!",
 }
 MEDALS = ("🥇", "🥈", "🥉")
@@ -756,9 +756,12 @@ def wipeout_side(combat: dict) -> str | None:
     sides: dict[str, list[dict]] = {"players": [], "npc": []}
     for actor, stat in combat.get("stats", {}).items():
         sides["players" if is_player(actor) else "npc"].append(stat)
-    if not sides["players"] or not sides["npc"]:
+    if not sides["players"]:
         return None
-    for side, stats in sides.items():
+    if not sides["npc"]:
+        return "npc" if combat.get("last_enemy_defeated") else None
+    for side in ("npc", "players"):
+        stats = sides[side]
         if all(not s.get("immortal") and int(s.get("hp", 0) or 0) <= 0 for s in stats):
             return side
     return None
@@ -1449,13 +1452,32 @@ class CombatCog(commands.Cog):
             logging.exception("[combat] shrnutí boje se nepodařilo odeslat")
 
     async def check_wipeout(self, channel, combat: dict) -> None:
-        """Padla-li celá jedna strana, pošle shrnutí (jednou za boj)."""
+        """Po porážce nepřátel ukončí boj a pošle shrnutí."""
         side = wipeout_side(combat)
-        if not side or combat.get("summary_sent"):
+        if not side or (side == "npc" and combat.get(PENDING_KEY)):
             return
-        combat["summary_sent"] = True
-        self._save_state()
-        await self.send_summary(channel, combat, WIPEOUT_TITLE[side])
+        key = str(channel.id)
+        summary = None
+
+        def finish(raw):
+            nonlocal summary
+            summary = None
+            current = raw.get(key)
+            if current is None:
+                return raw
+            current_side = wipeout_side(current)
+            if current_side == "npc" and not current.get(PENDING_KEY):
+                summary = (current_side, raw.pop(key))
+            elif current_side == "players" and not current.get("summary_sent"):
+                current["summary_sent"] = True
+                summary = (current_side, current)
+            return raw
+
+        update_json(COMBAT_STATE, finish)
+        if summary is not None:
+            self.reload_state()
+            finished_side, snapshot = summary
+            await self.send_summary(channel, snapshot, WIPEOUT_TITLE[finished_side])
 
     def _save_state(self):
         local = {str(k): v for k, v in self.active_combats.items()}
@@ -1882,6 +1904,7 @@ class CombatCog(commands.Cog):
 
         combat["order"].append(final_name)
         combat["stats"][final_name] = stat
+        combat.pop("last_enemy_defeated", None)
         # NPC si hodí iniciativu automaticky (GM může přepsat /combat setinit)
         npc_init = random.randint(1, 20)
         combat.setdefault("initiative", {})[final_name] = npc_init
@@ -2009,6 +2032,7 @@ class CombatCog(commands.Cog):
 
         combat["order"].append(name)
         combat["stats"][name] = stat
+        combat.pop("last_enemy_defeated", None)
         combat.setdefault("initiative", {})[name] = random.randint(1, 20)
 
         await interaction.response.defer()
@@ -2342,6 +2366,10 @@ class CombatCog(commands.Cog):
                   revert=False)
         order.remove(to_remove)
         combat["stats"].pop(to_remove, None)
+        if (not is_player(to_remove) and gone and not gone.get("immortal")
+                and int(gone.get("hp", 0) or 0) <= 0
+                and all(is_player(actor) for actor in combat["stats"])):
+            combat["last_enemy_defeated"] = True
         combat.get("initiative", {}).pop(to_remove, None)
         combat.get("turn_state", {}).pop(to_remove, None)
 
@@ -2362,6 +2390,7 @@ class CombatCog(commands.Cog):
         await interaction.response.send_message(
             f"❌ *{to_remove} byl odstraněn z boje.*"
         )
+        await self.check_wipeout(interaction.channel, combat)
 
     # ── /combat setorder ──────────────────────────────────────────────────────
 
@@ -2444,6 +2473,8 @@ class CombatCog(commands.Cog):
                   revert=False)
         combat["order"].remove(npc)
         stats.pop(npc, None)
+        if all(is_player(actor) for actor in stats):
+            combat["last_enemy_defeated"] = True
         combat.get("initiative", {}).pop(npc, None)
         combat.get("turn_state", {}).pop(npc, None)
         if combat.get("boss", {}).get("name") == npc:
@@ -2461,6 +2492,7 @@ class CombatCog(commands.Cog):
             f"💀 **{npc}** byl poražen. {hrac.mention} získává **{xp:,} XP**."
             + (f"\n📝 Poznámka: {note.strip()[:500]}" if note.strip() else "")
         )
+        await self.check_wipeout(interaction.channel, combat)
 
     # ── /combat end ───────────────────────────────────────────────────────────
 

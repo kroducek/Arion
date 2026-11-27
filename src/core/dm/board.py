@@ -12,7 +12,7 @@ from src.database.characters import pkey
 
 from src.core.dnd.quests import (
     load_quests, save_quests, today, Category, Status, BOARD_SOURCE,
-    _assign_and_notify, _member_slots, _xp_warning, load_diaries, save_diaries,
+    _notify_assignment, _remember_slot, _xp_warning,
 )
 from src.core.dnd.ranks import (
     DIFFICULTY, DEFAULT_DIFFICULTY, RANK_LADDER, STARTING_RANK,
@@ -375,9 +375,7 @@ class BoardView(discord.ui.View):
                     existing.setdefault("members", []).append(uid)
                 else:
                     quests[name] = _new_quest(q, [uid], qtype)
-                await _write_diary(interaction.guild, [uid], name, q,
-                                   slots=_member_slots(quests[name]))
-                save_quests(quests)
+                await _assign_board_quest(interaction.guild, quests, [uid], name, q)
 
                 await refresh_all_boards(interaction.client, boards)   # jen přepočet počtu
 
@@ -440,9 +438,7 @@ class BoardView(discord.ui.View):
                 return
 
             quests[name] = _new_quest(q, [uid], qtype)
-            await _write_diary(interaction.guild, [uid], name, q,
-                               slots=_member_slots(quests[name]))
-            save_quests(quests)
+            await _assign_board_quest(interaction.guild, quests, [uid], name, q)
 
             # Univerzální zakázka visí na VÍC nástěnkách → sundej ji ze všech
             # a všechny překresli, ať si ji nikdo nezkusí vzít podruhé.
@@ -454,7 +450,7 @@ class BoardView(discord.ui.View):
                        interaction.user.display_name, f"{name} ({self.dest})")
             await interaction.followup.send(
                 f"📜 Vzal/a jsi zakázku **{name}**.\n"
-                f"-# Zapsáno do deníku. Dokonči ji, než si vezmeš další.",
+                f"-# Najdeš ji v /quests. Dokonči ji, než si vezmeš další.",
                 ephemeral=True)
         except Exception:
             logger.exception(f"[board] převzetí zakázky selhalo ({self.dest}/{idx})")
@@ -480,21 +476,15 @@ def _new_quest(q: dict, members: list[int], qtype: str) -> dict:
     }
 
 
-async def _write_diary(guild, member_ids: list[int], name: str, q: dict,
-                       slots: dict | None = None) -> None:
-    """Zápis do deníku + DM (recyklujeme helper z quests.py).
-
-    slots: dict questu {uid: slot} — zapamatuje si postavu, která zakázku vzala.
-    """
-    _dest = q.get("destination")
-    _info = q.get("info", "")
-    if _dest and _dest != ANYWHERE:
-        _info = f"{_info}\n📍 {dest_label(_dest)}".strip()
-    diaries = load_diaries()
-    await _assign_and_notify(
-        guild, member_ids, diaries, name, _info, Category.SOLO, q.get("xp"),
-        slots=slots)
-    save_diaries(diaries)
+async def _assign_board_quest(guild, quests: dict, member_ids: list[int], name: str, offer: dict) -> None:
+    for uid in member_ids:
+        _remember_slot(quests[name], uid)
+    save_quests(quests)
+    info = offer.get("info", "")
+    destination = offer.get("destination")
+    if destination and destination != ANYWHERE:
+        info = f"{info}\n📍 {dest_label(destination)}".strip()
+    await _notify_assignment(guild, member_ids, name, info, Category.SOLO, offer.get("xp"))
 
 
 def _drop_from_boards(boards: dict, name: str) -> None:
@@ -618,9 +608,7 @@ class GroupTakeView(discord.ui.View):
         members = list(self.confirmed)
         quests[self.name] = _new_quest(q, members, QType.GROUP)
         quests[self.name]["party"] = self.party_name
-        await _write_diary(interaction.guild, members, self.name, q,
-                           slots=_member_slots(quests[self.name]))
-        save_quests(quests)
+        await _assign_board_quest(interaction.guild, quests, members, self.name, q)
 
         boards = load_boards()
         _drop_from_boards(boards, self.name)

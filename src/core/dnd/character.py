@@ -229,7 +229,7 @@ class CharacterCog(commands.Cog):
             title="🗑️ Smazat postavu?",
             description=(
                 f"Chystáš se **nevratně** smazat **{name}** (slot {slot}) "
-                "i všechna její data — profil, zlaté, deník, perky a reputaci.\n\n"
+                "i všechna její data — profil, zlaté, poznámky, perky a reputaci.\n\n"
                 "_Stříbro, hvězdný prach a achievementy zůstanou (jsou účtové)._"
             ),
             color=0xE74C3C,

@@ -5,7 +5,7 @@ from discord.ext import commands
 from discord import app_commands
 
 from src.utils.paths import (
-    PROFILES, TAKEDOWNS, ECONOMY, DIARIES, PLAYER_PERKS, REPUTATION, CHARACTERS,
+    PROFILES, TAKEDOWNS, ECONOMY, DIARIES, NOTES, PLAYER_PERKS, REPUTATION, CHARACTERS,
 )
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import list_chars, ckey
@@ -64,12 +64,12 @@ def _wipe_inventory(member_id) -> None:
 
 def _wipe_profile(member_id) -> None:
     """
-    Smaže VŠECHNY postavy účtu: profil, gold, deník, perky, reputaci na každém
+    Smaže VŠECHNY postavy účtu: profil, gold, poznámky, perky, reputaci na každém
     slotu + záznam v registru postav. (Stříbro/prach/achievementy = účtové,
     nesahá se na ně.)
     """
     keys = _char_keys(member_id)
-    for path in (PROFILES, ECONOMY, DIARIES, PLAYER_PERKS):
+    for path in (PROFILES, ECONOMY, DIARIES, NOTES, PLAYER_PERKS):
         d = load_json(path, default={})
         if any(k in d for k in keys):
             for k in keys:

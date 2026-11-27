@@ -212,6 +212,7 @@ SILVER     = data("silver.json")      # ⚪ stříbrňáky (silver) — měna mi
 STARDUST   = data("stardust.json")    # ✨ hvězdný prach (stardust) — z karet/duchů
 MINIGAME_CURRENCY = data("minigame_currency.json")  # přepínač měny miniher (silver/gold)
 DIARIES    = data("diaries.json")
+NOTES      = data("notes.json")
 ITEMS      = data("items.json")
 
 # ── Herní stav ────────────────────────────────────────────────

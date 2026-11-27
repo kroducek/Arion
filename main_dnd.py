@@ -33,6 +33,7 @@ if _data_dir_override:
     _paths.PROFILES         = _paths.data("profiles.json")
     _paths.ECONOMY          = _paths.data("economy.json")
     _paths.DIARIES          = _paths.data("diaries.json")
+    _paths.NOTES            = _paths.data("notes.json")
     _paths.ITEMS            = _paths.data("items.json")
     _paths.RP_ROOMS         = _paths.data("rp_rooms.json")
     _paths.QUESTS           = _paths.data("quests.json")
@@ -71,7 +72,7 @@ DND_COGS = [
     "src.core.dnd.quests",
     "src.core.dnd.roll_stats",
     "src.core.dnd.takedown",
-    "src.core.dnd.diary",
+    "src.core.dnd.notes",
     "src.core.dnd.snajpycounter",
     "src.core.dnd.achievements",
     "src.core.dnd.perks",
