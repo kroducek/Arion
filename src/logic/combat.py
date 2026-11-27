@@ -2895,6 +2895,41 @@ class CombatCog(commands.Cog):
 
     # ── /combat status ────────────────────────────────────────────────────────
 
+    @combat_info.command(name="list", description="[DM] Vypíše všechny uložené aktivní boje.")
+    @admin_only()
+    async def combat_list(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            combats = load_json(COMBAT_STATE, default={}) or {}
+        except Exception:
+            logging.exception("[combat] Nelze načíst seznam aktivních bojů")
+            await interaction.followup.send("❌ Stav bojů se nepodařilo načíst.", ephemeral=True)
+            return
+
+        entries = [(channel_id, combat) for channel_id, combat in combats.items()
+                   if isinstance(combat, dict)]
+        if not entries:
+            await interaction.followup.send("Žádné uložené aktivní boje.", ephemeral=True)
+            return
+
+        lines = [f"**Aktivní boje ({len(entries)})**"]
+        for channel_id, combat in entries:
+            stats = combat.get("stats", {})
+            player_ids = sorted({uid for actor in stats if (uid := _actor_uid(actor)) is not None})
+            lines.append(f"**<#{channel_id}>** (`{channel_id}`) · kolo {combat.get('round', 1)}"
+                         f" · hráči ve statistikách: {len(player_ids)}")
+            lines.extend(f"• <@{uid}>" for uid in player_ids)
+
+        page = ""
+        for line in lines:
+            if len(page) + len(line) + 1 > 2000:
+                await interaction.followup.send(
+                    page, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+                page = ""
+            page = f"{page}\n{line}" if page else line
+        await interaction.followup.send(
+            page, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
     @combat_info.command(name="status", description="Zobrazí aktuální pořadí a stats")
     async def combat_status(self, interaction: discord.Interaction):
         channel_id = interaction.channel_id
