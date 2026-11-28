@@ -31,8 +31,9 @@ mají vždy tvar "<uid>:<slot>" (po migraci legacy data sedí na "<uid>:1").
 import contextlib
 import contextvars
 import time
+import uuid
 from src.utils.paths import CHARACTERS
-from src.utils.json_utils import load_json, save_json
+from src.utils.json_utils import load_json, save_json, update_json
 
 # Max počet postav na účet (zatím 2 — lze později zvednout).
 MAX_CHARS = 2
@@ -152,26 +153,45 @@ def _next_slot(chars: dict) -> str | None:
             return str(i)
     return None
 
-def create_char(uid, name: str, make_active: bool = True) -> str | None:
+def create_char(uid, name: str, make_active: bool = True, *, request_rp_approval=False) -> str | None:
     """
     Vytvoří novou postavu. Vrátí slot ('1'/'2') nebo None když je účet plný.
     Pokud make_active (nebo je to první postava), rovnou ji nastaví jako aktivní
     — díky tomu onboarding zapisuje do nového slotu.
     """
-    data = _load()
     u = str(uid)
-    rec = data.setdefault(u, {"active": "1", "chars": {}})
-    slot = _next_slot(rec["chars"])
-    if slot is None:
-        return None
-    rec["chars"][slot] = {
-        "name": name.strip()[:MAX_NAME_LEN] or f"Postava {slot}",
-        "created_at": int(time.time()),
-    }
-    if make_active or len(rec["chars"]) == 1:
-        rec["active"] = slot
-    _save(data)
+    slot = None
+
+    def create(data):
+        nonlocal slot
+        rec = data.setdefault(u, {"active": "1", "chars": {}})
+        chars = rec["chars"]
+        slot = _next_slot(chars)
+        if slot is None:
+            return
+        char = {
+            "id": uuid.uuid4().hex,
+            "name": name.strip()[:MAX_NAME_LEN] or f"Postava {slot}",
+            "created_at": int(time.time()),
+        }
+        if request_rp_approval and chars:
+            char["rp_pending"] = True
+        chars[slot] = char
+        if make_active or len(chars) == 1:
+            rec["active"] = slot
+
+    update_json(CHARACTERS, create)
     return slot
+
+
+def approve_rp(uid, slot):
+    def approve(data):
+        char = data.get(str(uid), {}).get("chars", {}).get(str(slot))
+        if char is None or not char.get("rp_pending"):
+            raise ValueError("Postava neexistuje nebo nečeká na schválení.")
+        del char["rp_pending"]
+
+    update_json(CHARACTERS, approve)
 
 def ensure_active(uid, name: str = None) -> str:
     """

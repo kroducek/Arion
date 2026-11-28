@@ -30,7 +30,7 @@ from src.utils.paths import PROFILES as PROFILES_FILE
 from src.utils.json_utils import load_json, save_json
 from src.database.characters import pkey
 from src.database.profiles import load_profiles as _load_profiles, save_profiles as _save_profiles
-from src.utils.admin_gate import mark_admin
+from src.utils.admin_gate import admin_only, mark_admin
 
 logger = logging.getLogger(__name__)
 
@@ -406,12 +406,21 @@ def _rune_embed(runes_reg: dict, status_reg: dict) -> discord.Embed:
         proc = f" · proc {r['proc_roll']}" if r.get("proc_roll") else ""
         desc = f"{r['desc']}\n" if r.get("desc") else ""
         embed.add_field(
-            name=f"{r.get('emoji','🔹')} {r['name']}  ·  `{rid}`",
+            name=f"{r.get('emoji','🔹')} {r['name']}  ·  `{rid}`"[:256],
             value=(f"{desc}Status: **{s.get('name', r.get('status','?'))}** "
-                   f"({s.get('kind','?')})\n-# {dmg}{proc}"),
+                   f"({s.get('kind','?')})\n-# {dmg}{proc}")[:1024],
             inline=False)
     embed.set_footer(text="⚒️ runa = trvalé doručení statusu · zapisuje se na konkrétní zbraň")
     return embed
+
+
+async def send_rune_catalog(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    runes = list(load_runes().items())
+    statuses = load_statuses()
+    for start in range(0, max(1, len(runes)), 4):
+        await interaction.followup.send(
+            embed=_rune_embed(dict(runes[start:start + 4]), statuses), ephemeral=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -464,12 +473,13 @@ class BlacksmithCog(commands.Cog):
     blacksmith = app_commands.Group(name="blacksmith", description="Kovárna — runy a statusy.")
 
     # ── runy / statusy: výpis ──────────────────────────────────────────────────
-    @blacksmith.command(name="runes", description="Zobraz dostupné runy.")
+    @blacksmith.command(name="runes", description="[DM] Zobraz registr run.")
+    @admin_only()
     async def runes_cmd(self, interaction: discord.Interaction):
-        await interaction.response.send_message(
-            embed=_rune_embed(load_runes(), load_statuses()), ephemeral=True)
+        await send_rune_catalog(interaction)
 
-    @blacksmith.command(name="statuses", description="Zobraz registr statusů.")
+    @blacksmith.command(name="statuses", description="[DM] Zobraz registr statusů.")
+    @admin_only()
     async def statuses_cmd(self, interaction: discord.Interaction):
         await interaction.response.send_message(
             embed=_status_registry_embed(load_statuses()), ephemeral=True)

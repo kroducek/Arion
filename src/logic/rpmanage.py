@@ -64,12 +64,15 @@ class RPManage(commands.Cog):
 
     # ── /rp create ────────────────────────────────────────────────────────────
 
-    @rp.command(name="create", description="Vytvoří soukromou RP místnost s heslem.")
+    @rp.command(name="create", description="[DM] Vytvoří soukromou RP místnost s heslem.")
     @app_commands.describe(
         name="Název místnosti (např. temny-les)",
         heslo="Heslo pro vstup — sdílej jen s hráči",
     )
     async def rp_create(self, interaction: discord.Interaction, name: str, heslo: str):
+        if not _is_dm(interaction):
+            await interaction.response.send_message("RP místnosti zakládá DM.", ephemeral=True)
+            return
         await interaction.response.defer(ephemeral=True)
 
         heslo_key    = heslo.lower().strip()

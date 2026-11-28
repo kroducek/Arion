@@ -5,11 +5,14 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 
 from src.database import db
+from src.database.characters import MAX_CHARS
 
 DEATHS = "character_deaths.json"
 PROFILES = "profiles.json"
 CHARACTERS = "characters.json"
 COMBAT = "combat_state.json"
+ARCHIVE = "character_archive.json"
+QUESTS = "quests.json"
 DELAY = 600
 
 death_channel = ContextVar("death_channel", default=None)
@@ -70,7 +73,7 @@ def attach_message(key, death_id, message):
     return current is not None and current["id"] == death_id
 
 
-def _remove_character(conn, profiles, key, uid, slot, allow_last):
+def _remove_character(conn, profiles, key, uid, slot, allow_last, snapshot=None):
     registry = db._read_doc(conn, CHARACTERS, {})
     record = registry.get(str(uid), {})
     chars = record.get("chars", {})
@@ -78,7 +81,9 @@ def _remove_character(conn, profiles, key, uid, slot, allow_last):
         return None
 
     data_key = f"{uid}:{slot}"
-    keys = {key, data_key}
+    keys = dict.fromkeys((data_key, key))
+    if snapshot is not None and slot == "1":
+        keys[str(uid)] = None
     hit = []
     for doc, label in (
         (PROFILES, "profil"),
@@ -88,22 +93,28 @@ def _remove_character(conn, profiles, key, uid, slot, allow_last):
         ("player_perks.json", "perky"),
     ):
         data = profiles if doc == PROFILES else db._read_doc(conn, doc, {})
-        if keys.intersection(data):
+        if keys.keys() & data.keys():
             for entry in keys:
-                data.pop(entry, None)
+                if entry in data:
+                    value = data.pop(entry)
+                    if snapshot is not None:
+                        snapshot["documents"].setdefault(doc, value)
             hit.append(label)
             db._write_doc(conn, doc, data)
 
     for doc in ("reputation.json", "timeline.json"):
         data = db._read_doc(conn, doc, {})
         changed = False
-        for state in data.values():
+        for name, state in data.items():
             if not isinstance(state, dict):
                 continue
             players = state.get("players", {})
-            for entry in keys.intersection(players):
-                del players[entry]
-                changed = True
+            for entry in keys:
+                if entry in players:
+                    value = players.pop(entry)
+                    if snapshot is not None:
+                        snapshot["nested"].setdefault(doc, {}).setdefault(name, value)
+                    changed = True
         if changed:
             db._write_doc(conn, doc, data)
             if doc == "reputation.json":
@@ -117,6 +128,102 @@ def _remove_character(conn, profiles, key, uid, slot, allow_last):
             record["active"] = next(iter(chars))
         db._write_doc(conn, CHARACTERS, registry)
     return hit
+
+
+def _archive_character(conn, profiles, key, uid, slot, char, reason, *, died=False):
+    uid = str(uid)
+    character_id = char.get("id") or uuid.uuid4().hex
+    snapshot = dict(uid=uid, slot=slot, character={**char, "id": character_id},
+                    reason=reason, died=died, archived_at=int(time.time()),
+                    documents={}, nested={}, quests=[])
+    record = db._read_doc(conn, CHARACTERS, {}).get(uid, {})
+    active = str(record.get("active", "1")) == slot
+    _remove_character(conn, profiles, key, uid, slot, True, snapshot)
+    quests = db._read_doc(conn, QUESTS, {})
+    for name, quest in quests.items():
+        slots = quest.get("member_slots") or {}
+        members = quest.get("members", [])
+        if int(uid) in members and (str(slots.get(uid)) == slot or (uid not in slots and active)):
+            snapshot["quests"].append(name)
+            quest["members"] = [member for member in members if member != int(uid)]
+            slots.pop(uid, None)
+    if snapshot["quests"]:
+        db._write_doc(conn, QUESTS, quests)
+    archives = db._read_doc(conn, ARCHIVE, {})
+    archives[character_id] = snapshot
+    db._write_doc(conn, ARCHIVE, archives)
+    return character_id
+
+
+def archive_character(uid, slot, expected, reason):
+    uid, slot = str(uid), str(slot)
+    key = f"{uid}:{slot}"
+    with db.transaction() as conn:
+        record = db._read_doc(conn, CHARACTERS, {}).get(uid, {})
+        char = record.get("chars", {}).get(slot)
+        if char is None or char != expected:
+            raise ValueError("Postava se mezitím změnila. Otevři potvrzení znovu.")
+        deaths = db._read_doc(conn, DEATHS, {})
+        if key in deaths or (slot == "1" and uid in deaths):
+            raise ValueError("O postavě právě běží rozhodnutí o smrti.")
+        active = str(record.get("active", "1")) == slot
+        combats = db._read_doc(conn, COMBAT, {})
+        for combat in combats.values():
+            for actor, stat in combat.get("stats", {}).items():
+                profile_key = stat.get("profile_key")
+                if profile_key == key or (actor in (f"<@{uid}>", f"<@!{uid}>") and active
+                                          and profile_key in (None, uid)):
+                    raise ValueError("Postava je v aktivním boji. Nejdřív ji odeber z boje.")
+        return _archive_character(conn, db._read_doc(conn, PROFILES, {}), key, uid, slot, char, reason)
+
+
+def restore_character(character_id):
+    with db.transaction() as conn:
+        archives = db._read_doc(conn, ARCHIVE, {})
+        snapshot = archives.get(character_id)
+        if snapshot is None or snapshot.get("restored_at"):
+            raise ValueError("Archivovaná postava nebyla nalezena nebo už byla obnovena.")
+        uid = snapshot["uid"]
+        registry = db._read_doc(conn, CHARACTERS, {})
+        record = registry.setdefault(uid, {"chars": {}})
+        chars = record["chars"]
+        slot = next((str(n) for n in range(1, MAX_CHARS + 1) if str(n) not in chars), None)
+        if slot is None:
+            raise ValueError("Majitel nemá volný slot.")
+        key = f"{uid}:{slot}"
+        for doc, value in snapshot["documents"].items():
+            data = db._read_doc(conn, doc, {})
+            if key in data or (slot == "1" and uid in data):
+                raise ValueError("Ve volném slotu zůstala data jiné postavy.")
+            if doc == PROFILES and snapshot.get("died"):
+                value = {**value, "hp_cur": 1}
+            data[key] = value
+            db._write_doc(conn, doc, data)
+        for doc, entries in snapshot["nested"].items():
+            data = db._read_doc(conn, doc, {})
+            for name, value in entries.items():
+                players = data.setdefault(name, {}).setdefault("players", {})
+                if key in players or (slot == "1" and uid in players):
+                    raise ValueError("Ve volném slotu zůstala data jiné postavy.")
+                players[key] = value
+            db._write_doc(conn, doc, data)
+        quests = db._read_doc(conn, QUESTS, {})
+        skipped = []
+        for name in snapshot["quests"]:
+            quest = quests.get(name)
+            if quest is None or int(uid) in quest.get("members", []):
+                skipped.append(name)
+                continue
+            quest.setdefault("members", []).append(int(uid))
+            quest.setdefault("member_slots", {})[uid] = slot
+        if len(skipped) < len(snapshot["quests"]):
+            db._write_doc(conn, QUESTS, quests)
+        chars[slot] = snapshot["character"]
+        record.setdefault("active", slot)
+        snapshot["restored_at"] = int(time.time())
+        db._write_doc(conn, CHARACTERS, registry)
+        db._write_doc(conn, ARCHIVE, archives)
+        return uid, slot, snapshot["character"], skipped
 
 
 def _update_combat(conn, key, death, revive):
@@ -188,7 +295,10 @@ def resolve(key, death_id, action):
                 result = "revived"
             else:
                 _update_combat(conn, key, death, False)
-                _remove_character(conn, profiles, key, death["uid"], death["slot"], True)
+                uid, slot = str(death["uid"]), death["slot"]
+                record = db._read_doc(conn, CHARACTERS, {}).get(uid, {})
+                char = record.get("chars", {}).get(slot) or {"name": death.get("name") or "Postava"}
+                _archive_character(conn, profiles, key, uid, slot, char, "smrt", died=True)
                 result = "expired" if expired else "deleted"
         del deaths[key]
         db._write_doc(conn, DEATHS, deaths)

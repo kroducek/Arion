@@ -199,7 +199,6 @@ KRONIKA = {
                 "label": "RP místnosti",
                 "emoji": "🎭",
                 "commands": (
-                    "`/rp create` — Vytvoř soukromou RP místnost\n"
                     "`/rp join` — Vstup pomocí hesla\n"
                     "`/rp spectate` — Pozvi diváka (vidí + reaguje, nepíše)\n"
                     "`/rp unspectate` — Odeber diváka\n"
@@ -489,6 +488,42 @@ class _NavButton(discord.ui.Button):
         await self.view.handle(interaction, self.action, self.target)
 
 
+class VyvoleniView(discord.ui.View):
+    def __init__(self, user_id: int, lines: list[str]):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        page_size = 12
+        self.pages = [lines[i:i + page_size] for i in range(0, len(lines), page_size)]
+        self.page = 0
+        self.total = len(lines)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.user_id:
+            return True
+        await interaction.response.send_message("Otevři si vlastní seznam přes /vyvoleni list.", ephemeral=True)
+        return False
+
+    def embed(self):
+        self.previous.disabled = self.page == 0
+        self.next_page.disabled = self.page == len(self.pages) - 1
+        embed = discord.Embed(title="📖 Kniha osudu — Vyvolení",
+                              description="\n".join(self.pages[self.page]), color=0xFFD700)
+        embed.set_footer(text=f"{self.total} postav · strana {self.page + 1} / {len(self.pages)}")
+        return embed
+
+    @discord.ui.button(label="Zpět")
+    async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = max(0, self.page - 1)
+        await interaction.response.edit_message(embed=self.embed(), view=self,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
+    @discord.ui.button(label="Další")
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = min(len(self.pages) - 1, self.page + 1)
+        await interaction.response.edit_message(embed=self.embed(), view=self,
+                                                allowed_mentions=discord.AllowedMentions.none())
+
+
 class KronikaView(discord.ui.View):
     """Stavová view: HOME -> BOT -> KATEGORIE / ADMIN."""
     def __init__(self, author_id: int, *, bot_key=None, cat_key=None, admin=False):
@@ -731,48 +766,33 @@ class Aurionis(commands.Cog):
 
     vyvoleni_group = app_commands.Group(name="vyvoleni", description="Seznam vyvolených dobrodruhů")
 
-    @vyvoleni_group.command(name="list", description="Zobrazí všechny zaregistrované postavy")
+    @vyvoleni_group.command(name="list", description="Zobraz zaregistrované postavy")
     async def vyvoleni_list(self, interaction: discord.Interaction):
+        await interaction.response.defer()
         from src.database.profiles import load_profiles
-        data = load_profiles()
 
-        if not data:
-            await interaction.response.send_message("Zatím nikdo není zapsán v knize osudu.", ephemeral=True)
+        rows = {}
+        for key, profile in load_profiles().items():
+            uid, _, slot = key.partition(":")
+            if not uid.isdecimal() or not isinstance(profile, dict):
+                continue
+            identity = (int(uid), slot or "1")
+            if identity not in rows or slot:
+                rows[identity] = profile
+        if not rows:
+            await interaction.followup.send("Zatím nikdo není zapsán v knize osudu.")
             return
 
-        embed = discord.Embed(
-            title="📖 Kniha osudu — Vyvolení",
-            description="*Arion listuje tlustou živoucí knihou a čte jména nahlas...*",
-            color=0xFFD700
-        )
-
         lines = []
-        for uid, profile in data.items():
-            name = profile.get("name", "—")
-            rank = profile.get("rank", "F3")
-            member = interaction.guild.get_member(int(uid))
-            discord_tag = f" <@{uid}>" if member else ""
-            lines.append(f"**{name}** · `{rank}`{discord_tag}")
-
-        # Rozděl na chunky kvůli limitu pole (1024 znaků)
-        chunk, chunks = [], []
-        for line in lines:
-            if sum(len(l) + 1 for l in chunk) + len(line) > 950:
-                chunks.append(chunk)
-                chunk = []
-            chunk.append(line)
-        if chunk:
-            chunks.append(chunk)
-
-        for i, ch in enumerate(chunks):
-            embed.add_field(
-                name=f"Zapsaní dobrodruzi {f'({i+1})' if len(chunks) > 1 else ''}",
-                value="\n".join(ch),
-                inline=False
-            )
-
-        embed.set_footer(text=f"Celkem zapsáno: {len(data)} dobrodruhů | Aurionis: Act II")
-        await interaction.response.send_message(embed=embed)
+        for (uid, _), profile in rows.items():
+            name = discord.utils.escape_markdown(str(profile.get("name") or "—")[:100])
+            rank = str(profile.get("rank") or "F3")[:30]
+            member = interaction.guild and interaction.guild.get_member(uid)
+            mention = f" · {member.mention}" if member else ""
+            lines.append(f"**{name}** · {rank}{mention}")
+        view = VyvoleniView(interaction.user.id, lines)
+        await interaction.followup.send(
+            embed=view.embed(), view=view, allowed_mentions=discord.AllowedMentions.none())
 
     # --- TURNAJOVÝ SYSTÉM (Hvězdy) ---
 

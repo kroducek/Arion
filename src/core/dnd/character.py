@@ -9,7 +9,7 @@ Subpříkazy:
   /character list            — výpis postav + která je aktivní
   /character create <jmeno>  — vytvoří novou postavu (max 2) a spustí tutoriál
   /character switch <slot>   — přepne aktivní postavu (+ přejmenuje v rosteru)
-  /character delete <slot>   — smaže postavu (musí zůstat ≥1) + vyčistí její data
+  /character archive       — DM archivuje postavu a uvolní její slot
 """
 import discord
 from discord import app_commands
@@ -17,13 +17,15 @@ from discord.ext import commands
 
 from src.database.characters import (
     list_chars, char_count, active_name, get_active_slot,
-    create_char, switch_char,
+    create_char, switch_char, approve_rp,
     MAX_CHARS,
 )
-from src.database.deaths import delete_character
+from src.database import db
+from src.database.deaths import ARCHIVE, archive_character, restore_character
+from src.utils.admin_gate import admin_only
 
 
-class ConfirmDeleteView(discord.ui.View):
+class ConfirmArchiveView(discord.ui.View):
     def __init__(self, author_id: int):
         super().__init__(timeout=30)
         self.author_id = author_id
@@ -39,7 +41,7 @@ class ConfirmDeleteView(discord.ui.View):
         for c in self.children:
             c.disabled = True
 
-    @discord.ui.button(label="Smazat", style=discord.ButtonStyle.danger, emoji="🗑️")
+    @discord.ui.button(label="Archivovat", style=discord.ButtonStyle.danger, emoji="📦")
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.value = True
         self._disable()
@@ -64,23 +66,23 @@ class CharacterCog(commands.Cog):
 
     character = app_commands.Group(name="character", description="Správa tvých postav (max 2)")
 
-    async def _rename_roster(self, interaction: discord.Interaction, name):
+    async def _rename_roster(self, member: discord.Member, name):
         """Přejmenuje hráče v guild/party rosteru = nastaví Discord nick na aktivní postavu."""
         if not name:
             return
         try:
-            await interaction.user.edit(nick=name)
+            await member.edit(nick=name)
         except Exception:
             # chybí práva (Manage Nicknames) nebo je to majitel serveru — nevadí
             pass
 
-    async def _resync_rank_role(self, interaction: discord.Interaction):
+    async def _resync_rank_role(self, member: discord.Member):
         """Rank role sedí na Discord UŽIVATELI, ale rank je PER POSTAVA — po přepnutí
         (nebo smazání) aktivní postavy je proto nutné roli přerovnat na její rank."""
         try:
             from src.core.dnd.ranks import get_rank, sync_rank_role
-            rank, _ = get_rank(interaction.user.id)
-            await sync_rank_role(interaction.user, rank)
+            rank, _ = get_rank(member.id)
+            await sync_rank_role(member, rank)
         except Exception:
             pass          # rank cog nemusí být načtený / chybí role — nevadí
 
@@ -115,7 +117,8 @@ class CharacterCog(commands.Cog):
         for slot in sorted(chars.keys()):
             ch = chars[slot]
             mark = "   ⭐ **aktivní**" if slot == active else ""
-            lines.append(f"**{slot}.**  {ch.get('name', f'Postava {slot}')}{mark}")
+            pending = " · čeká na schválení RP" if ch.get("rp_pending") else ""
+            lines.append(f"**{slot}.**  {ch.get('name', f'Postava {slot}')}{mark}{pending}")
         embed = discord.Embed(
             title="📜 Tvé postavy",
             description="\n".join(lines),
@@ -132,7 +135,7 @@ class CharacterCog(commands.Cog):
         if char_count(uid) >= MAX_CHARS:
             await interaction.response.send_message(
                 f"Máš už maximální počet postav (**{MAX_CHARS}**). "
-                f"Nejdřív nějakou smaž přes `/character delete`.",
+                f"Požádej DM o archivaci některé postavy.",
                 ephemeral=True,
             )
             return
@@ -141,14 +144,14 @@ class CharacterCog(commands.Cog):
             await interaction.response.send_message("Zadej jméno postavy.", ephemeral=True)
             return
 
-        slot = create_char(uid, jmeno)  # nastaví nový slot jako aktivní → pkey teď míří na něj
+        slot = create_char(uid, jmeno, request_rp_approval=True)  # nastaví nový slot jako aktivní → pkey teď míří na něj
         if slot is None:
             await interaction.response.send_message(
                 "Nepodařilo se vytvořit postavu (plno).", ephemeral=True
             )
             return
 
-        await self._rename_roster(interaction, jmeno)
+        await self._rename_roster(interaction.user, jmeno)
 
         # achievement za druhou postavu (účtový — 2+ postavy na účtu)
         try:
@@ -196,71 +199,91 @@ class CharacterCog(commands.Cog):
             return
         switch_char(uid, slot_s)
         name = active_name(uid)
-        await self._rename_roster(interaction, name)
-        await self._resync_rank_role(interaction)
+        await self._rename_roster(interaction.user, name)
+        await self._resync_rank_role(interaction.user)
         await interaction.response.send_message(
             f"⭐ Přepnuto na **{name}** (slot {slot}).", ephemeral=True
         )
 
     # ──────────────────────────────────────────────────────────────────────────
-    @character.command(name="delete", description="Smaže postavu — NEVRATNÉ!")
-    @app_commands.describe(slot="Číslo slotu ke smazání")
-    @app_commands.autocomplete(slot=_slot_autocomplete)
-    async def delete_cmd(self, interaction: discord.Interaction, slot: int):
-        uid = interaction.user.id
-        slot_s = str(slot)
-        chars = list_chars(uid)
-        if slot_s not in chars:
-            await interaction.response.send_message(
-                f"Slot **{slot}** neexistuje.", ephemeral=True
-            )
+    @character.command(name="approve", description="[DM] Schval postavě vstup do RP.")
+    @admin_only()
+    async def approve_cmd(self, interaction: discord.Interaction, hrac: discord.Member, slot: int):
+        try:
+            approve_rp(hrac.id, slot)
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
             return
-        if len(chars) <= 1:
-            await interaction.response.send_message(
-                "Tohle je tvoje jediná postava — musí ti zůstat aspoň jedna. "
-                "Vytvoř nejdřív druhou, teprve pak můžeš tuhle smazat.",
-                ephemeral=True,
-            )
-            return
+        await interaction.response.send_message(
+            f"Postava ve slotu {slot} hráče {hrac.mention} může dokončit vstup do RP.",
+            ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
 
-        name = chars[slot_s].get("name", f"Postava {slot}")
-        view = ConfirmDeleteView(uid)
-        embed = discord.Embed(
-            title="🗑️ Smazat postavu?",
-            description=(
-                f"Chystáš se **nevratně** smazat **{name}** (slot {slot}) "
-                "i všechna její data — profil, zlaté, poznámky, perky a reputaci.\n\n"
-                "_Stříbro, hvězdný prach a achievementy zůstanou (jsou účtové)._"
-            ),
-            color=0xE74C3C,
-        )
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    @character.command(name="archive", description="[DM] Archivuj postavu a uvolni její slot.")
+    @admin_only()
+    async def archive_cmd(self, interaction: discord.Interaction, hrac: discord.Member, slot: int,
+                          duvod: app_commands.Range[str, 1, 200]):
+        char = list_chars(hrac.id).get(str(slot))
+        if char is None:
+            await interaction.response.send_message("Tento slot je prázdný.", ephemeral=True)
+            return
+        view = ConfirmArchiveView(interaction.user.id)
+        await interaction.response.send_message(
+            f"Archivovat **{char.get('name', 'Postava')}** hráče {hrac.mention} ze slotu {slot}?",
+            view=view, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
         await view.wait()
-
-        if view.value is not True:
-            msg = "Mazání zrušeno." if view.value is False else "Vypršel čas — mazání zrušeno."
-            await interaction.edit_original_response(content=msg, embed=None, view=None)
+        if not view.value:
+            await interaction.edit_original_response(content="Archivace zrušena.", view=None)
             return
-
-        hit = delete_character(uid, slot_s)
-        if hit is None:
-            await interaction.edit_original_response(
-                content="Postavu už nelze smazat.", embed=None, view=None
-            )
+        try:
+            character_id = archive_character(hrac.id, slot, char, duvod.strip() or "rozhodnutí DM")
+        except ValueError as exc:
+            await interaction.edit_original_response(content=str(exc), view=None)
             return
-        new_name = active_name(uid)
-        await self._rename_roster(interaction, new_name)
-        await self._resync_rank_role(interaction)
-
-        smazano = ", ".join(hit) if hit else "nic (postava byla prázdná)"
         await interaction.edit_original_response(
-            content=(
-                f"✅ Postava **{name}** smazána. Vyčištěno: {smazano}.\n"
-                f"Aktivní je teď **{new_name}**."
-            ),
-            embed=None,
-            view=None,
-        )
+            content=f"Postava archivována. ID: {character_id}.", view=None)
+        await self._rename_roster(hrac, active_name(hrac.id))
+        await self._resync_rank_role(hrac)
+
+    @character.command(name="archives", description="[DM] Zobraz archivované postavy a jejich ID.")
+    @admin_only()
+    async def archives_cmd(self, interaction: discord.Interaction,
+                           hrac: discord.Member | None = None, strana: app_commands.Range[int, 1] = 1):
+        await interaction.response.defer(ephemeral=True)
+        archives = db.load_doc(ARCHIVE, {})
+        rows = [(key, data) for key, data in archives.items()
+                if hrac is None or data["uid"] == str(hrac.id)]
+        rows.sort(key=lambda row: row[1]["archived_at"], reverse=True)
+        offset = (strana - 1) * 10
+        lines = []
+        for key, data in rows[offset:offset + 10]:
+            status = " · obnovena" if data.get("restored_at") else ""
+            lines.append(f"**{data['character'].get('name', 'Postava')}** · <@{data['uid']}>"
+                         f" · <t:{data['archived_at']}:d>{status}\n"
+                         f"{key} · {data['reason'][:200]}")
+        if not lines:
+            await interaction.followup.send("Na této stránce nejsou žádné archivované postavy.", ephemeral=True)
+            return
+        embed = discord.Embed(title="Archiv postav", description="\n\n".join(lines))
+        embed.set_footer(text=f"Strana {strana} / {(len(rows) + 9) // 10}")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @character.command(name="restore", description="[DM] Obnov archivovanou postavu původnímu hráči.")
+    @admin_only()
+    async def restore_cmd(self, interaction: discord.Interaction, id_postavy: str):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            uid, slot, char, skipped = restore_character(id_postavy.strip())
+        except ValueError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        message = f"**{char.get('name', 'Postava')}** obnovena hráči <@{uid}> do slotu {slot}."
+        if skipped:
+            message += f" {len(skipped)} questů už neexistuje nebo je má jiná postava hráče."
+        await interaction.followup.send(message, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+        member = interaction.guild.get_member(int(uid))
+        if member is not None:
+            await self._rename_roster(member, active_name(uid))
+            await self._resync_rank_role(member)
 
 
 async def setup(bot):

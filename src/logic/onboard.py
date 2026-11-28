@@ -60,7 +60,7 @@ def _attach(embed, fname):
     embed.set_image(url=f"attachment://{att}")
     return discord.File(path, filename=att)
 from src.utils.json_utils import load_json, save_json, update_json
-from src.database.characters import pkey, ensure_active
+from src.database.characters import pkey, ensure_active, get_active_slot, get_char
 
 # ── Konfigurace ───────────────────────────────────────────────────────────────
 
@@ -1975,9 +1975,13 @@ class GuildHubView(TutorialView):
         if self.portrait_url:
             embed.set_thumbnail(url=self.portrait_url)
         embed.set_footer(text="⭐ Aurionis")
+        uid = interaction.user.id
+        slot = get_active_slot(uid)
+        character_id = (get_char(uid, slot) or {}).get("id")
         await interaction.response.edit_message(
             embed=embed,
-            view=FinalEnterView(dest_key=self.dest_key, portrait_url=self.portrait_url),
+            view=FinalEnterView(dest_key=self.dest_key, portrait_url=self.portrait_url,
+                                slot=slot, character_id=character_id),
             attachments=[],
         )
 
@@ -2471,15 +2475,28 @@ DEST_HUB_WELCOME = {
 }
 
 class FinalEnterView(TutorialView):
-    def __init__(self, dest_key: str, portrait_url: str | None = None):
+    def __init__(self, dest_key: str, slot: str, character_id: str | None,
+                 portrait_url: str | None = None):
         super().__init__(timeout=1800)
         self.dest_key     = dest_key
+        self.slot         = slot
+        self.character_id = character_id
         self.portrait_url = portrait_url
         dest = DESTINATIONS[dest_key]
         self.enter_btn.label = f"Vstoupit — {dest['emoji']} {dest['name']}"
 
     @discord.ui.button(label="Vstoupit", style=discord.ButtonStyle.primary, emoji="🚪")
     async def enter_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        uid = interaction.user.id
+        char = get_char(uid, self.slot)
+        if char is None or char.get("id") != self.character_id or get_active_slot(uid) != self.slot:
+            await interaction.response.send_message(
+                "Pro dokončení tutoriálu přepni na postavu, se kterou jsi ho začal/a.", ephemeral=True)
+            return
+        if char.get("rp_pending"):
+            await interaction.response.send_message(
+                "Tahle postava zatím čeká na schválení vstupu do RP od DM.", ephemeral=True)
+            return
         # ── Přiřaď roli destinace ──────────────────────────────────────────
         role_id = DEST_ROLE_IDS.get(self.dest_key)
         if role_id:

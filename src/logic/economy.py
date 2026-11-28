@@ -336,6 +336,12 @@ async def _ac_pooltype(
 
 # ── Shop embed ────────────────────────────────────────────────────────────────
 
+def _is_blacksmith(shop: dict, preset_id: str = "") -> bool:
+    name = shop.get("nazev", "").casefold()
+    return ("kovar" in shop.get("pool_types", []) or "kovar" in preset_id.casefold()
+            or "kovář" in name or "kovár" in name)
+
+
 def _build_shop_embed(shop: dict, is_open: bool) -> discord.Embed:
     embed = discord.Embed(
         title=f"🏪  {shop['nazev']}",
@@ -357,6 +363,12 @@ def _build_shop_embed(shop: dict, is_open: bool) -> discord.Embed:
     if shop.get("ostatni"):
         embed.add_field(name="🧪  Ostatní", value=shop["ostatni"], inline=False)
 
+    if is_open and _is_blacksmith(shop) and len(items) >= ShopView.MAX_BUTTONS:
+        from src.core.dnd.blacksmith import load_runes
+        names = ", ".join(rune["name"] for rune in load_runes().values())
+        if names:
+            embed.add_field(name="⚒️ Runy k vyrytí", value=names[:1024], inline=False)
+
     embed.set_footer(text="⭐ Aurionis  ·  Klikni na tlačítko pro nákup" if is_open else "⭐ Aurionis")
     return embed
 
@@ -369,9 +381,9 @@ class ShopView(discord.ui.View):
     def __init__(self, preset_id: str, shop: dict):
         super().__init__(timeout=None)
         self.preset_id = preset_id
-        for i, item in enumerate(shop_display_items(shop)):
-            if i >= self.MAX_BUTTONS:
-                break         # radši uříznout než spadnout při otevírání shopu
+        items = shop_display_items(shop)
+        smith = _is_blacksmith(shop, preset_id) and len(items) < self.MAX_BUTTONS
+        for i, item in enumerate(items[:self.MAX_BUTTONS]):
             tag = "  ✨" if item.get("_unique") else ""
             btn = discord.ui.Button(
                 label=f"{item['emoji']}  {item['name']}  ·  {item['price']} zl.{tag}",
@@ -381,16 +393,21 @@ class ShopView(discord.ui.View):
             )
             btn.callback = self._make_callback(i, item["name"])
             self.add_item(btn)
+        if smith:
+            runes = discord.ui.Button(label="Runy k vyrytí", emoji="⚒️",
+                                      custom_id=f"gshop_runes_{preset_id}")
+            runes.callback = self._runes_callback
+            self.add_item(runes)
 
         # Dropdown „📋 Detail předmětu" — jen položky napojené na items DB
         # (ty mají item_id → dají se prohlédnout stejně jako v inventáři).
         # Select zabere celou řadu; když jsou tlačítka na 5 řadách (>20 ks),
         # už se nevejde → detail vynecháme, ať /gshop open nespadne.
-        num_buttons = min(len(shop_display_items(shop)), self.MAX_BUTTONS)
+        num_buttons = min(len(items), self.MAX_BUTTONS) + int(smith)
         if num_buttons <= 20:
             detail_opts = []
             seen_ids = set()
-            for item in shop_display_items(shop):
+            for item in items:
                 iid = item.get("item_id")
                 if not iid or iid in seen_ids:
                     continue
@@ -409,6 +426,14 @@ class ShopView(discord.ui.View):
                 )
                 sel.callback = self._detail_callback
                 self.add_item(sel)
+
+    async def _runes_callback(self, interaction: discord.Interaction):
+        from src.core.dnd.blacksmith import send_rune_catalog
+        shop = _load_shops().get(self.preset_id)
+        if not shop or not shop.get("open"):
+            await interaction.response.send_message("Kovárna je zavřená.", ephemeral=True)
+            return
+        await send_rune_catalog(interaction)
 
     async def _detail_callback(self, interaction: discord.Interaction):
         try:

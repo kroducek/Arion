@@ -2234,14 +2234,6 @@ class Inventory(commands.Cog):
         await interaction.followup.send(
             f"✅ Předal jsi **{name}**{qty_str} → **{member.display_name}**.")
 
-    # ── /inv-use ──────────────────────────────────────────────────────────────
-    @app_commands.command(name="inv-use", description="Použije consumable item.")
-    @app_commands.describe(item="Consumable item z inventáře.")
-    @app_commands.autocomplete(item=_ac_consumable_item)
-    async def inv_use(self, interaction: discord.Interaction, item: str):
-        await interaction.response.defer()
-        await self._use_item(interaction, item)
-
     # ── /use ──────────────────────────────────────────────────────────────────
 
     @app_commands.command(name="use", description="Použij consumable item ze svého inventáře.")
@@ -2259,12 +2251,11 @@ class Inventory(commands.Cog):
         item: str,
         kategorie: Optional[app_commands.Choice[str]] = None,
     ):
-        """Stejná logika jako /inv-use, ale s filtrovaným autocomplete."""
         await interaction.response.defer()
         await self._use_item(interaction, item)
 
     async def _use_item(self, interaction: discord.Interaction, item: str) -> None:
-        """Použití consumable itemu — sdílené pro /inv-use i /use."""
+        """Použití spotřebního předmětu z inventáře."""
         profiles = _load_profiles()
         key = _pk(profiles, interaction.user.id)
         profile = profiles.get(key)
@@ -2406,15 +2397,18 @@ class Inventory(commands.Cog):
 
     @app_commands.command(
         name="inv-ammo",
-        description="Uprav počet munice v Toulci (např. −1 po výstřelu).")
+        description="Odečti vystřílenou munici mimo combat.")
     @app_commands.describe(
         item="Munice z Toulce.",
-        number="Změna počtu: záporné odebere (−1 po výstřelu), kladné přidá.",
+        number="Počet odebraných kusů jako záporné číslo (−1 po výstřelu).",
     )
     @app_commands.autocomplete(item=_ac_ammo_item)
     async def inv_ammo(self, interaction: discord.Interaction,
-                       item: str, number: int = -1):
+                       item: str, number: app_commands.Range[int, None, -1] = -1):
         await interaction.response.defer(ephemeral=True)
+        if in_active_combat(interaction.user.id):
+            await interaction.followup.send("V boji vyber munici přímo při útoku.")
+            return
         profiles = _load_profiles()
         profile  = profiles.get(_pk(profiles, interaction.user.id))
         if not profile:
@@ -2444,10 +2438,8 @@ class Inventory(commands.Cog):
             await interaction.followup.send(f"❌ **{nm}** nemáš.")
             return
 
-        if number < 0:
-            _remove_from_inventory(store, item, min(have, -number))
-        elif number > 0:
-            _add_to_inventory(store, item, number)
+        used = min(have, -number)
+        _remove_from_inventory(store, item, used)
 
         have_after = _count()
         _save_profiles(profiles)
@@ -2455,8 +2447,7 @@ class Inventory(commands.Cog):
         if have_after <= 0:
             await interaction.followup.send(f"🏹 **{name}** došla — odebrána z Toulce.")
         else:
-            delta = f"−{abs(number)}" if number < 0 else f"+{number}"
-            await interaction.followup.send(f"🏹 **{name}**  ×{have_after}  ({delta})")
+            await interaction.followup.send(f"🏹 **{name}**  ×{have_after}  (−{used})")
 
     # ══════════════════════════════════════════════════════════════════════════
     # DATABASE COMMANDY (DM only)
