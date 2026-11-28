@@ -133,6 +133,12 @@ def add_rank_points(user_id: int, pts: int) -> dict | None:
     if p is None:
         return None
 
+    result = award_rank_to_profile(p, pts)
+    _save(data)
+    return result
+
+
+def award_rank_to_profile(p, pts: int) -> dict:
     rank   = p.get("rank", STARTING_RANK)
     points = int(p.get("rank_points", 0) or 0) + max(0, int(pts))
     old    = rank
@@ -152,8 +158,6 @@ def add_rank_points(user_id: int, pts: int) -> dict | None:
 
     p["rank"]        = rank
     p["rank_points"] = points
-    _save(data)
-
     return {
         "old_rank":     old,
         "new_rank":     rank,

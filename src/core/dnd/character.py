@@ -174,7 +174,7 @@ class CharacterCog(commands.Cog):
             color=0xFFD700,
         )
         await interaction.response.send_message(
-            embed=embed, view=TutorialPartOneView(), ephemeral=True
+            embed=embed, view=TutorialPartOneView(uid), ephemeral=True
         )
 
     # ──────────────────────────────────────────────────────────────────────────

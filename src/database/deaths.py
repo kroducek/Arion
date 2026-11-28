@@ -143,8 +143,18 @@ def _archive_character(conn, profiles, key, uid, slot, char, reason, *, died=Fal
     for name, quest in quests.items():
         slots = quest.get("member_slots") or {}
         members = quest.get("members", [])
-        if int(uid) in members and (str(slots.get(uid)) == slot or (uid not in slots and active)):
-            snapshot["quests"].append(name)
+        assignments = quest.get("assignments")
+        legacy = assignments is None and int(uid) in members and (
+            str(slots.get(uid)) == slot or (uid not in slots and active))
+        if not legacy and (assignments is None or character_id not in assignments):
+            continue
+        snapshot["quests"].append({"name": name, "id": quest.get("id")})
+        if assignments is not None:
+            del assignments[character_id]
+        remaining = next((a for a in (assignments or {}).values() if str(a["uid"]) == uid), None)
+        if remaining:
+            slots[uid] = remaining["slot"]
+        else:
             quest["members"] = [member for member in members if member != int(uid)]
             slots.pop(uid, None)
     if snapshot["quests"]:
@@ -175,6 +185,24 @@ def archive_character(uid, slot, expected, reason):
                                           and profile_key in (None, uid)):
                     raise ValueError("Postava je v aktivním boji. Nejdřív ji odeber z boje.")
         return _archive_character(conn, db._read_doc(conn, PROFILES, {}), key, uid, slot, char, reason)
+
+
+def archive_account_characters(uid, expected, reason):
+    uid = str(uid)
+    with db.transaction() as conn:
+        record = db._read_doc(conn, CHARACTERS, {}).get(uid, {})
+        if not expected or record.get("chars") != expected:
+            raise ValueError("Seznam postav se změnil. Otevři nové potvrzení.")
+        keys = {uid, *(f"{uid}:{slot}" for slot in expected)}
+        if keys & db._read_doc(conn, DEATHS, {}).keys():
+            raise ValueError("Nejdřív dořeš čekající rozhodnutí o smrti.")
+        for combat in db._read_doc(conn, COMBAT, {}).values():
+            for actor, stat in combat.get("stats", {}).items():
+                if stat.get("profile_key") in keys or actor in (f"<@{uid}>", f"<@!{uid}>"):
+                    raise ValueError("Před Takedown ukonči aktivní boje těchto postav.")
+        profiles = db._read_doc(conn, PROFILES, {})
+        return [_archive_character(conn, profiles, f"{uid}:{slot}", uid, slot, char, reason)
+                for slot, char in expected.items()]
 
 
 def restore_character(character_id):
@@ -209,12 +237,15 @@ def restore_character(character_id):
             db._write_doc(conn, doc, data)
         quests = db._read_doc(conn, QUESTS, {})
         skipped = []
-        for name in snapshot["quests"]:
+        for link in snapshot["quests"]:
+            name = link if isinstance(link, str) else link["name"]
             quest = quests.get(name)
-            if quest is None or int(uid) in quest.get("members", []):
+            if not quest or (isinstance(link, dict) and link.get("id") and quest.get("id") != link["id"]):
                 skipped.append(name)
                 continue
-            quest.setdefault("members", []).append(int(uid))
+            if int(uid) not in quest.setdefault("members", []):
+                quest["members"].append(int(uid))
+            quest.setdefault("assignments", {})[character_id] = {"uid": int(uid), "slot": slot}
             quest.setdefault("member_slots", {})[uid] = slot
         if len(skipped) < len(snapshot["quests"]):
             db._write_doc(conn, QUESTS, quests)

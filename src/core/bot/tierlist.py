@@ -8,7 +8,7 @@ from discord import app_commands
 from typing import Optional
 import os
 
-from src.utils.json_utils import load_json, save_json
+from src.utils.json_utils import load_json, save_json, update_json
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -416,6 +416,9 @@ class TierlistCog(commands.Cog):
             return
 
         tl = data[key]
+        if tl.get("author_id") != interaction.user.id and not interaction.user.guild_permissions.manage_guild:
+            await interaction.response.send_message("Only the author or an admin can remove items.", ephemeral=True)
+            return
         old_tier, exact_name = _find_item(tl, item)
 
         if not old_tier:
@@ -425,13 +428,44 @@ class TierlistCog(commands.Cog):
             )
             return
 
+        index = tl["tiers"][old_tier].index(exact_name)
         tl["tiers"][old_tier].remove(exact_name)
-        tl.get("votes", {}).pop(exact_name.lower(), None)
+        votes = tl.get("votes", {}).pop(exact_name.lower(), None)
         save_tierlists(data)
 
+        view = discord.ui.View(timeout=120)
+        button = discord.ui.Button(label="Undo", style=discord.ButtonStyle.secondary)
+        author = tl.get("author_id")
+
+        async def undo(click):
+            if click.user.id != interaction.user.id:
+                await click.response.send_message("This undo belongs to the original moderator.", ephemeral=True)
+                return
+
+            restored = False
+
+            def restore(current):
+                nonlocal restored
+                record = current.get(key)
+                if (record is None or record.get("author_id") != author
+                        or old_tier not in record["tiers"] or _find_item(record, exact_name)[0]):
+                    return
+                record["tiers"][old_tier].insert(index, exact_name)
+                if votes is not None:
+                    record.setdefault("votes", {})[exact_name.lower()] = votes
+                restored = True
+
+            update_json(DATA_PATH, restore)
+            await click.response.edit_message(
+                embed=None, content="Item and votes restored." if restored else "The item can no longer be restored.",
+                view=None)
+            view.stop()
+
+        button.callback = undo
+        view.add_item(button)
         await interaction.response.send_message(
-            embed=discord.Embed(description=f"🗑️ **{exact_name}** removed from **{tl['name']}**.", color=0x2ECC71)
-        )
+            embed=discord.Embed(description=f"🗑️ **{exact_name}** removed from **{tl['name']}**.", color=0x2ECC71),
+            view=view)
 
     # ── /tierlist delete ──────────────────────────────────────────────────────
 

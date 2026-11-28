@@ -9,6 +9,7 @@ from discord.ext import commands
 from discord import app_commands, ui
 from src.utils.paths import COMBAT_STATE
 from src.utils.json_utils import load_json, save_json, update_json
+from src.database import db
 from src.database.characters import active_name as _active_char_name
 from src.database.deaths import in_channel, pending_deaths
 from src.database.profiles import (
@@ -1459,21 +1460,38 @@ class CombatCog(commands.Cog):
         key = str(channel.id)
         summary = None
 
-        def finish(raw):
+        def finish(docs):
             nonlocal summary
             summary = None
+            raw = docs[attack_flow.COMBAT]
             current = raw.get(key)
             if current is None:
-                return raw
+                return
             current_side = wipeout_side(current)
             if current_side == "npc" and not current.get(PENDING_KEY):
                 summary = (current_side, raw.pop(key))
+                profiles = docs[attack_flow.PROFILES_DOC]
+                current["profile_stamps"] = {}
+                current["character_ids"] = {}
+                registry = docs["characters.json"]
+                for actor, stat in current.get("stats", {}).items():
+                    uid = _actor_uid(actor)
+                    if uid is None:
+                        continue
+                    record = registry.get(str(uid), {})
+                    slot = str(record.get("active", "1"))
+                    profile_key = stat.get("profile_key") or f"{uid}:{slot}"
+                    stat["profile_key"] = profile_key
+                    current["profile_stamps"][profile_key] = attack_flow.profile_stamp(profiles.get(profile_key))
+                    original_slot = profile_key.partition(":")[2] or "1"
+                    current["character_ids"][profile_key] = record.get("chars", {}).get(original_slot)
+                docs[attack_flow.CLOSED_COMBAT][key] = current
             elif current_side == "players" and not current.get("summary_sent"):
                 current["summary_sent"] = True
                 summary = (current_side, current)
-            return raw
 
-        update_json(COMBAT_STATE, finish)
+        db.update_documents([attack_flow.COMBAT, attack_flow.CLOSED_COMBAT,
+                             attack_flow.PROFILES_DOC, "characters.json"], finish)
         if summary is not None:
             self.reload_state()
             finished_side, snapshot = summary
@@ -1621,7 +1639,8 @@ class CombatCog(commands.Cog):
         return out[:25]
 
     async def _ac_npc_kill(self, interaction: discord.Interaction, current: str):
-        combat = self.active_combats.get(interaction.channel_id)
+        combat = self.active_combats.get(interaction.channel_id) or db.load_doc(
+            attack_flow.CLOSED_COMBAT, {}).get(str(interaction.channel_id))
         if not combat:
             return []
         cur = current.lower()
@@ -2441,7 +2460,7 @@ class CombatCog(commands.Cog):
                           npc: str, xp: int, note: str = ""):
         combat = self.active_combats.get(interaction.channel_id)
         if not combat:
-            return await interaction.response.send_message("❌ V této místnosti neběží combat.", ephemeral=True)
+            return await self._reward_closed_combat(interaction, hrac, npc, xp, note)
         stats = combat.get("stats", {})
         if npc not in stats or is_player(npc) or npc not in combat.get("order", []):
             return await interaction.response.send_message("❌ Vybrané NPC není v tomto combatu.", ephemeral=True)
@@ -2494,6 +2513,42 @@ class CombatCog(commands.Cog):
         )
         await self.check_wipeout(interaction.channel, combat)
 
+    async def _reward_closed_combat(self, interaction, member, npc, xp, note):
+        from src.logic.stats import _profile, award_xp_to_profile
+
+        key = str(interaction.channel_id)
+
+        def reward(docs):
+            combat = docs[attack_flow.CLOSED_COMBAT].get(key)
+            if combat is None or key in docs[attack_flow.COMBAT]:
+                raise ValueError("Není dostupný žádný uzavřený boj.")
+            if xp < 0 or is_player(npc) or not is_down(combat, npc):
+                raise ValueError("XP musí být nezáporné a NPC musí být poražené.")
+            rewarded = combat.setdefault("rewarded_npcs", [])
+            if npc in rewarded:
+                raise ValueError("Za toto NPC už byly XP přiděleny.")
+            profile_key = next((stat.get("profile_key") for actor, stat in combat["stats"].items()
+                                if _actor_uid(actor) == member.id), None)
+            if profile_key is None:
+                raise ValueError("Hráč nebyl účastníkem tohoto boje.")
+            slot = profile_key.partition(":")[2] or "1"
+            char = docs["characters.json"].get(str(member.id), {}).get("chars", {}).get(slot)
+            profiles = docs[attack_flow.PROFILES_DOC]
+            if (char is None or combat["character_ids"].get(profile_key) != char
+                    or profile_key not in profiles):
+                raise ValueError("Původní postava v tomto slotu už není dostupná.")
+            if xp:
+                award_xp_to_profile(_profile(profiles, profile_key), xp, note.strip())
+            rewarded.append(npc)
+
+        try:
+            db.update_documents([attack_flow.COMBAT, attack_flow.CLOSED_COMBAT,
+                                 attack_flow.PROFILES_DOC, "characters.json"], reward)
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        await interaction.response.send_message(f"**{npc}** · {member.mention} získává **{xp:,} XP**.")
+
     # ── /combat end ───────────────────────────────────────────────────────────
 
     @combat_group.command(name="end", description="Ukončí combat a vymaže data")
@@ -2517,6 +2572,11 @@ class CombatCog(commands.Cog):
         description="Shrnutí boje — kdo udělil a schytal nejvíc damage.")
     async def combat_summary(self, interaction: discord.Interaction):
         combat = self.active_combats.get(interaction.channel_id)
+        if not combat:
+            closed = db.load_doc(attack_flow.CLOSED_COMBAT, {}).get(str(interaction.channel_id))
+            if closed and is_dm(interaction):
+                return await interaction.response.send_message(
+                    embed=build_summary_embed(closed, "📊  Poslední uzavřený boj"), ephemeral=True)
         if not combat:
             return await interaction.response.send_message(
                 "❌ *Zde neběží combat.*", ephemeral=True)
@@ -2864,11 +2924,16 @@ class CombatCog(commands.Cog):
         description="[GM] Vrátí poslední změnu; u útoku i zdroje obou stran.")
     @admin_only()
     async def combat_undo(self, interaction: discord.Interaction):
+        closed = interaction.channel_id not in self.active_combats
         try:
-            event = attack_flow.undo(interaction.channel_id)
+            event = attack_flow.undo(interaction.channel_id, closed=closed)
         except ValueError as e:
             return await interaction.response.send_message(str(e), ephemeral=True)
         if event:
+            if closed:
+                await interaction.response.send_message("Poslední změna v uzavřeném boji byla vrácena.",
+                                                        ephemeral=True)
+                return
             self.reload_state()
             await interaction.response.send_message(console('↩️ Rozhodnutí vráceno včetně zdrojů obou stran. Hody zůstávají v logu.'))
             combat = self.active_combats[interaction.channel_id]

@@ -30,7 +30,11 @@ from discord.ext import commands
 
 from src.utils.json_utils import load_json, save_json
 from src.utils.paths import ECONOMY as ECONOMY_FILE, ASSETS_DIR, data
-from src.logic.economy import minigame_file, minigame_coin, get_minigame_currency, COIN_GOLD, COIN_SILVER
+from src.logic.economy import get_minigame_currency, coin, COIN_GOLD, COIN_SILVER
+from src.database import db
+from src.database.characters import character_id, pkey
+from src.database.deaths import ARCHIVE
+from uuid import uuid4
 
 SCORES_FILE = data("blackjack_scores.json")
 COIN = "<:goldcoin:1490171741237018795>"
@@ -53,24 +57,68 @@ except Exception:
 # EKONOMIKA + LEADERBOARD
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _load_eco() -> dict:        return load_json(minigame_file(), {})
-def _save_eco(d: dict):         save_json(minigame_file(), d)
-def _eco_get(uid: int) -> int:  return _load_eco().get(str(uid), 0)
+BET_DOC = "blackjack_bets.json"
+WALLETS = {"gold": "economy.json", "silver": "silver.json"}
 
 
-def _eco_add(uid: int, amount: int):
-    eco = _load_eco(); k = str(uid)
-    eco[k] = eco.get(k, 0) + amount
-    _save_eco(eco)
-
-
-def _eco_deduct(uid: int, amount: int) -> bool:
-    eco = _load_eco(); k = str(uid)
-    if eco.get(k, 0) < amount:
+def _set_stake(bet_id, key, wallet, amount):
+    if amount <= 0:
         return False
-    eco[k] = eco.get(k, 0) - amount
-    _save_eco(eco)
-    return True
+    uid, _, slot = key.partition(":")
+    identity = character_id(uid, slot) if wallet == WALLETS["gold"] and slot else None
+
+    def change(docs):
+        char = docs["characters.json"].get(uid, {}).get("chars", {}).get(slot)
+        if identity and (char is None or char.get("id") != identity):
+            return False
+        bets = docs[BET_DOC]
+        old = bets.get(bet_id)
+        if old:
+            key_used, wallet_used, previous, *old_identity = old
+            if (key, wallet) != (key_used, wallet_used) or (old_identity and old_identity != [identity]):
+                return False
+        else:
+            previous = 0
+        balances = docs[wallet]
+        remaining = balances.get(key, 0) + previous - amount
+        if remaining < 0:
+            return False
+        balances[key] = remaining
+        bets[bet_id] = [key, wallet, amount, identity]
+        return True
+
+    return db.update_documents([BET_DOC, wallet, "characters.json"], change)
+
+
+def _settle_stake(bet_id, payout=None):
+    def settle(docs):
+        stake = docs[BET_DOC].pop(bet_id, None)
+        if stake is not None:
+            key, wallet, amount, *identity = stake
+            credit = amount if payout is None else payout
+            if identity and identity[0]:
+                uid, _, _ = key.partition(":")
+                chars = docs["characters.json"].get(uid, {}).get("chars", {})
+                slot = next((slot for slot, char in chars.items() if char.get("id") == identity[0]), None)
+                if slot:
+                    key = f"{uid}:{slot}"
+                else:
+                    archive = docs[ARCHIVE].get(identity[0])
+                    if archive is None:
+                        docs[BET_DOC][bet_id] = stake
+                        return
+                    values = archive.setdefault("documents", {})
+                    values[wallet] = values.get(wallet, 0) + credit
+                    return
+            balances = docs[wallet]
+            balances[key] = balances.get(key, 0) + credit
+
+    db.update_documents([BET_DOC, *WALLETS.values(), "characters.json", ARCHIVE], settle)
+
+
+def _refund_interrupted_games():
+    for bet_id in db.load_doc(BET_DOC, {}):
+        _settle_stake(bet_id)
 
 
 def _load_scores() -> dict:  return load_json(SCORES_FILE, {})
@@ -340,7 +388,7 @@ class BetModal(discord.ui.Modal):
         self.table = table
         self.uid = uid
         # Label podle měny hry — dřív bylo natvrdo „v zlaťácích" i na stříbrném stole
-        cur   = get_minigame_currency()
+        cur   = table.currency
         cname = "zlaťácích" if cur == "gold" else "stříbrňácích"
         self.amount = discord.ui.TextInput(
             label=f"Sázka v {cname}",
@@ -418,6 +466,9 @@ class BlackjackTable:
         self.host_id = host.id
         self.phase = "lobby"            # lobby | betting | playing | ended
         self.round = 0
+        self.table_id = uuid4().hex
+        self.currency = get_minigame_currency()
+        self.wallet_keys = {}
         self.seats = {host.id: Seat(host.id, host.display_name)}
         self.order = [host.id]                 # pořadí míst
         self.pending = []                      # (uid, name) noví během hry → další kolo
@@ -467,7 +518,7 @@ class BlackjackTable:
         if self.phase == "playing" and uid in self.active and not self.seats[uid].done:
             return "Můžeš odejít až po skončení kola."
         if self.phase == "betting" and uid in self.seats and self.seats[uid].bet > 0:
-            _eco_add(uid, self.seats[uid].bet)
+            _settle_stake(self._bet_id(uid))
         self.pending = [p for p in self.pending if p[0] != uid]
         if uid in self.seats:
             del self.seats[uid]
@@ -492,27 +543,28 @@ class BlackjackTable:
         if uid not in self.seats:
             return False, "Nejsi u stolu — nejdřív se připoj."
         seat = self.seats[uid]
-        prev = seat.bet
-        if prev > 0:
-            _eco_add(uid, prev)
-        if _eco_get(uid) < value:
-            if prev > 0:
-                _eco_deduct(uid, prev)
-            return False, f"❌ Nemáš dost! Potřebuješ **{value}** {minigame_coin()}."
-        _eco_deduct(uid, value)
+        key = self.wallet_keys.get(uid) or (pkey(uid) if self.currency == "gold" else str(uid))
+        if not _set_stake(self._bet_id(uid), key, WALLETS[self.currency], value):
+            return False, f"❌ Nemáš dost na sázku **{value}** {coin(self.currency)}."
+        self.wallet_keys[uid] = key
         seat.bet = value
         seat.stake = value
-        return True, f"✅ Vsazeno **{value}** {minigame_coin()}."
+        return True, f"✅ Vsazeno **{value}** {coin(self.currency)}."
+
+    def _bet_id(self, uid):
+        return f"{self.table_id}:{self.round}:{uid}"
 
     def _refund_all_bets(self):
         for seat in self.seats.values():
             if seat.bet > 0:
-                _eco_add(seat.uid, seat.bet)
+                _settle_stake(self._bet_id(seat.uid))
                 seat.bet = 0
                 seat.stake = 0
 
     # ── fáze: spuštění / sázení ──────────────────────────────────────────────────
     def start_betting(self):
+        self.currency = get_minigame_currency()
+        self.wallet_keys.clear()
         self._merge_pending()
         self.round += 1
         self.phase = "betting"
@@ -598,8 +650,9 @@ class BlackjackTable:
             return "Zdvojit jde jen na začátku tahu."
         if seat.bet <= 0:
             return "Nemáš sázku."
-        if not _eco_deduct(uid, seat.bet):
-            return f"❌ Nemáš dalších **{seat.bet}** {minigame_coin()} na zdvojení."
+        if not _set_stake(self._bet_id(uid), self.wallet_keys[uid],
+                          WALLETS[self.currency], seat.stake + seat.bet):
+            return f"❌ Nemáš dalších **{seat.bet}** {coin(self.currency)} na zdvojení."
         seat.stake += seat.bet
         seat.doubled = True
         seat.hand.append(self._draw())
@@ -645,15 +698,14 @@ class BlackjackTable:
                 payout = seat.stake
             else:
                 payout = 0
-            if payout > 0:
-                _eco_add(uid, payout)
+            _settle_stake(self._bet_id(uid), payout)
             profit = payout - seat.stake
-            _record_result(uid, profit, won=seat.outcome in ("win", "bj"))
+            _record_result(uid, profit, won=seat.outcome in ("win", "bj"), currency=self.currency)
 
             icon = {"bj": "🃏", "win": "✅", "push": "➖", "loss": "❌"}[seat.outcome]
             label = {"bj": f"BLACKJACK +{payout - seat.stake}", "win": f"+{payout - seat.stake}",
                      "push": "vráceno", "loss": f"−{seat.stake}"}[seat.outcome]
-            lines.append(f"{icon} **{seat.name}** ({pv}) — {label} {minigame_coin()}")
+            lines.append(f"{icon} **{seat.name}** ({pv}) — {label} {coin(self.currency)}")
 
         self.last_summary = (f"🎩 **Arion** dobrala na **{dv}**"
                              + (" (BLACKJACK)" if d_bj else "") + "\n" + "\n".join(lines))
@@ -793,7 +845,7 @@ class BlackjackTable:
                 st = "⏳"
             dbl = " 🔁" if seat.doubled else ""
             rows.append(f"{st} **{seat.name}** — {hand_text(seat.hand)} = **{pv}** "
-                        f"· {seat.stake}{minigame_coin()}{dbl}")
+                        f"· {seat.stake}{coin(self.currency)}{dbl}")
         return "\n".join(rows) or "*nikdo nehraje*"
 
     def _betting_embed(self):
@@ -807,7 +859,7 @@ class BlackjackTable:
         bets = []
         for uid in self.order:
             seat = self.seats[uid]
-            tag = f"💰 {seat.bet} {minigame_coin()}" if seat.bet > 0 else "⏳ čeká na sázku"
+            tag = f"💰 {seat.bet} {coin(self.currency)}" if seat.bet > 0 else "⏳ čeká na sázku"
             bets.append(f"• **{seat.name}** — {tag}")
         e.add_field(name=f"Sázky ({len(self.order)} hráčů)",
                     value="\n".join(bets) or "*prázdno*", inline=False)
@@ -904,4 +956,5 @@ class BlackjackCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot):
+    _refund_interrupted_games()
     await bot.add_cog(BlackjackCog(bot))

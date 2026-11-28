@@ -4,16 +4,18 @@ from discord import app_commands
 import json
 import os
 import unicodedata
+from uuid import uuid4
 from datetime import datetime
 
 from src.utils.paths import QUESTS as QUESTS_FILE, QUEST_LOG as QUEST_LOG_FILE
 from src.utils.json_utils import load_json, save_json
 from src.core.dnd.ranks import (
-    DIFFICULTY, DEFAULT_DIFFICULTY, award_quest_rank, next_rank,
+    DIFFICULTY, DEFAULT_DIFFICULTY, award_rank_to_profile, quest_points, sync_rank_role,
 )
 from src.utils.audit import log_action, get_recent
-from src.logic.stats import add_xp
-from src.database.characters import get_active_slot, use_slot
+from src.logic.stats import award_xp_to_profile, _profile
+from src.database import db
+from src.database.characters import character_id, get_active_slot, get_char
 from src.utils.admin_gate import admin_only
 
 ARION_NAME = "Aurionis"
@@ -24,6 +26,7 @@ class Status:
     ACTIVE    = "aktivní"
     COMPLETED = "dokončený"
     FAILED    = "neúspěšný"
+    REMOVED   = "odebraný"
 
 class Category:
     MAIN = "main"
@@ -34,6 +37,7 @@ STATUS_META = {
     Status.ACTIVE:    {"emoji": "🟢", "color": 0x2E6B3E},
     Status.COMPLETED: {"emoji": "✅", "color": 0x2E86C1},
     Status.FAILED:    {"emoji": "❌", "color": 0x922B21},
+    Status.REMOVED:   {"emoji": "🗃️", "color": 0x786C60},
 }
 
 CATEGORY_META = {
@@ -116,24 +120,40 @@ def _xp_warning(xp) -> str:
 # Per-postava data (XP, ranky) se klíčují '<uid>:<slot>'. Quest členy
 # eviduje jako čisté Discord ID, takže slot postavy se ukládá zvlášť.
 
-def _member_slots(quest_data: dict) -> dict:
-    slots = quest_data.get("member_slots")
-    if not isinstance(slots, dict):
-        slots = {}
-        quest_data["member_slots"] = slots
-    return slots
-
-def _remember_slot(quest_data: dict, uid: int) -> str:
-    """Uloží k questu postavu, která ho právě dostala, a vrátí její slot."""
-    slots = _member_slots(quest_data)
-    slot  = str(slots.get(str(uid)) or get_active_slot(uid))
-    slots[str(uid)] = slot
+def _remember_slot(quest_data: dict, uid: int, slot: str | None = None) -> str:
+    slot = str(slot or get_active_slot(uid))
+    quest_data.setdefault("id", uuid4().hex)
+    identity = character_id(uid, slot)
+    if identity is not None:
+        quest_data.setdefault("assignments", {})[identity] = {"uid": uid, "slot": slot}
+    members = quest_data.setdefault("members", [])
+    if uid not in members:
+        members.append(uid)
+    quest_data.setdefault("member_slots", {})[str(uid)] = slot
     return slot
 
-def _quest_slot(quest_data: dict, uid: int) -> str:
-    """Slot postavy, která quest plní. Starší questy slot nemají → aktivní postava."""
-    slots = quest_data.get("member_slots") or {}
-    return str(slots.get(str(uid)) or get_active_slot(uid))
+
+def _assigned_character(quest, uid, slot):
+    identity = (get_char(uid, slot) or {}).get("id")
+    if identity is not None and identity in quest.get("assignments", {}):
+        return True
+    return ("assignments" not in quest and uid in quest.get("members", [])
+            and str((quest.get("member_slots") or {}).get(str(uid)) or "1") == slot)
+
+
+def _current_assignments(quest, registry):
+    slots = {}
+    for uid in {entry["uid"] for entry in quest.get("assignments", {}).values()}:
+        for slot, char in registry.get(str(uid), {}).get("chars", {}).items():
+            if char.get("id"):
+                slots[char["id"]] = (uid, slot, char.get("name") or f"Slot {slot}")
+    return {identity: slots[identity] for identity in quest.get("assignments", {}) if identity in slots}
+
+
+def _sync_legacy_members(quest, assignments):
+    quest["members"] = list(dict.fromkeys(uid for uid, _, _ in assignments.values()))
+    quest["member_slots"] = {str(uid): slot for uid, slot, _ in assignments.values()}
+
 
 def _status_line(added: str, closed: str | None) -> str:
     """Malý řádek s datumy dole pod questem."""
@@ -271,9 +291,11 @@ def _visible_quests(quests: dict, uid: int, slot: str, *, mine: bool) -> dict:
     if mine:
         return {
             name: data for name, data in quests.items()
-            if uid in data.get("members", []) and _quest_slot(data, uid) == slot
+            if _assigned_character(data, uid, slot)
         }
-    return {name: data for name, data in quests.items() if data.get("source") != BOARD_SOURCE}
+    return {name: data for name, data in quests.items()
+            if data.get("source") != BOARD_SOURCE
+            and (data.get("category") != Category.SOLO or _assigned_character(data, uid, slot))}
 
 
 class QuestListView(discord.ui.View):
@@ -451,25 +473,32 @@ def _migrate_quests():
     quests  = load_quests()
     changed = False
 
-    # Odstraň starý "Stíny v srdci" se špatným parent_quest
+    # Oprav rodiče bez ztráty účastníků starého questu.
     if "Stíny v srdci" in quests and quests["Stíny v srdci"].get("parent_quest") not in ("Volání hvězdy", None):
-        del quests["Stíny v srdci"]
+        quests["Stíny v srdci"]["parent_quest"] = "Volání hvězdy"
         changed = True
 
+    closed_names = {entry.get("name") for entry in load_quest_log()}
     # Přidej chybějící + synchronizuj metadata
     for name, seed in _SEED_QUESTS.items():
         if name not in quests:
+            if name in closed_names:
+                continue
             quests[name] = {**seed, _SEED_STAMP: {f: seed.get(f) for f in _SYNC_FIELDS}}
             changed = True
         elif _sync_seed_fields(quests[name], seed):
             changed = True
 
-    # Starší přiřazení dostanou pevný slot, aby necestovala při přepnutí postavy.
     for quest in quests.values():
-        for uid in quest.get("members", []):
-            if not (quest.get("member_slots") or {}).get(str(uid)):
-                _remember_slot(quest, uid)
-                changed = True
+        if "id" not in quest:
+            quest["id"] = uuid4().hex
+            changed = True
+        if "assignments" not in quest:
+            quest["assignments"] = {}
+            for uid in quest.get("members", []):
+                slot = (quest.get("member_slots") or {}).get(str(uid)) or get_active_slot(uid)
+                _remember_slot(quest, uid, slot)
+            changed = True
 
     # Oprav pořadí: ne-seedované questy napřed (Chapter I atd.), pak seedované v seed pořadí
     non_seed  = {n: d for n, d in quests.items() if n not in _SEED_QUESTS}
@@ -592,6 +621,7 @@ class QuestsCog(commands.Cog):
                 return
 
         quests[name] = {
+            "id":           uuid4().hex,
             "info":         info,
             "xp":           xp,
             "category":     category,
@@ -700,10 +730,8 @@ class QuestsCog(commands.Cog):
         if quest_data is None:
             return None
 
-        if member.id in quest_data.get("members", []):
-            return None  # už ho má — nic nového k oznámení
-
-        quest_data.setdefault("members", []).append(member.id)
+        if _assigned_character(quest_data, member.id, get_active_slot(member.id)):
+            return None
         _remember_slot(quest_data, member.id)
         save_quests(quests)
 
@@ -722,6 +750,29 @@ class QuestsCog(commands.Cog):
                 pass
 
         return quest_name, quest_data
+
+    async def _confirm_quest_action(self, interaction, message, label):
+        view = discord.ui.View(timeout=60)
+        button = discord.ui.Button(label=label, style=discord.ButtonStyle.danger)
+        confirmed = False
+
+        async def confirm(click):
+            nonlocal confirmed
+            if click.user.id != interaction.user.id or confirmed:
+                await click.response.send_message("Potvrzení už není dostupné.", ephemeral=True)
+                return
+            confirmed = True
+            view.stop()
+            await click.response.edit_message(view=None)
+
+        button.callback = confirm
+        view.add_item(button)
+        prompt = await interaction.followup.send(message, ephemeral=True, view=view, wait=True,
+                                                 allowed_mentions=discord.AllowedMentions.none())
+        await view.wait()
+        if not confirmed:
+            await prompt.edit(content="Potvrzení vypršelo.", view=None)
+        return confirmed
 
     # ── /quest status ─────────────────────────────────────────────────────────
 
@@ -773,99 +824,75 @@ class QuestsCog(commands.Cog):
         winner_id = winner.id if winner else None
 
         if status in (Status.COMPLETED, Status.FAILED):
-            quest_data["status"] = status
-            quest_data["closed"] = today()
+            assignments = _current_assignments(quest_data, db.load_doc("characters.json", {}))
+            recipients = [(uid, slot, char_name) for identity, (uid, slot, char_name) in assignments.items()
+                          if status == Status.COMPLETED and (winner_id is None or uid == winner_id)
+                          and identity not in quest_data.get("rewarded", [])]
+            if quest_data.get("legacy_rewards_paid"):
+                recipients = []
+            preview = ", ".join(f"{char_name} (<@{uid}>, slot {slot})" for uid, slot, char_name in recipients)
+            if not await self._confirm_quest_action(
+                interaction,
+                f"Uzavřít **{name}** jako **{status}**?\n"
+                f"Odměna: {quest_data.get('xp') or '0'} XP + rank body\n"
+                f"Příjemci: {preview[:1200] or 'nikdo'}",
+                "Uzavřít quest",
+            ):
+                return
 
-            log = load_quest_log()
-            log.append({"name": name, **quest_data})
-            save_quest_log(log)
+            def close(docs):
+                active = docs["quests.json"]
+                if active.get(name) != quest_data:
+                    raise ValueError("Quest se mezitím změnil. Otevři nové potvrzení.")
+                current = _current_assignments(quest_data, docs["characters.json"])
+                if current != assignments:
+                    raise ValueError("Postavy se mezitím změnily. Otevři nové potvrzení.")
+                archive = docs["quest_log.json"]
+                if not isinstance(archive, list):
+                    archive = docs["quest_log.json"] = []
+                record = {**active.pop(name), "name": name, "status": status, "closed": today()}
+                rewarded = list(record.get("rewarded", []))
+                results = []
+                points = quest_points(record.get("difficulty", DEFAULT_DIFFICULTY))
+                amount = _parse_xp(record.get("xp"))
+                for identity, (uid, slot, char_name) in current.items():
+                    if (status != Status.COMPLETED or record.get("legacy_rewards_paid")
+                            or identity in rewarded or (winner_id is not None and uid != winner_id)):
+                        continue
+                    profiles = docs["profiles.json"]
+                    key = f"{uid}:{slot}"
+                    if key not in profiles:
+                        continue
+                    profile = _profile(profiles, key)
+                    xp_result = award_xp_to_profile(profile, amount, f"Quest: {name}") if amount else None
+                    rank_result = award_rank_to_profile(profile, points) if points else None
+                    rewarded.append(identity)
+                    results.append((uid, slot, char_name, amount, xp_result, rank_result))
+                record["rewarded"] = rewarded
+                archive.append(record)
+                return results
 
-            del quests[name]
-            save_quests(quests)
-
-            # ── Automatické přidělování XP při dokončení ─────────────────────────
-            xp_reward = _parse_xp(quest_data.get("xp")) if status == Status.COMPLETED else 0
-
-            for uid in member_ids:
-                # Závod: vítěz má DOKONČENO, ostatní NESPLNĚNO.
-                # (Bez vítěze se chová quest jako dřív — všem stejně.)
-                is_loser  = (winner_id is not None and uid != winner_id)
-                u_status  = Status.FAILED if is_loser else status
-                u_meta    = STATUS_META[u_status]
-
-                slot    = _quest_slot(quest_data, uid)
-                # DM embed se staví PRO KAŽDÉHO ZVLÁŠŤ — dřív se vyráběl jednou
-                # před smyčkou, takže druhému hráči přistály i odměny prvního.
-                dm_embed = discord.Embed(
-                    title=f"{u_meta['emoji']}  Quest {u_status}",
-                    description=f"**{name}**",
-                    color=u_meta["color"],
-                )
-                if is_loser:
-                    win_m = guild.get_member(winner_id)
-                    dm_embed.description += (
-                        f"\n-# Zakázku splnil/a první "
-                        f"{win_m.display_name if win_m else 'někdo jiný'}. Příště buď rychlejší."
-                    )
-                dm_embed.set_footer(text=f"⭐ {ARION_NAME}  ·  Uzavřený quest")
-
+            try:
+                results = db.update_documents(
+                    ["quests.json", "quest_log.json", "characters.json", "profiles.json"], close)
+            except ValueError as exc:
+                await interaction.followup.send(str(exc), ephemeral=True)
+                return
+            for uid, slot, char_name, amount, xp, rank in results:
                 member = guild.get_member(uid)
-                earns  = (u_status == Status.COMPLETED)
-
-                # XP jen tomu, kdo quest doopravdy splnil
-                if earns and xp_reward > 0:
-                    with use_slot(uid, slot):
-                        xp_result = add_xp(uid, xp_reward, reason=f"Quest: {name}")
-                    if xp_result["leveled_up"]:
-                        dm_embed.add_field(
-                            name="✨ Odměna",
-                            value=f"+{xp_reward} XP  ·  **LEVELUP!** Lvl {xp_result['new_level']}",
-                            inline=False,
-                        )
-                    else:
-                        dm_embed.add_field(
-                            name="✨ Odměna",
-                            value=f"+{xp_reward} XP  ({xp_result['xp']}/{xp_result['cap']})",
-                            inline=False,
-                        )
-
-                    from src.logic.furioku import rank_up_text
-                    spirit_levelup = rank_up_text(xp_result.get('spirits', []))
-                    if spirit_levelup:
-                        dm_embed.add_field(name="⬆️ Hlavní duch postoupil!", value=spirit_levelup[:1024], inline=False)
-
-                # ── Rank body ────────────────────────────────────────────────
-                # award_quest_rank si sám ohlásí rank up (kanál + DM) a nikdy
-                # nevyhodí výjimku — uzavření questu nesmí spadnout kvůli ranku.
-                if earns and member:
-                    diff = quest_data.get("difficulty", DEFAULT_DIFFICULTY)
-                    with use_slot(uid, slot):
-                        rk = await award_quest_rank(member, diff, interaction.channel)
-                    if rk:
-                        pts = DIFFICULTY.get(diff, {}).get("points", 0)
-                        if rk["ranked_up"]:
-                            dm_embed.add_field(
-                                name="🎖️ Rank",
-                                value=(f"+{pts} bodů  ·  **POVÝŠENÍ! "
-                                       f"{rk['old_rank']} → {rk['new_rank']}**"),
-                                inline=False,
-                            )
-                        else:
-                            need = rk["needed"]
-                            nxt  = next_rank(rk["new_rank"])
-                            dm_embed.add_field(
-                                name="🎖️ Rank",
-                                value=(f"+{pts} bodů  ({rk['points']}/{need} do {nxt})"
-                                       if need else
-                                       f"+{pts} bodů  ·  👑 maximální rank"),
-                                inline=False,
-                            )
-
-                if member:
-                    try:
-                        await member.send(embed=dm_embed)
-                    except discord.Forbidden:
-                        pass
+                if member is None:
+                    continue
+                message = f"✅ **{char_name}** dokončil/a **{name}**. Odměna: **{amount} XP**."
+                if xp and xp["leveled_up"]:
+                    message += f" Nový level: **{xp['new_level']}**."
+                if rank and rank["ranked_up"]:
+                    message += f" Nový rank: **{rank['new_rank']}**."
+                    if get_active_slot(uid) == slot:
+                        await sync_rank_role(member, rank["new_rank"])
+                try:
+                    await member.send(message)
+                except discord.HTTPException:
+                    pass
 
             # Oznámení do kanálu
             mentions    = [guild.get_member(uid).mention if guild.get_member(uid) else f"<@{uid}>" for uid in member_ids]
@@ -899,28 +926,31 @@ class QuestsCog(commands.Cog):
             await interaction.followup.send(f"🟢 Quest **{name}** označen jako **aktivní**.", ephemeral=True)
 
     async def _reopen_quest(self, interaction: discord.Interaction, name: str) -> bool:
-        """Vrátí naposledy uzavřený quest z logu mezi aktivní. False = v logu není."""
-        log = load_quest_log()
-        idx = next((i for i in range(len(log) - 1, -1, -1)
-                    if log[i].get("name") == name), None)
-        if idx is None:
+        def reopen(docs):
+            active, archive = docs["quests.json"], docs["quest_log.json"]
+            if name in active or not isinstance(archive, list):
+                return False
+            idx = next((i for i in range(len(archive) - 1, -1, -1)
+                        if archive[i].get("name") == name), None)
+            if idx is None:
+                return False
+            entry = archive.pop(idx)
+            quest = {key: value for key, value in entry.items() if key not in {"name", "closed"}}
+            quest["status"] = Status.ACTIVE
+            if "assignments" not in quest:
+                quest["assignments"] = {}
+                if entry.get("status") == Status.COMPLETED:
+                    quest["legacy_rewards_paid"] = True
+            _sync_legacy_members(quest, _current_assignments(quest, docs["characters.json"]))
+            active[name] = quest
+            return True
+
+        if not db.update_documents(["quests.json", "quest_log.json", "characters.json"], reopen):
             return False
-
-        entry      = log.pop(idx)
-        quest_data = {k: v for k, v in entry.items() if k != "name"}
-        quest_data["status"] = Status.ACTIVE
-        quest_data.pop("closed", None)
-
-        quests = load_quests()
-        quests[name] = quest_data
-        save_quests(quests)
-        save_quest_log(log)
-
         await interaction.followup.send(
-            f"🟢 Quest **{name}** vrácen z logu mezi aktivní.\n"
-            f"-# Už vyplacené XP a rank body se neodebírají — při opětovném dokončení by se připsaly znovu.",
-            ephemeral=True,
-        )
+            f"🟢 Quest **{name}** je znovu aktivní. Už vyplacené odměny se neopakují. "
+            "U starých záznamů bez ID postav přiřaď účastníky znovu.",
+            ephemeral=True)
         return True
 
     # ── /quest log ────────────────────────────────────────────────────────────
@@ -932,6 +962,7 @@ class QuestsCog(commands.Cog):
             app_commands.Choice(name="🟢 Aktivní",   value=Status.ACTIVE),
             app_commands.Choice(name="✅ Dokončené", value=Status.COMPLETED),
             app_commands.Choice(name="❌ Neúspěšné", value=Status.FAILED),
+            app_commands.Choice(name="🗃️ Odebrané", value=Status.REMOVED),
         ],
         category=[
             app_commands.Choice(name="⚔️ Main Quest", value=Category.MAIN),
@@ -959,6 +990,12 @@ class QuestsCog(commands.Cog):
         # Filtrování
         if status:
             all_quests = [q for q in all_quests if q.get("status") == status]
+        uid = interaction.user.id
+        slot = get_active_slot(uid)
+        if not interaction.user.guild_permissions.administrator:
+            all_quests = [q for q in all_quests if q.get("category") != Category.SOLO
+                          or ((q.get("status") == Status.ACTIVE or "assignments" in q)
+                              and _assigned_character(q, uid, slot))]
         if category:
             all_quests = [q for q in all_quests if q.get("category") == category]
 
@@ -1001,6 +1038,9 @@ class QuestsCog(commands.Cog):
             if s.get("name") not in used_sides and s.get("name"):
                 blocks.append(format_side_block(s["name"], s, s.get("status", Status.ACTIVE)))
 
+        blocks.extend(format_side_block(q["name"], q, q.get("status", Status.ACTIVE))
+                      for q in all_quests if q.get("category") == Category.SOLO)
+
         # Rozděl na stránky — podle počtu bloků i podle délky popisu (limit embedu)
         pages   = _pages(blocks, per_page=8)
         total   = len(all_quests)
@@ -1025,7 +1065,9 @@ class QuestsCog(commands.Cog):
             embed.set_footer(text=footer)
             embeds.append(embed)
 
-        await interaction.response.send_message(embeds=embeds, ephemeral=True)
+        await interaction.response.send_message(embed=embeds[0], ephemeral=True)
+        for embed in embeds[1:]:
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
     # ── /quest remove ─────────────────────────────────────────────────────────
 
@@ -1040,12 +1082,29 @@ class QuestsCog(commands.Cog):
             await interaction.followup.send(f"Quest **{name}** neexistuje.", ephemeral=True)
             return
 
-        del quests[name]
-        save_quests(quests)
+        expected = quests[name]
+        if not await self._confirm_quest_action(
+            interaction, f"Přesunout **{name}** z aktivních questů do historie?", "Odebrat quest",
+        ):
+            return
 
+        def remove(docs):
+            active = docs["quests.json"]
+            if active.get(name) != expected:
+                raise ValueError("Quest se mezitím změnil.")
+            archived = docs["quest_log.json"]
+            if not isinstance(archived, list):
+                archived = docs["quest_log.json"] = []
+            archived.append({**active.pop(name), "name": name, "status": Status.REMOVED, "closed": today()})
+
+        try:
+            db.update_documents(["quests.json", "quest_log.json"], remove)
+        except ValueError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
         log_action("quest_remove", interaction.user.display_name, name)
         await interaction.followup.send(
-            f"🗑️ Quest **{name}** odebrán z databáze.",
+            f"🗑️ Quest **{name}** přesunut do historie. Obnovíš ho přes /quest status.",
             ephemeral=True,
         )
 
@@ -1063,12 +1122,12 @@ class QuestsCog(commands.Cog):
         quest_data = quests[name]
         guild      = interaction.guild
 
-        new_ids = _parse_member_mentions(members, guild, exclude_ids=set(quest_data.get("members", [])))
+        new_ids = _parse_member_mentions(members, guild, exclude_ids={uid for uid in quest_data.get("members", [])
+                            if _assigned_character(quest_data, uid, get_active_slot(uid))})
         if not new_ids:
             await interaction.followup.send("Žádní noví hráči k přiřazení.", ephemeral=True)
             return
 
-        quest_data.setdefault("members", []).extend(new_ids)
         for uid in new_ids:
             _remember_slot(quest_data, uid)
         save_quests(quests)

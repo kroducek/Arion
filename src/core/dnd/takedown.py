@@ -5,10 +5,11 @@ from discord.ext import commands
 from discord import app_commands
 
 from src.utils.paths import (
-    PROFILES, TAKEDOWNS, ECONOMY, DIARIES, NOTES, PLAYER_PERKS, REPUTATION, CHARACTERS,
+    TAKEDOWNS,
 )
 from src.utils.json_utils import load_json, save_json
-from src.database.characters import list_chars, ckey
+from src.database.characters import list_chars
+from src.database.deaths import archive_account_characters
 from src.utils.admin_gate import mark_admin
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -33,77 +34,6 @@ def _increment_count() -> int:
     data["count"] = data.get("count", 0) + 1
     save_json(TAKEDOWNS, data)
     return data["count"]
-
-def _char_keys(member_id) -> list:
-    """
-    Všechny datové klíče postav účtu ('<id>:<slot>') napříč sloty.
-    Defensivně přidá i legacy varianty ('<id>' a '<id>:1') — kdyby něco
-    nebylo zmigrované, ať to takedown taky uklidí.
-    """
-    keys = [ckey(member_id, s) for s in list_chars(member_id).keys()]
-    for legacy in (str(member_id), ckey(member_id, "1")):
-        if legacy not in keys:
-            keys.append(legacy)
-    return keys
-
-def _wipe_inventory(member_id) -> None:
-    """Vyprázdní inventář/poznámky/výbavu u VŠECH postav účtu."""
-    profiles = load_json(PROFILES, default={})
-    changed = False
-    for key in _char_keys(member_id):
-        profile = profiles.get(key)
-        if not profile:
-            continue
-        profile["inventory"] = []
-        profile["notes"] = []
-        if "equipment" in profile:
-            profile["equipment"] = {k: None for k in profile["equipment"]}
-        changed = True
-    if changed:
-        save_json(PROFILES, profiles)
-
-def _wipe_profile(member_id) -> None:
-    """
-    Smaže VŠECHNY postavy účtu: profil, gold, poznámky, perky, reputaci na každém
-    slotu + záznam v registru postav. (Stříbro/prach/achievementy = účtové,
-    nesahá se na ně.)
-    """
-    keys = _char_keys(member_id)
-    for path in (PROFILES, ECONOMY, DIARIES, NOTES, PLAYER_PERKS):
-        d = load_json(path, default={})
-        if any(k in d for k in keys):
-            for k in keys:
-                d.pop(k, None)
-            save_json(path, d)
-    # reputace: {gid: {players: {key: ...}}}
-    rep = load_json(REPUTATION, default={})
-    changed = False
-    for gid, gdata in rep.items():
-        if not isinstance(gdata, dict):
-            continue
-        players = gdata.get("players", {})
-        for k in keys:
-            if k in players:
-                players.pop(k, None)
-                changed = True
-    if changed:
-        save_json(REPUTATION, rep)
-    # registr postav — smaž celý záznam účtu
-    chars = load_json(CHARACTERS, default={})
-    if str(member_id) in chars:
-        chars.pop(str(member_id), None)
-        save_json(CHARACTERS, chars)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# REŽIE — barvy, lišta rozkladu, glitch
-# ══════════════════════════════════════════════════════════════════════════════
-
-_C_ASH     = 0x2C2F33   # popel — chladný start
-_C_EMBER   = 0x4A0E0E   # doutnající uhlík
-_C_BLOOD   = 0x7B0A0A   # krev
-_C_CRIMSON = 0xC0392B   # šarlat
-_C_FLARE   = 0xE74C3C   # výšleh — vrchol
-
 
 def _bar(filled: int, total: int = 3) -> str:
     return "▰" * filled + "▱" * (total - filled)
@@ -164,7 +94,12 @@ class TakedownCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         ch  = interaction.channel
-        uid = member.id                      # wipe-all jede přes syrové id (všechny sloty)
+        uid = member.id
+        chars = list_chars(uid)
+        if not chars:
+            await interaction.followup.send("Hráč nemá žádnou postavu k archivaci.", ephemeral=True)
+            return
+        targets = ", ".join(char.get("name", f"Slot {slot}") for slot, char in chars.items())
         name = member.display_name           # zachyť jméno DŘÍV, než zmizí
 
         # ── BOD ZVRATU — nevratný rozsudek se musí potvrdit ───────────────────
@@ -172,7 +107,7 @@ class TakedownCog(commands.Cog):
             title="⚖️  ARION SOUDÍ",
             description=(f"**{member.mention}** se zprotivil/a Arion.\n\n"
                         "Následuje **Takedown**❗️\n"
-                        "*Toto nelze vzít zpět*"),
+                        f"Archivuje všechny uvedené postavy: **{targets}**."),
             color=_C_EMBER,
         )
         confirm = TakedownConfirm(interaction.user.id)
@@ -180,6 +115,12 @@ class TakedownCog(commands.Cog):
         await confirm.wait()
         if confirm.result is not True:
             return   # ušetřeno nebo vypršel čas — nic se nestane
+
+        try:
+            archive_account_characters(uid, chars, "takedown")
+        except ValueError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
 
         # ── REŽIJNÍ HELPERY ──────────────────────────────────────────────────
         async def type_beat(seconds: float):
@@ -235,7 +176,6 @@ class TakedownCog(commands.Cog):
 
         # drop 1 — inventář
         await type_beat(1.6)
-        _wipe_inventory(uid)
         await unmaking.edit(embed=discord.Embed(
             title="🗑️  …Takedown❗️",
             description=(f"```\n[{_bar(1)}]\n```\n"
@@ -247,7 +187,6 @@ class TakedownCog(commands.Cog):
 
         # drop 2 — profil
         await type_beat(1.6)
-        _wipe_profile(uid)
         await unmaking.edit(embed=discord.Embed(
             title="💀  …TAKEDOWN❗️",
             description=(f"```\n[{_bar(2)}]\n```\n"

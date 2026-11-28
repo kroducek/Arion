@@ -153,9 +153,13 @@ class Dice(commands.Cog):
         check2: app_commands.Choice[str] = None,
         samostatne: bool = False,
     ):
+        attrs = list(dict.fromkeys(x.value for x in (check, check2) if x))
         if not samostatne:
+            from src.logic.onboard import route_tutorial_roll
             from src.logic.attack_ui import route_roll
-            attrs = list(dict.fromkeys(x.value for x in (check, check2) if x))
+
+            if await route_tutorial_roll(interaction, hod, attrs):
+                return
             if await route_roll(interaction, hod, attrs):
                 return
         # ── Parsování kostek ──────────────────────────────────────────────────

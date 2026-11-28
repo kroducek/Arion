@@ -109,6 +109,20 @@ def list_chars(uid) -> dict:
 def get_char(uid, slot) -> dict | None:
     return list_chars(uid).get(str(slot))
 
+
+def character_id(uid, slot) -> str | None:
+    char = get_char(uid, slot)
+    if char is None or char.get("id"):
+        return char.get("id") if char else None
+
+    def assign(data):
+        current = data.get(str(uid), {}).get("chars", {}).get(str(slot))
+        if current is not None:
+            current.setdefault("id", uuid.uuid4().hex)
+
+    registry = update_json(CHARACTERS, assign)
+    return registry.get(str(uid), {}).get("chars", {}).get(str(slot), {}).get("id")
+
 def resolve_slot(uid, query) -> str | None:
     """Najde slot podle čísla slotu nebo jména postavy. None = nenalezeno/nejednoznačné."""
     q = str(query).strip().lower()

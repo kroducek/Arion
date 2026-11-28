@@ -192,12 +192,12 @@ def _parse_trade_card_ids(raw: str) -> list:
     return seen
 
 
-def _resolve_trade_cards(owner_uid: str, unique_ids: list) -> Tuple[dict, list]:
+def _resolve_trade_cards(owner_uid: str, unique_ids: list, inv=None) -> Tuple[dict, list]:
     """
     Ověří vlastnictví a obchodovatelnost karet.
     Vrací (platné {unique_id: card}, chybové řádky pro neplatné).
     """
-    inv = load_inventory()
+    inv = load_inventory() if inv is None else inv
     valid = {}
     errors = []
     for cid in unique_ids:
@@ -299,43 +299,35 @@ class TradeView(discord.ui.View):
             await interaction.response.edit_message(embed=self.build_embed())
             return
 
-        # Obě strany potvrdily — než se karty reálně přepíšou, ověř znovu obě
-        # nabídky (mezitím mohla karta zmizet / být spálena).
-        errors = []
-        revalidated = {}
-        for uid, cards in self.offers.items():
-            valid, uid_errors = _resolve_trade_cards(str(uid), list(cards.keys()))
-            revalidated[uid] = valid
-            errors.extend(uid_errors)
+        from src.database import db
+        from src.utils.json_utils import doc_name
+        from src.utils.paths import PROFILES
 
-        if errors:
+        inventory_doc, profile_doc = doc_name(CARDS_INVENTORY), doc_name(PROFILES)
+
+        def trade(docs):
+            inv, profiles = docs[inventory_doc], docs[profile_doc]
+            for uid, cards in self.offers.items():
+                _, errors = _resolve_trade_cards(str(uid), list(cards), inv)
+                if errors:
+                    raise ValueError("\n".join(errors))
+            for uid, cards in self.offers.items():
+                owner = profiles.get(str(uid), {})
+                for cid in cards:
+                    inv[cid]["owner_id"] = str(self.other_id(uid))
+                    inv[cid].pop("tags", None)
+                    if owner.get("active_card_id") == cid:
+                        owner["active_card_id"] = None
+            return inv
+
+        try:
+            inv = db.update_documents([inventory_doc, profile_doc], trade)
+        except ValueError as exc:
             embed = self.build_embed(
-                note="Obchod zrušen — některé karty už nejsou dostupné.", color=0xE74C3C,
-            )
-            embed.add_field(name="⚠️ Problém", value="\n".join(errors), inline=False)
+                note="Obchod zrušen — některé karty už nejsou dostupné.", color=0xE74C3C)
+            embed.add_field(name="⚠️ Problém", value=str(exc)[:1024], inline=False)
             await self._finish(interaction, embed)
             return
-
-        inv = load_inventory()
-        profiles = profile_load()
-        profiles_changed = False
-
-        for uid, cards in revalidated.items():
-            if not cards:
-                continue
-            recipient_uid = str(self.other_id(uid))
-            owner_uid = str(uid)
-            owner_profile = profiles.get(owner_uid)
-            for cid in cards:
-                inv[cid]["owner_id"] = recipient_uid
-                inv[cid].pop("tags", None)
-                if owner_profile and owner_profile.get("active_card_id") == cid:
-                    owner_profile["active_card_id"] = None
-                    profiles_changed = True
-
-        save_json(CARDS_INVENTORY, inv)
-        if profiles_changed:
-            profile_save(profiles)
 
         embed = self.build_embed(note="✅ Obchod dokončen!", color=0x2ECC71)
         await self._finish(interaction, embed)

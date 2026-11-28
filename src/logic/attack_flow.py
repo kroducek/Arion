@@ -2,6 +2,8 @@
 import copy
 import os
 import uuid
+import json
+import hashlib
 from src.database import db
 from src.database.deaths import in_channel
 from src.utils.paths import COMBAT_STATE, PROFILES, PLAYER_PERKS
@@ -9,19 +11,32 @@ from src.logic.dice import roll_expr
 from src.logic import furioku as energy
 
 COMBAT = os.path.basename(COMBAT_STATE)
+CLOSED_COMBAT = "combat_closed.json"
 PROFILES_DOC = os.path.basename(PROFILES)
 PERKS_DOC = os.path.basename(PLAYER_PERKS)
 PENDING = 'pending_attacks'
 
 
-def transaction(channel, change):
+def profile_stamp(profile):
+    if profile is None:
+        return None
+    return hashlib.sha256(json.dumps(profile, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def transaction(channel, change, *, closed=False):
     def mutate(docs):
-        state = docs[COMBAT].get(str(channel))
+        key = str(channel)
+        if closed and key in docs[COMBAT]:
+            raise ValueError("V kanálu už běží nový boj.")
+        state = docs[CLOSED_COMBAT if closed else COMBAT].get(key)
         if state is None:
             raise ValueError('Combat už neběží.')
         return change(state, docs[PROFILES_DOC], docs[PERKS_DOC])
     with in_channel(channel):
-        return db.update_documents([COMBAT, PROFILES_DOC, PERKS_DOC], mutate)
+        names = [COMBAT, PROFILES_DOC, PERKS_DOC]
+        if closed:
+            names.append(CLOSED_COMBAT)
+        return db.update_documents(names, mutate)
 
 
 def pending(state, attack_id):
@@ -550,12 +565,33 @@ def resolve(channel, aid, dm, outcome, damage=None, bypass=False, refund=False):
     return transaction(channel, change)
 
 
-def undo(channel):
+def undo(channel, *, closed=False):
     from src.logic import combat as c
     def change(state, profiles, perks):
         event = next((e for e in reversed(state.get('log', [])) if not e.get('undone') and e.get('revert', True)), None)
-        if not event or 'flow_attack' not in event:
+        if not event:
             return None
+        if closed:
+            if state.get("rewarded_npcs"):
+                raise ValueError("Po výplatě XP už uzavřený boj nelze vrátit.")
+            stamps = state.get("profile_stamps", {})
+            if any(profile_stamp(profiles.get(key)) != stamp for key, stamp in stamps.items()):
+                raise ValueError("Stav účastníka se po boji změnil. Oprav ho samostatně.")
+        if 'flow_attack' not in event:
+            if not closed:
+                return None
+            if event.get("resources"):
+                raise ValueError("Tento starý typ záznamu vyžaduje ruční opravu.")
+            reverted = c.undo_last(state)
+            if reverted:
+                stat = state["stats"][reverted["target"]]
+                profile = profiles.get(stat.get("profile_key"))
+                if profile is not None:
+                    profile["hp_cur"] = stat["hp"]
+                    profile["statuses"] = copy.deepcopy(stat.get("statuses") or [])
+                    c._merge_energy(profile, stat.get("energy"))
+                state["profile_stamps"] = {key: profile_stamp(profiles.get(key)) for key in stamps}
+            return reverted
         a = event['flow_attack']
         for actor, snapshot in event['flow_before_stats'].items():
             if actor in state['stats']:
@@ -572,8 +608,10 @@ def undo(channel):
         _refund_costs(state, profiles, perks, a.get('costs', []))
         _return_reservations(state, a, p)
         event['undone'] = True
+        if closed:
+            state["profile_stamps"] = {key: profile_stamp(profiles.get(key)) for key in stamps}
         return copy.deepcopy(event)
-    return transaction(channel, change)
+    return transaction(channel, change, closed=closed)
 
 
 def _restore_buffs(state, a):

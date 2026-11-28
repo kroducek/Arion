@@ -15,6 +15,7 @@ from src.utils.paths import (
     PROFILES as PROFILES_FILE,
 )
 from src.utils.json_utils import load_json, save_json, update_json
+from src.database import db
 from src.database.characters import pkey, use_slot
 from src.utils.char_target import POSTAVA_DESC, char_note, postava_autocomplete, resolve_postava
 from src.utils.admin_gate import admin_only
@@ -391,7 +392,7 @@ class ShopView(discord.ui.View):
                        else discord.ButtonStyle.secondary),
                 custom_id=f"gshop_{preset_id}_{i}",
             )
-            btn.callback = self._make_callback(i, item["name"])
+            btn.callback = self._make_callback(i, item)
             self.add_item(btn)
         if smith:
             runes = discord.ui.Button(label="Runy k vyrytí", emoji="⚒️",
@@ -453,90 +454,76 @@ class ShopView(discord.ui.View):
             return
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    def _make_callback(self, item_index: int, expected_name: str):
+    def _make_callback(self, item_index: int, expected: dict):
         preset_id = self.preset_id
+
         async def callback(interaction: discord.Interaction):
-            shops = _load_shops()
-            shop  = shops.get(preset_id)
-            if not shop:
-                return await interaction.response.send_message(
-                    "Tento shop už neexistuje.", ephemeral=True
-                )
-            if not shop.get("open", False):
-                return await interaction.response.send_message(
-                    "Obchod je momentálně zavřený.", ephemeral=True
-                )
-            items = shop_display_items(shop)
-            if item_index >= len(items):
-                return await interaction.response.send_message(
-                    "Tento item už neexistuje.", ephemeral=True
-                )
-            item    = items[item_index]
-            # Nabídka se mohla mezitím přemíchat (/gshop reload). Kdyby hráč měl
-            # na obrazovce starou verzi, koupil by něco jiného, než vidí.
-            if item.get("name") != expected_name:
-                return await interaction.response.send_message(
-                    "🔄 Nabídka obchodu se mezitím změnila — načti zprávu znovu.",
-                    ephemeral=True
-                )
-            price   = item["price"]
-            uid     = pkey(interaction.user.id)
-            economy = _load_economy()
-            balance = economy.get(uid, 0)
-            if balance < price:
-                return await interaction.response.send_message(
-                    f"Nemáš dost zlaťáků! (Chybí ti **{price - balance}** {COIN})",
-                    ephemeral=True,
-                )
-            economy[uid] = balance - price
-            _save_economy(economy)
+            await interaction.response.defer(ephemeral=True)
+            from src.logic.inventory import _add_to_inventory, _ensure_inv_fields, _sort_ammo_to_toulec
+            uid = pkey(interaction.user.id)
+            if interaction.data:
+                clicked = interaction.data.get("custom_id")
+                shown = next((getattr(button, "label", None)
+                              for row in interaction.message.components for button in row.children
+                              if getattr(button, "custom_id", None) == clicked), None)
+                tag = "  ✨" if expected.get("_unique") else ""
+                label = f"{expected['emoji']}  {expected['name']}  ·  {expected['price']} zl.{tag}"
+                if shown != label:
+                    await interaction.followup.send(
+                        "Zobrazená nabídka už nesedí. Požádej DM, aby obnovil nabídku.", ephemeral=True)
+                    return
 
-            # Přidej item do inventáře hráče
-            profiles  = load_json(PROFILES_FILE, default={})
-            profile   = profiles.setdefault(uid, {})
-            inventory = profile.setdefault("inventory", [])
-            item_id   = item.get("item_id")
-            if item_id:
-                entry = next(
-                    (e for e in inventory if e.get("type") == "registered" and e.get("id") == item_id),
-                    None,
-                )
-                if entry:
-                    entry["qty"] = entry.get("qty", 1) + 1
+            def buy(docs):
+                shop = docs["shops.json"].get(preset_id)
+                if not shop or not shop.get("open") or shop.get("message") != interaction.message.id:
+                    raise ValueError("Tahle nabídka už není otevřená.")
+                items = shop_display_items(shop)
+                if item_index >= len(items) or items[item_index] != expected:
+                    raise ValueError("Nabídka se změnila. Zkontroluj aktuální předmět a cenu.")
+                economy = docs["economy.json"]
+                price = expected["price"]
+                if price <= 0 or economy.get(uid, 0) < price:
+                    raise ValueError("Na tento nákup nemáš dost zlaťáků.")
+                profile = docs["profiles.json"].get(uid)
+                if profile is None:
+                    raise ValueError("Nejdřív potřebuješ profil postavy.")
+                _ensure_inv_fields(profile)
+                item_id = expected.get("item_id")
+                if item_id:
+                    items_db = docs["items.json"]
+                    if item_id not in items_db:
+                        raise ValueError("Předmět už v databázi není.")
+                    _add_to_inventory(profile["inventory"], item_id, 1, items_db)
+                    _sort_ammo_to_toulec(profile, items_db)
                 else:
-                    inventory.append({"type": "registered", "id": item_id, "qty": 1})
-            else:
-                entry = next(
-                    (e for e in inventory if e.get("type") == "free" and e.get("name") == item["name"]),
-                    None,
-                )
-                if entry:
-                    entry["qty"] = entry.get("qty", 1) + 1
-                else:
-                    inventory.append({"type": "free", "name": item["name"], "qty": 1})
-            save_json(PROFILES_FILE, profiles)
+                    inventory = profile["inventory"]
+                    entry = next((e for e in inventory if e.get("type") == "free"
+                                  and e.get("name") == expected["name"]), None)
+                    if entry is None:
+                        inventory.append({"type": "free", "name": expected["name"], "qty": 1})
+                    else:
+                        entry["qty"] = entry.get("qty", 1) + 1
+                economy[uid] -= price
+                if expected.get("_unique"):
+                    shop["unique"] = None
+                    shop["offer"] = [it for it in shop.get("offer", []) if not it.get("_unique")]
+                return economy[uid], shop
 
-            # Unikát po koupi zmizí — sundej ho ze shopu i z nabídky a překresli
-            if item.get("_unique"):
-                shop["unique"] = None
-                shop["offer"] = [it for it in shop.get("offer", []) if not it.get("_unique")]
-                _save_shops(shops)
+            try:
+                balance, shop = db.update_documents(
+                    ["shops.json", "economy.json", "profiles.json", "items.json"], buy)
+            except ValueError as exc:
+                await interaction.followup.send(str(exc), ephemeral=True)
+                return
+            await interaction.followup.send(
+                f"✅ Koupeno **{expected['name']}** za **{expected['price']}** {COIN}. "
+                f"Zbývá **{balance}** {COIN}.", ephemeral=True)
+            if expected.get("_unique"):
                 try:
-                    # překresli embed I tlačítka — jinak by unikát zůstal vypsaný
-                    # v textu, ale nešel koupit (rozbitý dojem)
                     await interaction.message.edit(
-                        embed=_build_shop_embed(shop, is_open=True),
-                        view=ShopView(preset_id, shop),
-                    )
-                except Exception:
-                    logging.exception("[gshop] překreslení po koupi unikátu selhalo")
-
-            await interaction.response.send_message(
-                f"✅ Koupil/a jsi **{item['emoji']} {item['name']}** za **{price}** {COIN}."
-                + ("  ✨ *(unikát!)*" if item.get("_unique") else "")
-                + f"\n-# Zbývá ti **{economy[uid]}** {COIN}.",
-                ephemeral=True,
-            )
+                        embed=_build_shop_embed(shop, is_open=True), view=ShopView(preset_id, shop))
+                except discord.HTTPException:
+                    logging.exception("[gshop] překreslení nabídky selhalo")
         return callback
 
 
@@ -585,13 +572,15 @@ def build_leaderboard_embed(guild, currency: str = "gold") -> discord.Embed:
     if not data:
         return discord.Embed(title=title, description="*Zatím tu nikdo nic nemá.*", color=0xFFD700)
 
+    profiles = load_json(PROFILES_FILE, default={}) if currency == "gold" else {}
     ranked = sorted(data.items(), key=lambda x: x[1], reverse=True)[:10]
     medals = ["🥇", "🥈", "🥉"]
     lines = []
     for i, (uid, bal) in enumerate(ranked):
         prefix = medals[i] if i < 3 else f"**{i+1}.**"
         member = guild.get_member(int(uid.split(":")[0])) if guild else None
-        name   = member.display_name if member else f"Neznámý ({uid})"
+        name = (profiles.get(uid) or {}).get("name")
+        name = name or (member.display_name if member else f"Neznámý ({uid})")
         lines.append(f"{prefix} {name} — **{bal}** {icon}")
 
     return discord.Embed(title=title, description="\n".join(lines), color=0xFFD700)
@@ -1341,3 +1330,9 @@ class Economy(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Economy(bot))
+    for preset, shop in _load_shops().items():
+        if shop.get("open") and shop.get("message"):
+            try:
+                bot.add_view(ShopView(preset, shop), message_id=shop["message"])
+            except (KeyError, ValueError, TypeError):
+                logging.exception("[gshop] obnovení ovládání obchodu %s selhalo", preset)

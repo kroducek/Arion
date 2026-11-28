@@ -22,6 +22,30 @@ def save_tournament(data: list):
     """Thread-safe save tournament data."""
     save_json(TOURNAMENT_FILE, data)
 
+def build_tournament_embed() -> discord.Embed:
+    players = load_tournament()
+    if players:
+        lines = []
+        for entry in players:
+            # entry může být string (jméno) nebo int (Discord user ID)
+            if isinstance(entry, int) or (isinstance(entry, str) and entry.isdigit()):
+                lines.append(f"• <@{int(entry)}>")
+            else:
+                lines.append(f"• {entry}")
+        players_list = "\n".join(lines)
+    else:
+        players_list = "• Zatím nikdo..."
+
+    embed = discord.Embed(
+        title="✨ Turnaj Hvězdy — druhé kolo",
+        description="**Vyvolení, kteří postoupili do druhého kola:**",
+        color=0xFFD700
+    )
+    embed.add_field(name=f"Postupující ({len(players)})", value=players_list, inline=False)
+    embed.set_footer(text="Arion bedlivě sleduje Turnaj o Krále hvězdy")
+    return embed
+
+
 _CLOCK_EMOJIS = ["🕛","🕐","🕑","🕒","🕓","🕔","🕕","🕖","🕗","🕘","🕙","🕚"]
 
 def _clock_sequence(hours: int) -> str:
@@ -800,27 +824,7 @@ class Aurionis(commands.Cog):
 
     @tournament_group.command(name="list", description="Zobrazí vyvolené ve druhém kole")
     async def tournament_list(self, interaction: discord.Interaction):
-        players = load_tournament()
-        if players:
-            lines = []
-            for entry in players:
-                # entry může být string (jméno) nebo int (Discord user ID)
-                if isinstance(entry, int) or (isinstance(entry, str) and entry.isdigit()):
-                    lines.append(f"• <@{int(entry)}>")
-                else:
-                    lines.append(f"• {entry}")
-            players_list = "\n".join(lines)
-        else:
-            players_list = "• Zatím nikdo..."
-
-        embed = discord.Embed(
-            title="✨ Turnaj Hvězdy — druhé kolo",
-            description="**Vyvolení, kteří postoupili do druhého kola:**",
-            color=0xFFD700
-        )
-        embed.add_field(name=f"Postupující ({len(players)})", value=players_list, inline=False)
-        embed.set_footer(text="Arion bedlivě sleduje Turnaj o Krále hvězdy")
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=build_tournament_embed())
 
     # --- TIMESKIP ---
 

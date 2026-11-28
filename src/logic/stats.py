@@ -500,9 +500,13 @@ def add_xp(user_id: int, amount: int, reason: str = "") -> dict:
             "cap":           get_xp_cap(p["level"]),
         }
 
-    data          = _load()
-    uid           = pkey(user_id)
-    p             = _profile(data, uid)
+    data = _load()
+    result = award_xp_to_profile(_profile(data, pkey(user_id)), amount, reason)
+    _save(data)
+    return result
+
+
+def award_xp_to_profile(p, amount: int, reason: str = "") -> dict:
     level_before  = p["level"]
     p["xp"]       = max(0, p["xp"] + amount)
 
@@ -529,7 +533,6 @@ def add_xp(user_id: int, amount: int, reason: str = "") -> dict:
     from src.logic.furioku import grant_xp
     spirit_results = grant_xp(p, amount)
     _append_xp_log(p, amount, level_before, new_level, reason)
-    _save(data)
     return {
         "leveled_up":    leveled_up,
         "levels_gained": levels_gained,
@@ -1074,11 +1077,44 @@ class Stats(commands.Cog):
     # ── /reset-stats ──────────────────────────────────────────────────────────
 
     @sp_group.command(name="reset", description="[Admin] Vynuluje rozdané staty/skilly a vrátí body dle levelu.")
-    @app_commands.describe(member="Hráč (výchozí: všichni)")
+    @app_commands.describe(member="Hráč, jehož aktivní postavu resetovat")
     @admin_only()
-    async def reset_stats_cmd(self, interaction: discord.Interaction, member: discord.Member = None):
+    async def reset_stats_cmd(self, interaction: discord.Interaction, member: discord.Member):
+        await self._reset_stats(interaction, member)
+
+    @sp_group.command(name="reset_all", description="[Admin] Hromadný reset všech postav po potvrzení.")
+    @admin_only()
+    async def reset_all_stats_cmd(self, interaction: discord.Interaction):
+        targets = set(_load())
+        view = discord.ui.View(timeout=45)
+        button = discord.ui.Button(label="Resetovat všechny postavy", style=discord.ButtonStyle.danger)
+        confirmed = False
+
+        async def confirm(click):
+            nonlocal confirmed
+            if click.user.id != interaction.user.id or confirmed:
+                await click.response.send_message("Potvrzení už není dostupné.", ephemeral=True)
+                return
+            confirmed = True
+            view.stop()
+            await click.response.edit_message(content="Zpracovávám reset.", view=None)
+            await self._reset_stats(click, None, expected=targets)
+
+        button.callback = confirm
+        view.add_item(button)
+        await interaction.response.send_message(
+            f"Reset zasáhne **{len(targets)}** profilů. Vynuluje atributy a skilly, vrátí SP/AP "
+            "a může sundat výbavu, která po resetu nesplňuje požadavky.",
+            view=view, ephemeral=True)
+        if await view.wait():
+            await interaction.edit_original_response(content="Hromadný reset vypršel.", view=None)
+
+    async def _reset_stats(self, interaction, member, expected=None):
         try:
-            data    = _load()
+            data = _load()
+            if expected is not None and expected != set(data):
+                await interaction.followup.send("Seznam postav se změnil. Otevři nové potvrzení.", ephemeral=True)
+                return
             targets = [pkey(member.id)] if member else list(data.keys())
             n = 0
             reset_dropped: dict[str, list[str]] = {}
@@ -1094,9 +1130,10 @@ class Stats(commands.Cog):
                     tot_sp += s; tot_ap += a
                 # odeber skill-derived HP/manu (5/bod) než vynulujeme skilly
                 p["hp_max"]     = BASE_HP_MAX
-                p["hp_cur"]     = BASE_HP_MAX
+                p["hp_cur"]     = min(p.get("hp_cur") if p.get("hp_cur") is not None else BASE_HP_MAX,
+                                      BASE_HP_MAX)
                 p["mana_max"]   = BASE_MANA_MAX
-                p["mana_cur"]   = 0
+                p["mana_cur"]   = min(p.get("mana_cur") or 0, BASE_MANA_MAX)
                 p["def_bonus"]  = 0
                 p["hunger_max"] = 10
                 p["hunger_cur"] = 10
@@ -1117,7 +1154,7 @@ class Stats(commands.Cog):
                 n += 1
             _save(data)
             scope = member.mention if member else f"**{n}** hráč(ů)"
-            msg = (f"♻️ Reset hotov pro {scope}.\nAtributy→1, skilly→0, body vráceny dle levelu "
+            msg = (f"♻️ Reset hotov pro {scope}.\nAtributy→0, skilly→0, body vráceny dle levelu "
                    "(rozdej znovu přes /staty).")
             if reset_dropped:
                 total = sum(len(v) for v in reset_dropped.values())
@@ -1126,12 +1163,16 @@ class Stats(commands.Cog):
                     names = reset_dropped.get(pkey(member.id), [])
                     if names:
                         msg += "\n-# " + ", ".join(names)
-            await interaction.response.send_message(msg, ephemeral=True)
+            if expected is None:
+                await interaction.response.send_message(msg, ephemeral=True)
+            else:
+                await interaction.edit_original_response(content=msg)
         except Exception as e:
             logger.exception(f"[reset_stats] Error: {e}")
-            await interaction.response.send_message(
-                f"❌ Chyba: {str(e)[:100]}", ephemeral=True
-            )
+            if expected is None:
+                await interaction.response.send_message(f"❌ Chyba: {str(e)[:100]}", ephemeral=True)
+            else:
+                await interaction.edit_original_response(content=f"❌ Chyba: {str(e)[:100]}")
 
     # ── /luck ─────────────────────────────────────────────────────────────────
 

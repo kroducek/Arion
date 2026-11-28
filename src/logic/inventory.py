@@ -1,10 +1,14 @@
 import re
+import hashlib
+import json
 import discord
 import logging
 from discord.ext import commands
 from discord import app_commands
 from typing import Optional
 
+from src.database import db
+from src.database.characters import character_id
 from src.database.deaths import pending_deaths
 from src.database.profiles import (
     load_items as _load_items,
@@ -1614,6 +1618,36 @@ async def _ac_inventory_item(
     return choices[:25]
 
 
+def _transfer_token(entry: dict) -> str:
+    digest = hashlib.sha256(json.dumps(entry, sort_keys=True).encode("utf-8"))
+    return "entry:" + digest.hexdigest()
+
+
+def _transfer_name(entry: dict, items: dict) -> str:
+    tags = []
+    if entry.get("runes"):
+        tags.append("runy " + ", ".join(entry["runes"]))
+    if entry.get("coating"):
+        tags.append("nátěr")
+    suffix = f" · {', '.join(tags)}" if tags else ""
+    return _item_display_name(entry, items) + suffix
+
+
+async def _ac_transfer_item(interaction: discord.Interaction, current: str):
+    profile = _get_profile(interaction.user.id)
+    if not profile:
+        return []
+    _ensure_inv_fields(profile)
+    items = _load_items()
+    choices = {}
+    for entry in profile["inventory"]:
+        label = f"{_transfer_name(entry, items)} ×{entry.get('qty', 1)}"
+        if current.casefold() in label.casefold():
+            choices[_transfer_token(entry)] = label
+    return [app_commands.Choice(name=label[:100], value=key)
+            for key, label in list(choices.items())[:25]]
+
+
 async def _ac_ammo_item(
     interaction: discord.Interaction, current: str
 ) -> list[app_commands.Choice[str]]:
@@ -2188,51 +2222,92 @@ class Inventory(commands.Cog):
         item="Název nebo ID itemu.",
         qty="Množství (výchozí: 1).",
     )
-    @app_commands.autocomplete(item=_ac_inventory_item)
+    @app_commands.autocomplete(item=_ac_transfer_item)
     async def inv_give(self, interaction: discord.Interaction,
-                       member: discord.Member, item: str, qty: int = 1):
+                       member: discord.Member, item: str, qty: app_commands.Range[int, 1, 1000] = 1):
         await interaction.response.defer(ephemeral=True)
+        if qty <= 0:
+            await interaction.followup.send("Množství musí být kladné.", ephemeral=True)
+            return
         if member.id == interaction.user.id:
             await interaction.followup.send("❌ Nemůžeš posílat sám sobě.")
             return
         profiles = _load_profiles()
-        giver_p  = profiles.get(_pk(profiles, interaction.user.id))
-        recvr_p  = profiles.get(_pk(profiles, member.id))
-        if not giver_p:
-            await interaction.followup.send("❌ Nemáš profil.")
+        source = _pk(profiles, interaction.user.id)
+        target = _pk(profiles, member.id)
+        source_id = character_id(interaction.user.id, source.partition(":")[2] or "1")
+        target_id = character_id(member.id, target.partition(":")[2] or "1")
+        giver, recipient = profiles.get(source), profiles.get(target)
+        if giver is None or recipient is None:
+            await interaction.followup.send("❌ Oba hráči potřebují aktivní profil.", ephemeral=True)
             return
-        if not recvr_p:
-            await interaction.followup.send(
-                f"❌ **{member.display_name}** nemá profil.")
+        _ensure_inv_fields(giver)
+        def selected(entries):
+            if item.startswith("entry:"):
+                return next((entry for entry in entries if _transfer_token(entry) == item), None)
+            return _find_inv_entry(entries, item)
+
+        entry = selected(giver["inventory"])
+        if not entry or entry.get("qty", 1) < qty:
+            await interaction.followup.send("❌ Nemáš dost kusů tohoto předmětu.", ephemeral=True)
             return
-        _ensure_inv_fields(giver_p)
-        _ensure_inv_fields(recvr_p)
-        items_db = _load_items()
+        items = _load_items()
+        name = _transfer_name(entry, items)
+        view = discord.ui.View(timeout=60)
+        button = discord.ui.Button(label="Předat", style=discord.ButtonStyle.primary)
+        finished = False
 
-        entry = _find_inv_entry(giver_p["inventory"], item)
-        if not entry:
-            await interaction.followup.send(f"❌ **{item}** nemáš v inventáři.")
-            return
+        async def confirm(click):
+            nonlocal finished
+            if finished or click.user.id != interaction.user.id:
+                await click.response.send_message("Potvrzení už není dostupné.", ephemeral=True)
+                return
+            finished = True
+            if (_pk(_load_profiles(), click.user.id) != source
+                    or _pk(_load_profiles(), member.id) != target):
+                await click.response.edit_message(content="Aktivní postava se změnila. Zkus převod znovu.", view=None)
+                return
 
-        ok = _remove_from_inventory(giver_p["inventory"], item, qty)
-        if not ok:
-            await interaction.followup.send(f"❌ Nemáš dost kusů **{item}**.")
-            return
+            def move(docs):
+                registry = docs["characters.json"]
+                for uid, key, identity in ((click.user.id, source, source_id), (member.id, target, target_id)):
+                    record = registry.get(str(uid), {})
+                    slot = key.partition(":")[2] or "1"
+                    if (str(record.get("active", "1")) != slot
+                            or record.get("chars", {}).get(slot, {}).get("id") != identity):
+                        return False
+                data = docs["profiles.json"]
+                giver, recipient = data.get(source), data.get(target)
+                if giver is None or recipient is None:
+                    return False
+                _ensure_inv_fields(giver)
+                _ensure_inv_fields(recipient)
+                current = selected(giver["inventory"])
+                if current != entry:
+                    return False
+                _remove_entry(giver["inventory"], current, qty)
+                if entry["type"] == "registered":
+                    attributes = {key: value for key, value in entry.items() if key != "qty"}
+                    stack = next((e for e in recipient["inventory"]
+                                  if {key: value for key, value in e.items() if key != "qty"} == attributes), None)
+                    if stack is not None and not entry.get("runes") and not entry.get("coating"):
+                        stack["qty"] = stack.get("qty", 1) + qty
+                    else:
+                        recipient["inventory"].append({**entry, "qty": qty})
+                    _sort_ammo_to_toulec(recipient, items)
+                else:
+                    _inv_notes(recipient).extend([entry.get("name", item)] * qty)
+                return True
 
-        name = _item_display_name(entry, items_db)
-        if entry["type"] == "registered":
-            _add_to_inventory(recvr_p["inventory"], entry["id"], qty)
-            _sort_ammo_to_toulec(recvr_p, items_db)   # munice příjemci rovnou do Toulce
-        else:
-            # Legacy volný item — přidej jako poznámku
-            recvr_notes = _inv_notes(recvr_p)
-            for _ in range(qty):
-                recvr_notes.append(entry.get("name", item))
+            moved = db.update_documents(["profiles.json", "characters.json"], move)
+            await click.response.edit_message(
+                content=f"✅ Předáno **{name}** ×{qty}." if moved else "Předmět se mezitím změnil.", view=None)
 
-        _save_profiles(profiles)
-        qty_str = f" ×{qty}" if qty > 1 else ""
-        await interaction.followup.send(
-            f"✅ Předal jsi **{name}**{qty_str} → **{member.display_name}**.")
+        button.callback = confirm
+        view.add_item(button)
+        target_name = recipient.get("name") or member.display_name
+        await interaction.followup.send(f"Předat **{name}** ×{qty} postavě **{target_name}**?",
+                                        view=view, ephemeral=True)
 
     # ── /use ──────────────────────────────────────────────────────────────────
 
